@@ -1,0 +1,42 @@
+[package]
+name = "d2rust-realm"
+description = "The main server: sessions, accounts, lobby, chat and the game-server list. Runs no games; its game servers (d2rust-node) link to it. Linux only."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+d2-formats.workspace = true
+d2-data.workspace = true
+d2-native.workspace = true
+d2-save-checks.workspace = true
+d2-item-registry.workspace = true
+# The online shared stash and its moves (the market later).
+d2-economy.workspace = true
+d2-limits.workspace = true
+# The stash slot cap (shared with single player).
+d2-shared-stash.workspace = true
+# The journal format and chunk reader only (no `host`): no game code.
+d2-journal.workspace = true
+rusqlite.workspace = true
+d2-net.workspace = true
+d2-proto.workspace = true
+d2-quic.workspace = true
+d2-service.workspace = true
+d2-accounts.workspace = true
+d2-link.workspace = true
+d2-tickets.workspace = true
+d2-sim.workspace = true
+getrandom.workspace = true
+serde.workspace = true
+toml = "0.9"
+tokio = { workspace = true, features = ["macros", "signal"] }
+
+[dev-dependencies]
+# The synthetic item tables of d2-sim's own unit tests (the save guard's tests).
+d2-sim = { workspace = true, features = ["bench-fixtures"] }
+
+[lints]
+workspace = true

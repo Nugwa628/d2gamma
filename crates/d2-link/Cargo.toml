@@ -1,0 +1,19 @@
+[package]
+name = "d2-link"
+description = "The game-server link both server programs use: the control stream, the record and journal streams, the version match and the game server's bundle."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+d2-net.workspace = true
+d2-quic.workspace = true
+d2-service.workspace = true
+d2-tickets.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros"] }
+
+[lints]
+workspace = true

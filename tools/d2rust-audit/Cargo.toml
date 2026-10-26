@@ -1,0 +1,16 @@
+[package]
+name = "d2rust-audit"
+description = "The owner's audit tool (multiplayer v2, N20): the audit list, reports, findings, rollback and undo, the determinism watch, on the main server's data folder."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+d2-audit.workspace = true
+# The character folder (`characters.rs`) the rollbacks write.
+d2-accounts.workspace = true
+
+[lints]
+workspace = true

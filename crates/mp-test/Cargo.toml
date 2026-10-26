@@ -1,0 +1,46 @@
+[package]
+name = "mp-test"
+description = "The multiplayer test tool: headless bot clients run scripted scenarios against a real server process over loopback, with injected latency, loss and jitter, and report each broken rule."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "mp-test"
+path = "src/main.rs"
+
+# The stand-in server: the synthetic town behind a real QUIC endpoint, so
+# the tool has a server to test itself against without game files.
+[[bin]]
+name = "mp-test-synth"
+path = "src/bin/mp-test-synth.rs"
+
+# The realm lobby's load and soak driver (lobby plan L17): every bot on
+# its own thread against a real main server and game server pair.
+[[bin]]
+name = "mp-load"
+path = "src/bin/mp-load.rs"
+
+# The stand-in game server of the v2 setups until `d2rust-node` exists:
+# links to the main server, prints the ready and hosting lines, runs no
+# games.
+[[bin]]
+name = "mp-test-stub-node"
+path = "src/bin/mp-test-stub-node.rs"
+
+[dependencies]
+d2-net.workspace = true
+d2-quic.workspace = true
+d2-proto.workspace = true
+d2-server.workspace = true
+d2-sim.workspace = true
+test-fixtures.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# The stand-in server's QUIC endpoint runs on its own tokio runtime.
+tokio.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "d2-reach"
+description = "Reachability for game servers: automatic port opening, the outside check and hole punching."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+# The simulated NAT and the fake router, for the multiplayer test tool.
+testkit = []
+
+[dependencies]
+tokio = { workspace = true, features = ["macros"] }
+quinn.workspace = true
+d2-quic.workspace = true
+igd-next = { version = "0.18", default-features = false, features = ["aio_tokio"] }
+crab_nat = "0.8"
+
+[dev-dependencies]
+d2-net.workspace = true
+
+[lints]
+workspace = true

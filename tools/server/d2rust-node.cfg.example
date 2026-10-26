@@ -1,0 +1,39 @@
+# d2rust-node.cfg: a game server's settings, one `key = value` per line.
+# Relative paths are taken from this file's folder. `bundle` and `game_data` are required.
+# A game server keeps no characters and no accounts: its main server does.
+
+# The bundle `d2rust-realm --add-node` wrote for it: its id, the main server's address and
+# certificate, and the keys it checks join tickets with.
+bundle          = node.bundle
+# Its certificate and key (copied from the main server's --add-node output, or made here with
+# --new-identity and pinned there with --cert-sha256).
+identity        = identity
+# Players connect here; the link to the main server leaves from the same UDP port.
+listen          = 0.0.0.0:6113
+# What players are told, when not the address the main server sees the link come from.
+# public_addr   = 203.0.113.20:6113
+
+# Optional: must match the binary's NodeGame game id and its bundle's realm. Config cannot
+# change the binary's game or rules; a mod realm needs its own game server binary.
+# `server-ctl --realm NAME setup --node` writes it for a second realm's game servers.
+# game          = d2rust
+
+# The game data its games read: the same as the main server's.
+game_data       = game
+
+# Games at once, and players per game.
+max_games       = 16
+max_players     = 8
+# How long a lost player's slot is held for a reconnect.
+grace_s         = 30
+
+# The log folder: d2rust-node.log and console.log.
+logs            = logs
+
+# Upgrades: the program that fetches a version when the main server counts down to one
+# (`server-ctl fetch <version>`, in this folder). At zero the game server saves every game, exits
+# 75, and server-ctl's unit or loop swaps to the fetched version (rolling back if it never reports
+# healthy). On Windows (node-ctl.ps1, next to d2rust-node.exe):
+#   powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File node-ctl.ps1
+# Without it the game server shows the countdown but its admin upgrades it by hand.
+update_command  = server-ctl

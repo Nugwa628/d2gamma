@@ -1,0 +1,20 @@
+[package]
+name = "d2-shared-stash"
+description = "The shared stash as the game client sees it: one seam, a single-player store in the save folder and the online store through the main server."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+d2-economy.workspace = true
+thiserror.workspace = true
+
+[features]
+# The test crash points between a move's steps (`LocalStash::set_crash`),
+# for the game's own tests of a stopped move. Never on in a build.
+crash-points = []
+
+[lints]
+workspace = true

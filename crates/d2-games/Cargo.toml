@@ -1,0 +1,22 @@
+[package]
+name = "d2-games"
+description = "Running games: each game on its own thread at the server tick, its seats and its saves. Shared by v1's server and the game server; holds no accounts and no character folder: saves go to a SaveSink. Builds for Linux and Windows."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+d2-formats.workspace = true
+d2-journal = { workspace = true, features = ["host"] }
+d2-net.workspace = true
+d2-proto.workspace = true
+d2-quic.workspace = true
+d2-server.workspace = true
+d2-service.workspace = true
+d2-sim.workspace = true
+tokio = { workspace = true, features = ["macros"] }
+
+[lints]
+workspace = true

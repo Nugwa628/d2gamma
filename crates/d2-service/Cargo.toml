@@ -1,0 +1,17 @@
+[package]
+name = "d2-service"
+description = "What every D2RUST server program shares: the config reader, the identity, the log, status.json, the ready line, the game-data hash and the stop signals. Builds for Linux and Windows."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+d2-quic.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "signal"] }
+
+[lints]
+workspace = true

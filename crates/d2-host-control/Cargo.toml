@@ -1,0 +1,19 @@
+[package]
+name = "d2-host-control"
+description = "Host on my PC: the game client starts and watches the game server program (d2rust-node --host) as its own process, over its stdin and stdout lines."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+# Standard library only: the game client links it, and it holds no
+# game-server code (the game server is always its own process).
+[dependencies]
+
+# The tests read the stand-in main server's certificate fingerprint.
+[dev-dependencies]
+d2-quic.workspace = true
+
+[lints]
+workspace = true

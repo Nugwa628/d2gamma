@@ -1,0 +1,16 @@
+[package]
+name = "d2-tickets"
+description = "Join tickets: the main server signs a seat, a game server checks it once (multiplayer v2, plan section B1)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+d2-net.workspace = true
+ring.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

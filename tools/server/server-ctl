@@ -1,0 +1,953 @@
+#!/bin/bash
+# server-ctl: runs the D2RUST main server (d2rust-realm), or a game server (d2rust-node), on its
+# box, without root.
+#
+#   server-ctl setup [--node]        first install: folders, config, identity, scheduler (--node: a game server)
+#   server-ctl --realm NAME COMMAND  the same for a second realm on this box (a mod's), see below; setup
+#                                    takes --port N (required) and --label TEXT
+#   server-ctl install <binary>      add a version, check it, switch to it, restart (rolls back if it won't start)
+#   server-ctl upgrade <version> [--in MINUTES | --now]
+#                                    main server running: a countdown in Global and in every game (10 min by
+#                                    default), every game server fetches and swaps, then the main server is
+#                                    installed; stopped (or a game server): download, check and install now
+#   server-ctl upgrade --cancel | --status    call the countdown off; where it is
+#   server-ctl fetch <version>       download and check that version's signed package into downloads/ (a game
+#                                    server's updater runs it during the countdown)
+#   server-ctl start | stop | restart | status
+#   server-ctl rollback              switch back to the version before the last install
+#   server-ctl backup                one backup now (live through the server, or offline when it is stopped)
+#   server-ctl fingerprint           the certificate fingerprint for the launcher manifest
+#   server-ctl nodes                 the game servers, each with the name players see it by; while the main
+#                                    server runs, also version, state (linked, an upgrade's downloading/
+#                                    ready/failed/restarting, refused for another version, offline),
+#                                    games, players
+#   server-ctl node-name <id> <name> set that name ("Finland"; quote a name with spaces), server stopped
+#   server-ctl logs [N]              the last N lines of the server log
+#   server-ctl units <folder>        write the systemd user units into a folder (the package build uses it)
+#   server-ctl supervise | ensure    internal: the restart loop, and the cron check that keeps it running
+#   server-ctl pre-start | trial-check | upgrade-job
+#                                    internal: the swap before a start, its health check, the countdown's job
+#
+# The server folder is $D2RUST_SERVER_HOME, else the folder this script is in once `setup` wrote its
+# `program` file there, else ~/d2rust-server (the server package's name):
+#
+#   current -> bin/d2rust-realm-<version>    previous -> the one before
+#   d2rust-realm.cfg (0600)   identity/   data/   game/   logs/   backups/   run/
+#   data/realms/<mod>/realm.sqlite    one database per mod realm (its characters and economy)
+#   release-signers   release.token (optional, 0600)   downloads/      used by `upgrade` and `fetch`
+#   program           d2rust-realm, or d2rust-node for a game server (`setup --node`)
+#
+# A game server's folder is the same, with d2rust-node.cfg (`update_command = server-ctl`) and no
+# backups. During an upgrade its d2rust-node fetches the version (`server-ctl fetch V`), and at zero
+# saves its games, writes run/swap and exits 75; `pre-start` (before every start, by the unit or the
+# cron loop) swaps to the staged version, and `trial-check` rolls it back if it never reports healthy.
+#
+# A second realm on the same box (`--realm mymod`, the option goes first): it is a whole server folder of
+# its own, ~/d2rust-server-mymod (its game servers' ~/d2rust-server-mymod-node), with its own config
+# (`game = mymod`, `mod_label`, its own `listen` port from `setup --port`), data/ (and so its own
+# data/nodes.toml, characters and realm.sqlite), identity, logs, backups and installed versions,
+# and its own units (d2rust-realm-mymod.service, d2rust-realm-mymod-backup.timer) or cron lines.
+# The realm's name is written to the folder's `realm` file by `setup`, so the units, cron and
+# every later command in that folder need no flag. Install, upgrade, rollback and backup touch
+# only that folder's realm. Without --realm nothing changes: ~/d2rust-server, d2rust-realm.service.
+#
+# Two ways to keep the server running, picked by `setup` (and again by every `install`);
+# D2RUST_SERVER_MODE=systemd|cron|none forces one (none: no scheduler, for tests):
+#   - systemd user units, when the account has lingering on (`loginctl enable-linger`, an admin step):
+#     d2rust-realm.service (restart on failure) and d2rust-realm-backup.timer (nightly).
+#   - otherwise cron: a supervisor loop restarts the server when it exits, `ensure` runs every minute
+#     to start the supervisor after a reboot or a crash of the loop, and the backup runs nightly.
+set -u
+
+# A second realm's name: `--realm NAME` before the command, else $D2RUST_SERVER_REALM, else the
+# folder's `realm` file (below). Letters and digits; "backup" would clash with the backup unit.
+REALM=${D2RUST_SERVER_REALM:-}
+if [ "${1:-}" = --realm ]; then
+    [ $# -ge 2 ] || { printf 'server-ctl: --realm needs a name\n' >&2; exit 2; }
+    REALM=$2
+    shift 2
+fi
+case "$REALM" in
+    "") ;;
+    backup | *[!a-z0-9]* | ????????????????*)
+        printf 'server-ctl: realm name %s: 1-15 of a-z and 0-9, not "backup"\n' "$REALM" >&2
+        exit 2 ;;
+esac
+SETUP_NODE=
+[ "${1:-}" = setup ] && [ "${2:-}" = --node ] && SETUP_NODE=1
+HERE_DIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)
+if [ -n "${D2RUST_SERVER_HOME:-}" ]; then
+    HOME_DIR=$D2RUST_SERVER_HOME
+elif [ -n "$REALM" ]; then
+    HOME_DIR=$HOME/d2rust-server-$REALM
+    [ -n "$SETUP_NODE" ] && HOME_DIR=$HOME_DIR-node
+elif [ -f "$HERE_DIR/program" ]; then
+    HOME_DIR=$HERE_DIR
+else
+    HOME_DIR=$HOME/d2rust-server
+fi
+# The folder's own realm (written by `setup --realm`), when none was named.
+[ -n "$REALM" ] || REALM=$(cat "$HOME_DIR/realm" 2>/dev/null)
+# The program it runs: the main server, or a game server (`setup --node` writes `program`).
+PROGRAM=$(cat "$HOME_DIR/program" 2>/dev/null)
+[ -n "$SETUP_NODE" ] && PROGRAM=d2rust-node
+[ "$PROGRAM" = d2rust-node ] || PROGRAM=d2rust-realm
+is_node() { [ "$PROGRAM" = d2rust-node ]; }
+# The units' base name: d2rust-realm, or d2rust-realm-mymod for a second realm.
+UNIT_BASE=$PROGRAM${REALM:+-$REALM}
+CFG=$HOME_DIR/$PROGRAM.cfg
+CURRENT=$HOME_DIR/current
+PREVIOUS=$HOME_DIR/previous
+RUN=$HOME_DIR/run
+LOGS=$HOME_DIR/logs
+UNIT=$UNIT_BASE.service
+SELF=$HOME_DIR/server-ctl
+# How long a stop waits for the server to save everyone before it is killed.
+STOP_WAIT=${D2RUST_SERVER_STOP_WAIT:-60}
+# How long an install waits for the new version to report itself healthy.
+START_WAIT=${D2RUST_SERVER_START_WAIT:-45}
+# `upgrade`: release packages are <base>/server-<version>/<file>, where <base> is your release
+# download base: $D2RUST_RELEASE_BASE, else the server folder's release-base file (one line).
+# There is no default; `upgrade` and `fetch` stop until one is set. The package's SHA256SUMS.linux is signed (`ssh-keygen -Y sign`, namespace below) with
+# the release key, whose public half the admin puts once into release-signers
+# (`d2rust-release ssh-ed25519 AAAA...`). release.token, when the repository needs a login to
+# download, holds a read-only download token; it is sent on stdin, never on a command line.
+RELEASE_BASE=${D2RUST_RELEASE_BASE:-}
+[ -z "$RELEASE_BASE" ] && [ -s "$HOME_DIR/release-base" ] && RELEASE_BASE=$(tr -d '\r\n' <"$HOME_DIR/release-base")
+RELEASE_TAG=server-
+RELEASE_NAMESPACE=d2rust-release
+SIGNERS=$HOME_DIR/release-signers
+TOKEN_FILE=$HOME_DIR/release.token
+# A game server's exit code when an upgrade's version is staged (run/swap): start it again at once.
+SWAP_EXIT=75
+# The countdown upgrade: how long it waits for the main server to take its request, and after the
+# countdown for the game servers to save.
+UPGRADE_TAKE_WAIT=${D2RUST_UPGRADE_TAKE_WAIT:-15}
+UPGRADE_EXTRA_WAIT=${D2RUST_UPGRADE_EXTRA_WAIT:-600}
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'server-ctl: %s\n' "$*" >&2; exit 1; }
+
+# systemd mode needs a user manager that outlives logins (lingering).
+use_systemd() {
+    case "${D2RUST_SERVER_MODE:-}" in cron | none) return 1 ;; esac
+    [ "${D2RUST_SERVER_MODE:-}" = systemd ] && return 0
+    [ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" = yes ] || return 1
+    systemctl --user show-environment >/dev/null 2>&1
+}
+
+version_of() { "$1" --version 2>/dev/null | awk '{print $2}'; }
+
+# The PID of the running server process, or nothing.
+server_pid() {
+    local p
+    p=$(cat "$RUN/server.pid" 2>/dev/null) || return 0
+    [ -n "$p" ] && kill -0 "$p" 2>/dev/null && printf '%s' "$p"
+}
+
+supervisor_pid() {
+    local p
+    p=$(cat "$RUN/supervisor.pid" 2>/dev/null) || return 0
+    [ -n "$p" ] && kill -0 "$p" 2>/dev/null && printf '%s' "$p"
+}
+
+cmd_setup() {
+    local port= label=
+    shift
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --node) ;;
+            --port) [ $# -ge 2 ] || die "--port needs a port"; port=$2; shift ;;
+            --label) [ $# -ge 2 ] || die "--label needs a text"; label=$2; shift ;;
+            *) die "setup: unknown option $1" ;;
+        esac
+        shift
+    done
+    case "$port" in *[!0-9]*) die "--port $port: a UDP port number" ;; esac
+    if [ -n "$REALM" ] && ! is_node && [ ! -f "$CFG" ] && [ -z "$port" ]; then
+        die "setup --realm $REALM needs --port N: the other realm already listens on 6112"
+    fi
+    if [ -z "$REALM" ] && { [ -n "$port" ] || [ -n "$label" ]; }; then
+        die "--port and --label are for a second realm (--realm NAME)"
+    fi
+    if is_node; then
+        mkdir -p "$HOME_DIR"/{bin,game,logs,run,downloads} || die "can't make $HOME_DIR"
+        chmod 700 "$HOME_DIR"
+    else
+        mkdir -p "$HOME_DIR"/{bin,identity,data/realms,game,logs,backups,run} || die "can't make $HOME_DIR"
+        chmod 700 "$HOME_DIR" "$HOME_DIR/identity" "$HOME_DIR/data" "$HOME_DIR/backups"
+    fi
+    printf '%s\n' "$PROGRAM" >"$HOME_DIR/program"
+    if [ -n "$REALM" ]; then
+        printf '%s\n' "$REALM" >"$HOME_DIR/realm"
+    else
+        rm -f "$HOME_DIR/realm"
+    fi
+    # Keep a copy of this script inside the folder: cron and the units run that one.
+    if [ "$(readlink -f "$0")" != "$(readlink -f "$SELF")" ]; then
+        cp "$0" "$SELF" && chmod 755 "$SELF"
+    fi
+    if [ ! -f "$CFG" ]; then
+        local here example
+        here=$(dirname "$(readlink -f "$0")")
+        example=$here/$PROGRAM.cfg.example
+        [ -f "$example" ] || example=$HOME_DIR/$PROGRAM.cfg.example
+        [ -f "$example" ] || die "no $PROGRAM.cfg.example next to server-ctl"
+        cp "$example" "$CFG"
+        chmod 600 "$CFG"
+        if [ -n "$REALM" ]; then
+            realm_cfg
+        fi
+        say "wrote $CFG from the example: check it"
+    fi
+    # A game server's identity comes with its bundle (d2rust-realm --add-node).
+    if ! is_node && [ -x "$CURRENT" ] && [ ! -f "$HOME_DIR/identity/cert.der" ]; then
+        "$CURRENT" --config "$CFG" --new-identity || die "making the identity failed"
+    fi
+    install_scheduler
+}
+
+# A second realm's config: the example's game, mod_label and listen lines are replaced by the
+# realm's. A realm's game server gets `game` and, from `--port`, its own listen port.
+realm_cfg() {
+    local keys="game"
+    is_node || keys="game|mod_label|listen"
+    is_node && [ -n "$port" ] && keys="game|listen"
+    sed -E -i "/^(${keys})[[:space:]]*=/d" "$CFG"
+    {
+        printf '\n# Realm %s (server-ctl --realm).\n' "$REALM"
+        printf 'game = %s\n' "$REALM"
+        if ! is_node; then
+            printf 'mod_label = %s\n' "${label:-$REALM}"
+            printf 'listen = 0.0.0.0:%s\n' "$port"
+        elif [ -n "$port" ]; then
+            printf 'listen = 0.0.0.0:%s\n' "$port"
+        fi
+    } >>"$CFG"
+}
+
+# Writes the systemd user units into folder $1: the server and its nightly backup. Also used
+# by the package build (`server-ctl units DIR`, with %h for the home folder).
+write_units() {
+    mkdir -p "$1"
+    if is_node; then
+        write_node_unit "$1"
+        return
+    fi
+    cat >"$1/$UNIT" <<EOF
+[Unit]
+Description=D2RUST main server${REALM:+ ($REALM realm)}
+After=network-online.target
+
+[Service]
+# Every connection is QUIC (d2-quic) over UDP, on the config's listen address: 6112 for the main
+# server; a game server (d2rust-node) uses 6113. The admin opens the port (tools/server/README.md).
+WorkingDirectory=$HOME_DIR
+ExecStart=$CURRENT --config $CFG
+Restart=on-failure
+RestartSec=2
+# SIGTERM: the main server stops taking connections, then exits (the game servers save).
+KillSignal=SIGTERM
+TimeoutStopSec=$STOP_WAIT
+# The live server runs at normal priority; the low-priority rule is for builds and CI.
+Nice=0
+# Caps from the measured use (idle 83 MB, a one-game probe 92 MB peak, under 1 s of
+# one core for a join burst) with room for the configured games: 800 MB soft, 1 GB hard,
+# three cores. The box has ~27 GB free and other servers.
+MemoryHigh=800M
+MemoryMax=1G
+CPUQuota=300%
+
+[Install]
+WantedBy=default.target
+EOF
+    cat >"$1/$UNIT_BASE-backup.service" <<EOF
+[Unit]
+Description=D2RUST main server${REALM:+ ($REALM realm)} backup
+
+[Service]
+Type=oneshot
+ExecStart=$SELF backup
+EOF
+    cat >"$1/$UNIT_BASE-backup.timer" <<EOF
+[Unit]
+Description=Nightly D2RUST main server${REALM:+ ($REALM realm)} backup
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+}
+
+# A game server's unit: `pre-start` swaps to a staged version before each start, `trial-check`
+# stops a swapped-in version that never reports healthy (the next start rolls it back), and exit
+# 75 (an upgrade's version is staged) always starts it again.
+write_node_unit() {
+    cat >"$1/$UNIT" <<EOF
+[Unit]
+Description=D2RUST game server${REALM:+ ($REALM realm)}
+After=network-online.target
+
+[Service]
+# QUIC over UDP on the config's listen address (6113); the link to the main server leaves from it.
+WorkingDirectory=$HOME_DIR
+ExecStartPre=$SELF pre-start
+ExecStart=$CURRENT --config $CFG
+ExecStartPost=$SELF trial-check
+Restart=on-failure
+RestartSec=2
+RestartForceExitStatus=$SWAP_EXIT
+# SIGTERM: every game saves its players with the main server, then it exits.
+KillSignal=SIGTERM
+TimeoutStopSec=$STOP_WAIT
+TimeoutStartSec=$((START_WAIT + 60))
+Nice=0
+
+[Install]
+WantedBy=default.target
+EOF
+}
+
+cmd_units() {
+    [ -n "${1:-}" ] || die "usage: server-ctl units <folder>"
+    write_units "$1"
+}
+
+# Installs the units (systemd mode) or the crontab lines (cron mode), and removes the other.
+install_scheduler() {
+    local cron_tag="# $PROGRAM"
+    # Every game server folder, and every second realm's, has its own lines.
+    if is_node || [ -n "$REALM" ]; then cron_tag="# $PROGRAM $HOME_DIR"; fi
+    # `none`: no units and no crontab (tests; a box where the admin runs it some other way).
+    [ "${D2RUST_SERVER_MODE:-}" = none ] && return 0
+    if use_systemd; then
+        local units=$HOME/.config/systemd/user
+        write_units "$units"
+        systemctl --user daemon-reload
+        if is_node; then
+            systemctl --user enable "$UNIT" >/dev/null 2>&1
+        else
+            systemctl --user enable "$UNIT" "$UNIT_BASE-backup.timer" >/dev/null 2>&1
+            systemctl --user start "$UNIT_BASE-backup.timer"
+        fi
+        # Switching from cron to the units: the server must not stay down.
+        if [ -x "$CURRENT" ] && [ ! -f "$RUN/stopped" ]; then
+            systemctl --user start "$UNIT"
+        fi
+        # Leave cron mode: stop its supervisor and drop its lines.
+        stop_supervisor
+        crontab -l 2>/dev/null | grep -v "$cron_tag\$" | crontab -
+        say "scheduler: systemd user units"
+    else
+        local lines
+        lines="* * * * * $SELF ensure >/dev/null 2>&1 $cron_tag"
+        is_node || lines="$lines
+30 4 * * * $SELF backup >>$LOGS/backup.log 2>&1 $cron_tag"
+        { crontab -l 2>/dev/null | grep -v "$cron_tag\$"; printf '%s\n' "$lines"; } | crontab -
+        say "scheduler: cron (lingering is off; the admin can turn it on, see tools/server/README.md)"
+    fi
+}
+
+cmd_start() {
+    [ -x "$CURRENT" ] || die "no version installed (server-ctl install <binary>)"
+    rm -f "$RUN/stopped"
+    if use_systemd; then
+        systemctl --user start "$UNIT"
+    else
+        if [ -z "$(supervisor_pid)" ]; then
+            setsid nohup "$SELF" supervise >>"$LOGS/supervisor.log" 2>&1 </dev/null &
+        fi
+    fi
+}
+
+stop_supervisor() {
+    local p
+    p=$(supervisor_pid)
+    [ -n "$p" ] && kill "$p" 2>/dev/null
+    return 0
+}
+
+cmd_stop() {
+    # The flag keeps cron's `ensure` from starting it again.
+    mkdir -p "$RUN"
+    touch "$RUN/stopped"
+    if use_systemd; then
+        systemctl --user stop "$UNIT"
+        return
+    fi
+    local p s i
+    s=$(supervisor_pid)
+    p=$(server_pid)
+    stop_supervisor
+    [ -n "$p" ] && kill -TERM "$p" 2>/dev/null
+    # Wait for both: a start right after must not find the old supervisor still alive.
+    for i in $(seq $((STOP_WAIT * 5))); do
+        { [ -n "$p" ] && kill -0 "$p" 2>/dev/null; } || { [ -n "$s" ] && kill -0 "$s" 2>/dev/null; } || return 0
+        sleep 0.2
+    done
+    say "the server did not stop in $STOP_WAIT s; killing it"
+    [ -n "$p" ] && kill -KILL "$p" 2>/dev/null
+    [ -n "$s" ] && kill -KILL "$s" 2>/dev/null
+    return 0
+}
+
+cmd_restart() { cmd_stop; cmd_start; }
+
+# The restart loop of cron mode. One at a time (the pid file and a lock).
+cmd_supervise() {
+    mkdir -p "$RUN" "$LOGS"
+    exec 9>"$RUN/supervisor.lock"
+    flock -n 9 || exit 0
+    echo $$ >"$RUN/supervisor.pid"
+    local child=
+    trap '[ -n "$child" ] && kill -TERM "$child" 2>/dev/null; wait "$child" 2>/dev/null; rm -f "$RUN/supervisor.pid"; exit 0' TERM INT
+    local backoff=1 started rc
+    while [ ! -f "$RUN/stopped" ]; do
+        cmd_pre_start
+        started=$(date +%s)
+        "$CURRENT" --config "$CFG" >>"$LOGS/console.log" 2>&1 &
+        child=$!
+        echo "$child" >"$RUN/server.pid"
+        # A swapped-in version that never reports healthy is stopped; the next pre-start rolls it back.
+        if [ -f "$RUN/trial" ]; then
+            (cmd_trial_check || kill -TERM "$child" 2>/dev/null) &
+        fi
+        wait "$child"
+        rc=$?
+        child=
+        rm -f "$RUN/server.pid"
+        [ -f "$RUN/stopped" ] && break
+        if [ "$rc" = "$SWAP_EXIT" ]; then
+            echo "$(date -u +%FT%TZ) server exited with $rc: an upgrade is staged; starting again"
+            backoff=1
+            continue
+        fi
+        echo "$(date -u +%FT%TZ) server exited with $rc; restarting in $backoff s"
+        # A server that ran ten minutes was healthy: start over with a short wait.
+        if [ $(($(date +%s) - started)) -ge 600 ]; then backoff=1; fi
+        sleep "$backoff"
+        backoff=$((backoff * 2))
+        [ "$backoff" -gt 60 ] && backoff=60
+    done
+    rm -f "$RUN/supervisor.pid"
+}
+
+cmd_ensure() {
+    use_systemd && return 0
+    [ -f "$RUN/stopped" ] && return 0
+    [ -x "$CURRENT" ] || return 0
+    [ -n "$(supervisor_pid)" ] && return 0
+    cmd_start
+}
+
+# Whether status.json names version `want`, written after `since` (Unix seconds); waits up to
+# START_WAIT s (or $3 s).
+wait_healthy() {
+    local since=$1 want=$2 i
+    for i in $(seq "${3:-$START_WAIT}"); do
+        local f=$LOGS/status.json
+        if [ -f "$f" ] && [ "$(stat -c %Y "$f")" -ge "$since" ] && grep -q "\"version\": *\"$want\"" "$f"; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+# A version that never became healthy is stopped, not left to a restart loop: cron's
+# `ensure` and a reboot have nothing to start (`current` is gone), and systemd is told
+# not to start the unit until `install` enables it again.
+stop_after_failed_install() {
+    cmd_stop
+    rm -f "$CURRENT"
+    if use_systemd; then
+        systemctl --user disable "$UNIT" >/dev/null 2>&1
+    fi
+}
+
+cmd_install() {
+    local src=${1:-}
+    [ -f "$src" ] || die "usage: server-ctl install <binary>"
+    chmod 755 "$src"
+    local ver
+    ver=$(version_of "$src")
+    [ -n "$ver" ] || die "$src --version printed no version: not a $PROGRAM binary for this box?"
+    local dest=$HOME_DIR/bin/$PROGRAM-$ver
+    mkdir -p "$HOME_DIR/bin"
+    cp "$src" "$dest.tmp" && mv "$dest.tmp" "$dest" || die "copying the binary failed"
+    if ! is_node && [ ! -f "$HOME_DIR/identity/cert.der" ]; then
+        "$dest" --config "$CFG" --new-identity || die "making the identity failed"
+    fi
+    "$dest" --config "$CFG" --check || die "version $ver refuses the config (nothing switched)"
+    local old old_prev
+    old=$(readlink "$CURRENT" 2>/dev/null)
+    old_prev=$(readlink "$PREVIOUS" 2>/dev/null)
+    if [ -n "$old" ] && [ "$old" != "$dest" ]; then ln -sfn "$old" "$PREVIOUS"; fi
+    ln -sfn "$dest" "$CURRENT"
+    install_scheduler >/dev/null
+    local t0
+    t0=$(date +%s)
+    cmd_restart
+    if ! wait_healthy "$t0" "$ver"; then
+        say "version $ver did not report healthy in $START_WAIT s; last log lines:"
+        tail -n 20 "$LOGS/console.log" 2>/dev/null
+        if [ -n "$old" ] && [ "$old" != "$dest" ]; then
+            say "rolling back to $(basename "$old")"
+            ln -sfn "$old" "$CURRENT"
+            # `previous` goes back to what it was, so a later rollback still has a target.
+            if [ -n "$old_prev" ]; then ln -sfn "$old_prev" "$PREVIOUS"; else rm -f "$PREVIOUS"; fi
+            local old_ver t1
+            old_ver=$(version_of "$old")
+            t1=$(date +%s)
+            cmd_restart
+            if [ -z "$old_ver" ] || ! wait_healthy "$t1" "$old_ver"; then
+                say "the previous version did not report healthy either; stopping it"
+                stop_after_failed_install
+                exit 1
+            fi
+            say "rolled back to $PROGRAM $old_ver"
+        else
+            say "there is no previous version to roll back to; stopping it"
+            stop_after_failed_install
+        fi
+        exit 1
+    fi
+    say "running: $PROGRAM $ver"
+    cmd_fingerprint
+    prune_versions
+}
+
+# Keeps the five newest versions.
+prune_versions() {
+    ls -1t "$HOME_DIR"/bin/"$PROGRAM"-* 2>/dev/null | tail -n +6 | while read -r f; do
+        [ "$f" = "$(readlink "$CURRENT")" ] || [ "$f" = "$(readlink "$PREVIOUS")" ] || rm -f "$f"
+    done
+}
+
+# Downloads $1 to file $2, with the download token when there is one.
+fetch() {
+    if [ -f "$TOKEN_FILE" ]; then
+        { printf 'Authorization: token '; tr -d '\r\n' <"$TOKEN_FILE"; printf '\n'; } |
+            curl -fsSL --retry 2 -H @- -o "$2" "$1"
+    else
+        curl -fsSL --retry 2 -o "$2" "$1"
+    fi
+}
+
+valid_version() { expr "$1" : '[0-9][0-9.]*$' >/dev/null; }
+
+# Downloads release `server-<version>` into downloads/<version> and checks it: the signature of
+# SHA256SUMS.linux first (nothing of the package is read before it checks out), the tarball's sum,
+# its VERSION and GLIBC. The checked package is downloads/V/d2rust-server-V; anything that fails
+# leaves nothing behind.
+stage_release() {
+    local ver=$1
+    [ -n "$RELEASE_BASE" ] || die "no release download base: set D2RUST_RELEASE_BASE or write it into $HOME_DIR/release-base"
+    [ -s "$SIGNERS" ] || die "no $SIGNERS: the admin adds the release key once (tools/server/README.md)"
+    command -v ssh-keygen >/dev/null || die "upgrade needs ssh-keygen (openssh-client) to check the signature"
+    local name=d2rust-server-$ver
+    local tarball=$name-linux-x86_64.tar.gz
+    local dl=$HOME_DIR/downloads/$ver f
+    refuse() { rm -rf "$dl"; die "$@"; }
+    rm -rf "$dl"
+    mkdir -p "$dl" && chmod 700 "$HOME_DIR/downloads" || die "can't make $dl"
+    for f in SHA256SUMS.linux SHA256SUMS.linux.sig "$tarball"; do
+        fetch "$RELEASE_BASE/$RELEASE_TAG$ver/$f" "$dl/$f" || refuse "downloading $f of release $RELEASE_TAG$ver failed"
+    done
+    ssh-keygen -Y verify -f "$SIGNERS" -I "$RELEASE_NAMESPACE" -n "$RELEASE_NAMESPACE" \
+        -s "$dl/SHA256SUMS.linux.sig" <"$dl/SHA256SUMS.linux" >/dev/null 2>&1 ||
+        refuse "the signature of SHA256SUMS.linux does not check out: nothing installed"
+    local sums
+    sums=$(awk -v n="$tarball" '$2 == n || $2 == "*" n' "$dl/SHA256SUMS.linux")
+    [ "$(printf '%s\n' "$sums" | grep -c .)" = 1 ] || refuse "SHA256SUMS.linux does not list $tarball once: nothing installed"
+    (cd "$dl" && printf '%s\n' "$sums" | sha256sum -c --status -) ||
+        refuse "$tarball does not match the signed SHA256SUMS.linux: nothing installed"
+    tar -C "$dl" -xzf "$dl/$tarball" || refuse "unpacking $tarball failed"
+    local pkg=$dl/$name
+    [ "$(cat "$pkg/VERSION" 2>/dev/null)" = "$ver" ] || refuse "$tarball is not version $ver: nothing installed"
+    # A package built for a newer glibc than the box has can't run here.
+    local need have
+    need=$(cat "$pkg/GLIBC" 2>/dev/null)
+    have=$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')
+    if [ -n "$need" ] && [ -n "$have" ] && [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | tail -n 1)" != "$have" ]; then
+        refuse "version $ver needs glibc $need, this box has $have (Debian 13 has 2.41): nothing installed"
+    fi
+    [ -x "$pkg/bin/$PROGRAM" ] || refuse "$tarball has no bin/$PROGRAM: nothing installed"
+    rm -f "$dl/$tarball"
+}
+
+# Installed and healthy: this script and the config examples come from the same package as `ver`.
+adopt_package() {
+    local ver=$1
+    local pkg=$HOME_DIR/downloads/$ver/d2rust-server-$ver
+    if [ -f "$pkg/server-ctl" ]; then
+        cp "$pkg/server-ctl" "$SELF.new" && chmod 755 "$SELF.new" && mv -f "$SELF.new" "$SELF"
+    fi
+    cp "$pkg"/*.cfg.example "$HOME_DIR/" 2>/dev/null
+    rm -rf "$HOME_DIR/downloads/$ver"
+}
+
+# `fetch V`: the package of V staged and checked, nothing switched (a game server's updater).
+cmd_fetch() {
+    local ver=${1:-}
+    valid_version "$ver" || die "usage: server-ctl fetch <version>"
+    stage_release "$ver"
+    say "staged $ver"
+}
+
+# The PID of the running server, under either scheduler, or nothing.
+running_pid() {
+    local p
+    p=$(server_pid)
+    if use_systemd; then
+        p=$(systemctl --user show "$UNIT" -p MainPID --value 2>/dev/null)
+        [ "$p" = 0 ] && p=
+    fi
+    printf '%s' "$p"
+}
+
+# The countdown's state, logs/upgrade.json, written by the main server on every change.
+UPGRADE_JSON=$LOGS/upgrade.json
+json_field() { sed -n "s/.*\"$1\": *\"\{0,1\}\([^\",}]*\).*/\1/p" "$UPGRADE_JSON" 2>/dev/null | head -n 1; }
+upgrade_job_pid() {
+    local p
+    p=$(cat "$RUN/upgrade.pid" 2>/dev/null) || return 0
+    [ -n "$p" ] && kill -0 "$p" 2>/dev/null && printf '%s' "$p"
+}
+
+cmd_upgrade() {
+    case "${1:-}" in
+        --cancel) cmd_upgrade_cancel; return ;;
+        --status) cmd_upgrade_status; return ;;
+    esac
+    local ver=${1:-} minutes=10
+    valid_version "$ver" || die "usage: server-ctl upgrade <version> [--in MINUTES | --now], for example 0.1.1.1200"
+    shift
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --now) minutes=0 ;;
+            --in)
+                shift
+                expr "${1:-}" : '[0-9][0-9]*$' >/dev/null || die "--in takes minutes"
+                minutes=$1
+                ;;
+            *) die "usage: server-ctl upgrade <version> [--in MINUTES | --now]" ;;
+        esac
+        shift
+    done
+    # A running main server counts down with its players and its game servers.
+    if ! is_node && [ -n "$(running_pid)" ]; then
+        upgrade_countdown "$ver" "$minutes"
+        return
+    fi
+    stage_release "$ver"
+    cmd_install "$HOME_DIR/downloads/$ver/d2rust-server-$ver/bin/$PROGRAM"
+    adopt_package "$ver"
+    say "upgraded to $ver"
+}
+
+# Starts the countdown upgrade (its job runs detached, logging to logs/upgrade.log) and follows it.
+upgrade_countdown() {
+    local ver=$1 minutes=$2
+    [ -z "$(upgrade_job_pid)" ] || die "an upgrade is under way (server-ctl upgrade --status; --cancel)"
+    # Checked here, so a missing key fails at once and not inside the job.
+    [ -s "$SIGNERS" ] || die "no $SIGNERS: the admin adds the release key once (tools/server/README.md)"
+    mkdir -p "$RUN" "$LOGS"
+    rm -f "$RUN/upgrade.ready" "$RUN/upgrade.cancel" "$RUN/upgrade.result"
+    local log=$LOGS/upgrade.log start
+    touch "$log"
+    start=$(($(stat -c %s "$log") + 1))
+    setsid nohup "$SELF" upgrade-job "$ver" "$minutes" >>"$log" 2>&1 </dev/null &
+    local job=$!
+    echo "$job" >"$RUN/upgrade.pid"
+    say "upgrade to $ver in $minutes min: players see the countdown in Global and in every game"
+    say "(following $log; Ctrl+C leaves it running; server-ctl upgrade --cancel calls it off)"
+    tail -c +"$start" -f --pid="$job" "$log" 2>/dev/null
+    wait "$job" 2>/dev/null
+    grep -q '^ok' "$RUN/upgrade.result" 2>/dev/null
+}
+
+# The countdown upgrade's job: the request, the main server's package (a failure calls the
+# countdown off), the wait for phase `swap` (every game saved), then the install with its health
+# check and rollback. Its result goes to run/upgrade.result.
+cmd_upgrade_job() {
+    local ver=$1 minutes=$2 i phase
+    result() { printf '%s\n' "$*" >"$RUN/upgrade.result"; say "$(date -u +%FT%TZ) $*"; }
+    trap 'rm -f "$RUN/upgrade.pid"' EXIT
+    printf 'version=%s\nminutes=%s\n' "$ver" "$minutes" >"$RUN/upgrade.request.tmp" &&
+        mv "$RUN/upgrade.request.tmp" "$RUN/upgrade.request"
+    for i in $(seq $((UPGRADE_TAKE_WAIT * 5))); do
+        [ -f "$RUN/upgrade.request" ] || break
+        sleep 0.2
+    done
+    phase=
+    for i in $(seq 15); do
+        [ "$(json_field version)" = "$ver" ] && phase=$(json_field phase)
+        case "$phase" in countdown | restart | swap) break ;; esac
+        sleep 0.2
+    done
+    case "$phase" in
+        countdown | restart | swap) say "$(date -u +%FT%TZ) the countdown to $ver started" ;;
+        *)
+            rm -f "$RUN/upgrade.request"
+            result "failed: the main server did not start the countdown (server-ctl logs)"
+            exit 1
+            ;;
+    esac
+    if ! (stage_release "$ver"); then
+        printf "the main server's package failed its checks\n" >"$RUN/upgrade.cancel"
+        result "failed: the main server's package of $ver failed its checks; the countdown is called off"
+        exit 1
+    fi
+    touch "$RUN/upgrade.ready"
+    say "$(date -u +%FT%TZ) the main server's package of $ver is staged; waiting for the countdown"
+    local until=$(($(date +%s) + minutes * 60 + UPGRADE_EXTRA_WAIT))
+    while :; do
+        phase=$(json_field phase)
+        [ "$(json_field version)" = "$ver" ] || phase=other
+        case "$phase" in
+            swap) break ;;
+            countdown | restart) ;;
+            *)
+                rm -rf "$HOME_DIR/downloads/$ver"
+                result "cancelled: the countdown to $ver was called off; nothing installed"
+                exit 1
+                ;;
+        esac
+        if [ "$(date +%s)" -ge "$until" ]; then
+            printf 'server-ctl gave up waiting\n' >"$RUN/upgrade.cancel"
+            result "failed: no swap in time; the countdown is called off"
+            exit 1
+        fi
+        sleep 0.5
+    done
+    say "$(date -u +%FT%TZ) every game saved: installing $ver"
+    if ! (cmd_install "$HOME_DIR/downloads/$ver/d2rust-server-$ver/bin/$PROGRAM"); then
+        result "failed: $ver did not install (see above); the game servers follow the main server's version"
+        exit 1
+    fi
+    adopt_package "$ver"
+    result "ok: upgraded to $ver"
+}
+
+cmd_upgrade_cancel() {
+    mkdir -p "$RUN"
+    case "$(json_field phase)" in
+        countdown) ;;
+        restart | swap) die "the restart began; it can't be called off" ;;
+        *) die "no countdown is under way" ;;
+    esac
+    printf 'server-ctl upgrade --cancel\n' >"$RUN/upgrade.cancel"
+    local i
+    for i in $(seq 25); do
+        if [ "$(json_field phase)" = cancelled ]; then
+            say "the upgrade to $(json_field version) is called off"
+            return 0
+        fi
+        sleep 0.2
+    done
+    die "the main server did not take the cancel"
+}
+
+cmd_upgrade_status() {
+    [ -f "$UPGRADE_JSON" ] || { say "no upgrade yet"; return 0; }
+    cat "$UPGRADE_JSON"
+    local p
+    p=$(upgrade_job_pid)
+    [ -n "$p" ] && say "job: running, pid $p (log: $LOGS/upgrade.log)"
+    [ -f "$RUN/upgrade.result" ] && say "last result: $(cat "$RUN/upgrade.result")"
+    return 0
+}
+
+# Before every start of a game server: a version on trial that never reported healthy is rolled
+# back, and a version an upgrade staged (run/swap) is switched to, on trial. Never fails: the
+# server starts on what `current` is.
+cmd_pre_start() {
+    mkdir -p "$RUN"
+    local v since prev
+    if [ -f "$RUN/trial" ]; then
+        read -r v since prev <"$RUN/trial"
+        if wait_healthy "$since" "$v" 1; then
+            rm -f "$RUN/trial"
+        else
+            say "$(date -u +%FT%TZ) $PROGRAM $v never reported healthy; rolling back to $(basename "${prev:-none}")"
+            [ -n "$prev" ] && [ -x "$prev" ] && ln -sfn "$prev" "$CURRENT"
+            rm -f "$RUN/trial" "$RUN/swap"
+            return 0
+        fi
+    fi
+    [ -f "$RUN/swap" ] || return 0
+    v=$(tr -d ' \r\n' <"$RUN/swap")
+    rm -f "$RUN/swap"
+    local bin=$HOME_DIR/downloads/$v/d2rust-server-$v/bin/$PROGRAM
+    if ! valid_version "$v" || [ ! -x "$bin" ]; then
+        say "$(date -u +%FT%TZ) swap to $v: nothing staged; staying on $(basename "$(readlink "$CURRENT")")"
+        return 0
+    fi
+    local dest=$HOME_DIR/bin/$PROGRAM-$v old
+    mkdir -p "$HOME_DIR/bin"
+    if ! { cp "$bin" "$dest.tmp" && mv "$dest.tmp" "$dest"; }; then
+        say "$(date -u +%FT%TZ) swap to $v: copying $bin failed"
+        return 0
+    fi
+    old=$(readlink "$CURRENT" 2>/dev/null)
+    if [ -n "$old" ] && [ "$old" != "$dest" ]; then ln -sfn "$old" "$PREVIOUS"; fi
+    ln -sfn "$dest" "$CURRENT"
+    echo "$v $(date +%s) $old" >"$RUN/trial"
+    say "$(date -u +%FT%TZ) swapped to $PROGRAM $v (on trial for $START_WAIT s)"
+    return 0
+}
+
+# After a start: a version on trial must report healthy in START_WAIT s, else this fails (the unit
+# stops it; the next pre-start rolls it back). Healthy: the package's server-ctl is adopted.
+cmd_trial_check() {
+    [ -f "$RUN/trial" ] || return 0
+    local v since prev
+    read -r v since prev <"$RUN/trial"
+    if wait_healthy "$since" "$v"; then
+        rm -f "$RUN/trial"
+        adopt_package "$v"
+        prune_versions
+        say "$(date -u +%FT%TZ) $PROGRAM $v is healthy"
+        return 0
+    fi
+    say "$(date -u +%FT%TZ) $PROGRAM $v did not report healthy in $START_WAIT s"
+    return 1
+}
+
+cmd_rollback() {
+    local prev
+    prev=$(readlink "$PREVIOUS" 2>/dev/null) || die "no previous version"
+    [ -x "$prev" ] || die "previous version $prev is gone"
+    local cur
+    cur=$(readlink "$CURRENT")
+    ln -sfn "$prev" "$CURRENT"
+    ln -sfn "$cur" "$PREVIOUS"
+    cmd_restart
+    say "switched back to $(basename "$prev")"
+}
+
+cmd_status() {
+    local ver=
+    [ -x "$CURRENT" ] && ver=$(version_of "$CURRENT")
+    say "installed: ${ver:-none}"
+    if use_systemd; then
+        say "scheduler: systemd user units"
+        systemctl --user --no-pager status "$UNIT" 2>/dev/null | sed -n 1,4p
+    else
+        say "scheduler: cron"
+        local p
+        p=$(server_pid)
+        if [ -n "$p" ]; then say "server: running, pid $p"; else say "server: not running"; fi
+        [ -f "$RUN/stopped" ] && say "stopped on purpose (server-ctl start to run it again)"
+    fi
+    if [ -f "$LOGS/status.json" ]; then
+        say "status.json ($(($(date +%s) - $(stat -c %Y "$LOGS/status.json"))) s old):"
+        cat "$LOGS/status.json"
+    fi
+}
+
+# A field of one game server's line of nodes.json: a string (unescaped) or a number.
+node_field() {
+    printf '%s\n' "$2" | sed -nE 's/.*"'"$1"'": ("(([^"\\]|\\.)*)"|([0-9]+)).*/\2\4/p' | sed 's/\\"/"/g; s/\\\\/\\/g'
+}
+
+# `nodes`: logs/nodes.json, which the main server writes every 2 s (one game server per line). When
+# it is missing or old (the main server stopped), the list file instead, through the program.
+cmd_nodes() {
+    is_node && die "nodes runs on the main server: it lists the game servers"
+    local f=$LOGS/nodes.json line state up age
+    if [ -f "$f" ]; then age=$(($(date +%s) - $(stat -c %Y "$f"))); fi
+    if [ ! -f "$f" ] || [ "$age" -gt 10 ]; then
+        [ -x "$CURRENT" ] || die "no version installed"
+        if [ -f "$f" ]; then
+            say "nodes.json not written for $age s: is the main server running? (server-ctl status)"
+        else
+            say "no nodes.json: the main server writes it while it runs"
+        fi
+        say "the game-server list:"
+        "$CURRENT" --config "$CFG" --list-nodes
+        return
+    fi
+    printf '%-12s %-20s %-12s %-22s %5s %7s  %s\n' ID NAME VERSION STATE GAMES PLAYERS ADDRESS
+    grep '^{"id": ' "$f" | while IFS= read -r line; do
+        state=$(node_field state "$line")
+        up=$(node_field update "$line")
+        [ -n "$up" ] && state="$state $up"
+        printf '%-12s %-20s %-12s %-22s %5s %7s  %s\n' "$(node_field id "$line")" "$(node_field name "$line")" \
+            "$(node_field version "$line")" "$state" "$(node_field games "$line")" \
+            "$(node_field players "$line")" "$(node_field addr "$line")"
+    done
+    say "main server $(sed -n 's/^{"version": "\([^"]*\)".*/\1/p' "$f"); nodes.json written $age s ago"
+}
+
+cmd_backup() {
+    is_node && die "a game server keeps no characters: back up the main server"
+    mkdir -p "$RUN"
+    local p
+    p=$(running_pid)
+    if [ -n "$p" ]; then
+        # The running server makes the backup between saves: it picks up the request
+        # within 10 s and writes the result next to it.
+        rm -f "$RUN/backup.done"
+        touch "$RUN/backup.request"
+        local i
+        for i in $(seq 600); do
+            if [ -f "$RUN/backup.done" ]; then
+                cat "$RUN/backup.done"
+                grep -q '^ok' "$RUN/backup.done"
+                return
+            fi
+            sleep 1
+        done
+        die "the server did not answer the backup request in 10 min"
+    fi
+    [ -x "$CURRENT" ] || die "no version installed"
+    "$CURRENT" --config "$CFG" --backup
+}
+
+cmd_fingerprint() {
+    [ -x "$CURRENT" ] || die "no version installed"
+    "$CURRENT" --config "$CFG" --fingerprint
+}
+
+# The main server reads the names when a game server links: it refuses while it runs.
+cmd_node_name() {
+    is_node && die "node-name runs on the main server"
+    [ $# -eq 2 ] || die "usage: server-ctl node-name <id> <name>"
+    [ -x "$CURRENT" ] || die "no version installed"
+    "$CURRENT" --config "$CFG" --node-name "$1" "$2"
+}
+
+cmd_logs() {
+    local f=$LOGS/$PROGRAM.log
+    [ -f "$f" ] || f=$LOGS/console.log
+    tail -n "${1:-50}" "$f"
+}
+
+case "${1:-}" in
+    setup) cmd_setup "$@" ;;
+    install) shift; cmd_install "$@" ;;
+    upgrade) shift; cmd_upgrade "$@" ;;
+    fetch) shift; cmd_fetch "$@" ;;
+    pre-start) cmd_pre_start ;;
+    trial-check) cmd_trial_check ;;
+    upgrade-job) shift; cmd_upgrade_job "$@" ;;
+    units) shift; cmd_units "$@" ;;
+    start) cmd_start ;;
+    stop) cmd_stop ;;
+    restart) cmd_restart ;;
+    status) cmd_status ;;
+    rollback) cmd_rollback ;;
+    backup) cmd_backup ;;
+    fingerprint) cmd_fingerprint ;;
+    nodes) cmd_nodes ;;
+    node-name) shift; cmd_node_name "$@" ;;
+    logs) shift; cmd_logs "$@" ;;
+    supervise) cmd_supervise ;;
+    ensure) cmd_ensure ;;
+    *) sed -n 2,34p "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

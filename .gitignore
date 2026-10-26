@@ -1,0 +1,26 @@
+/target
+/game/
+/re/
+*.mpq
+*.MPQ
+*.exe
+*.dll
+*.d2s
+*.bin
+*.dc6
+*.dcc
+*.dt1
+*.ds1
+*.cof
+.env
+*.tbl
+
+# Python bytecode
+__pycache__/
+*.pyc
+mutants.out/
+
+# cargo-fuzz (fuzz/): corpora are built from live Blizzard files, never committed
+/fuzz/target
+/fuzz/corpus/
+/fuzz/artifacts/

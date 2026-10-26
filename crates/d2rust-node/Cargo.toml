@@ -1,0 +1,32 @@
+[package]
+name = "d2rust-node"
+description = "An official game server: runs games only and links out to its main server (d2rust-realm). No accounts, no character folder, no SQLite. Builds for Linux and Windows."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+# Test builds only (contracts 11.10): `hostile = MODE` makes the game server
+# misbehave for the save checks and audits. Never in a release build.
+hostile = []
+
+[dependencies]
+d2-net.workspace = true
+d2-proto.workspace = true
+d2-quic.workspace = true
+d2-service.workspace = true
+d2-link.workspace = true
+d2-tickets.workspace = true
+d2-games.workspace = true
+d2-server.workspace = true
+d2-sim.workspace = true
+tokio = { workspace = true, features = ["macros", "signal"] }
+
+# Windows: stable version metadata for cross-built packages.
+[build-dependencies]
+embed-resource = "3"
+
+[lints]
+workspace = true

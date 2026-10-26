@@ -1,0 +1,21 @@
+[package]
+name = "d2-save-checks"
+description = "Save checks of the main server: every character save is decoded and checked against the realm's game rules before it is stored."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+d2-formats.workspace = true
+d2-data.workspace = true
+d2-sim.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# The synthetic item tables of d2-sim's own unit tests.
+d2-sim = { workspace = true, features = ["bench-fixtures"] }
+
+[lints]
+workspace = true

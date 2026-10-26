@@ -1,0 +1,17 @@
+[package]
+name = "d2-audit"
+description = "Audits on the main server (multiplayer v2, plan section C4-C6): the audit queue, spot checks, journal retention, replay runs, findings, reports, rollback and undo, the determinism watch."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+getrandom.workspace = true
+rusqlite.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

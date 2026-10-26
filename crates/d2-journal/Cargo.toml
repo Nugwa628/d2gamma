@@ -1,0 +1,30 @@
+[package]
+name = "d2-journal"
+description = "Game journal: the format of a game's inputs and checkpoints, its recorder on the game host, and the replay audit."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[features]
+default = ["host"]
+# The recorder on the game host, D2RUST's game build, state hash and save
+# digests, and the replay engine's game. Without it the crate is the format,
+# the chunk reader and the client intent digests only (no game code), for the
+# online client library.
+host = ["dep:d2-server", "dep:d2-sim", "dep:d2-formats"]
+
+[dependencies]
+flate2.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+d2-server = { workspace = true, optional = true }
+d2-sim = { workspace = true, optional = true }
+d2-formats = { workspace = true, optional = true }
+
+[dev-dependencies]
+test-fixtures.workspace = true
+
+[lints]
+workspace = true

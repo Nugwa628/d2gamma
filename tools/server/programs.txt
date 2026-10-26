@@ -1,0 +1,12 @@
+# The server programs the server builds make and package (tools/server/server-build.sh reads
+# this list; nothing else names them).
+#
+# One line per program: <program> <cargo package> <platforms>
+#   program    the binary's name (on Windows with .exe)
+#   platforms  linux, windows or linux,windows. Linux builds target Debian 13; the Windows
+#              build is the MSVC target, cross-built on the CI server with cargo-xwin.
+#
+# The main server (d2rust-realm) ships for Linux only, the game server (d2rust-node) for Linux
+# and Windows (docs/plans/server/multiplayer-v2.md, N15).
+d2rust-realm d2rust-realm linux
+d2rust-node d2rust-node linux,windows

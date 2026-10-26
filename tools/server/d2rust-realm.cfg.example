@@ -1,0 +1,68 @@
+# d2rust-realm.cfg: the main server's settings, one `key = value` per line.
+# Relative paths are taken from this file's folder. Only `game_data` is required.
+# This file holds no secrets; keep it 0600 anyway (server-ctl setup does).
+
+# The QUIC endpoint for players and game servers: one UDP port, opened in the box's firewall by
+# the admin.
+listen          = 0.0.0.0:6112
+# The name clients see in the server's Welcome.
+server_name     = My D2Gamma realm
+# The mod realm this server runs and its name in the chat's Mod tab. These are the defaults;
+# `server-ctl --realm NAME setup` writes them for a second realm (see README.md).
+# game            = d2rust
+# mod_label       = D2Gamma
+
+# The game data the main server checks its game servers' against: a converted native folder
+# (with base/) or a game install folder with its archives. Read-only; never under the download
+# folder.
+game_data       = game
+
+# Accounts database, characters and deleted characters.
+data            = data
+# The official game servers: `d2rust-realm --add-node` writes their entries here.
+nodes           = data/nodes.toml
+# The log folder: d2rust-realm.log, console.log and status.json (health, every 10 s).
+logs            = logs
+# The certificate and key made once by --new-identity (the launcher pins its fingerprint).
+identity        = identity
+
+# Limits that keep the main server light next to the box's other services. `max_games` is the
+# open games in all, `max_players` the players of one game; the games run on the game servers.
+max_sessions    = 256
+max_games       = 16
+max_players     = 8
+net_threads     = 2
+
+# How often the game servers save their players' characters here.
+save_interval_s = 60
+
+# Accounts: `open` or `closed` registration, and characters per account.
+registration    = open
+max_characters  = 16
+# The characters' format: `d2s` (D2Gamma's own, checked by the main server) or `game` (a mod realm
+# whose game saves in a format of its own: stored as sent, summaries from the game servers).
+records         = d2s
+
+# Backups: the folder and how many dated backups are kept. The nightly one (04:30) is asked
+# for by server-ctl's timer or cron; a running main server makes it between saves.
+backups         = backups
+backup_keep     = 14
+
+# Every game's journal, one gzip file a game under <journals>/<day>/ (default data/journals).
+journals        = data/journals
+
+# The save path: every save a game server sends is checked before it is stored.
+# save_checks: `flag` (every check only logs what it finds), `standard` (the table rules refuse a
+# save, the newer checks flag) or `off`; `check.NAME = refuse|flag|off` sets one check.
+# item_registry (data/realms/<mod>/realm.sqlite): `flag` (logs an item ID held elsewhere or never
+# granted), `refuse` (refuses such a save) or `off` (only grants the games' item ID blocks).
+save_checks     = flag
+item_registry   = flag
+
+# The market: players list items, search, buy and make offers (the Market tab in realm games and
+# in town), with the online stash for deliveries. The main server's default is `off`; this example
+# turns it on. Set `market = off` to close it again. Its limits and fees
+# have defaults: market_days, market_max_listings, market_max_offers, market_offer_items,
+# market_posts_per_min, market_searches_per_min, market_fee_pct and market_listing_fee (the keys
+# are described in crates/d2rust-realm/src/config.rs). Restart the main server after a change.
+market          = on
