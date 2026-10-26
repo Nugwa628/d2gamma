@@ -1,9 +1,9 @@
-//! Readers for the Diablo II: Lord of Destruction file formats that D2RUST loads from the
+//! Readers for the Diablo II: Lord of Destruction file formats that D2Gamma loads from the
 //! player's own game install at run time.
 //!
 //! Every reader takes a byte slice (or, for MPQ, a path), checks it and returns an owned
 //! model or a [`FormatError`]; none of them panics on malformed input. Binary parsing
-//! uses explicit little-endian reads, never transmutes. Other D2RUST crates (client,
+//! uses explicit little-endian reads, never transmutes. Other D2Gamma crates (client,
 //! server, tools) read files out of the archives with [`mpq`] and hand the bytes to the
 //! readers below.
 //!

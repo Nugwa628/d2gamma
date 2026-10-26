@@ -33,9 +33,6 @@ error shows a message box naming the reason and the crash log.
 
 Elsewhere: `D2Gamma-Game.exe --game-dir "C:\Program Files (x86)\Diablo II"`.
 
-A console window opens next to the game window; it shows the log
-(`game folder: ...`, `play: ...`). On an error it stays open until Enter.
-
 ## 3. Start a character or load a save
 
 Double-click starts at the main menu: **Single Player** opens character
@@ -121,8 +118,8 @@ Every command runs on the local server between two ticks.
 | `save <name>` / `load [name]` | save the character and its place to a slot / load one (the game restarts there; the world is re-generated from the seed) / list the slots |
 | `clear` | clear the console |
 
-A game where dev commands were used is not a reference for a bug about
-the original's behaviour: say so in the report.
+When dev commands were used in the game a bug shows up in, say so in the
+report.
 
 ## 6. Reporting a bug
 

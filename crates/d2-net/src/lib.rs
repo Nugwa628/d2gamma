@@ -1,6 +1,6 @@
 //! How `d2-proto` messages travel between a client and the server.
 //!
-//! D2RUST always plays against an authoritative server. In single player
+//! D2Gamma always plays against an authoritative server. In single player
 //! that server runs in the same process; online it runs elsewhere. Both
 //! cases move the same messages, so both sit behind one seam: a
 //! [`Transport`] is one end of one client's connection. The client end

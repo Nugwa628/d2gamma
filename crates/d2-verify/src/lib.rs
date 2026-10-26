@@ -1,5 +1,5 @@
 //! The ownership gate, client side: checks that the folder the player
-//! points D2RUST at holds a usable Diablo II: Lord of Destruction install.
+//! points D2Gamma at holds a usable Diablo II: Lord of Destruction install.
 //! The required archives must exist, open as valid archives and contain the
 //! files the engine loads. The checks are not written yet; the crate is the
 //! place they belong.

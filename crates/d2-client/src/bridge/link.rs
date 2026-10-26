@@ -1,5 +1,6 @@
-//! The server link: the narrow interface the bridge needs from the
-//! in-process `d2-server` host (or, later, a remote one over `d2-net`).
+//! The server link: the narrow interface the bridge needs from its
+//! server: the in-process `d2-server` host ([`super::local`]) or a game on
+//! a game server over the network (`bridge::remote`, feature `online`).
 
 use d2_proto::transport::ClientQueue;
 

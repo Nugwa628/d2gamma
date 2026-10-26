@@ -1,15 +1,15 @@
-//! An example mod game: the shape every mod game built on D2RUST has
+//! An example mod game: the shape every mod game built on D2Gamma has
 //! (`docs/mods/mod-game.md`, `docs/plans/mods/seams.md` MS16).
 //!
-//! A mod game is its own binary. It depends on the D2RUST crates, installs
+//! A mod game is its own binary. It depends on the D2Gamma crates, installs
 //! its overrides as a `ModRules` in the `Ruleset` of every game it builds,
 //! chooses the layers its data is opened with and keeps its characters in
-//! its own save folder. The D2RUST exe never loads it: players start the
+//! its own save folder. The D2Gamma exe never loads it: players start the
 //! mod game directly.
 //!
 //! This example is synthetic: it carries no mod data and no real mod's
-//! names. Its one rule is a skill body in a "do" slot past D2RUST's own
-//! table, so D2RUST's own skills are unchanged. Its layers are the folders
+//! names. Its one rule is a skill body in a "do" slot past D2Gamma's own
+//! table, so D2Gamma's own skills are unchanged. Its layers are the folders
 //! under `mods/` of the native folder it is pointed at, or archives laid
 //! over an install (`--archive`).
 //!

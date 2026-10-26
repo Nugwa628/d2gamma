@@ -1,5 +1,6 @@
-//! Authoritative server. Runs `d2-sim`, validates every intent, owns
-//! accounts and character storage. Runs in-process for single player.
+//! The authoritative game host. Runs `d2-sim` and validates every intent.
+//! Runs in-process for single player, and inside every game server
+//! (`d2rust-node`, through `d2-games`) for online games.
 //!
 //! This crate holds the server's message queues, per-client output
 //! buffers, the dispatcher and the host loop that drives one game tick per
@@ -10,7 +11,9 @@
 //! directly. [`game_thread::GameThread`] keeps a game on a thread of its
 //! own: served for single player, or looped over
 //! [`hub::Hub::serve_frame`] for a server that owns its frame loop.
-//! Accounts and storage are not here yet.
+//! Accounts live on the main server (`d2-accounts`); a game's characters
+//! are stored through the [`adapters::storage::CharacterStore`] seam (the
+//! save folder in single player, the main server for a game server).
 
 pub mod adapters;
 pub mod buffers;

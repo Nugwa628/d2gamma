@@ -15,7 +15,10 @@ cargo install cargo-nextest --locked        # optional, faster test runs
 ```
 
 `D2_GAME_DIR` is read by every `#[ignore]` game-file test, `data-tool`,
-`mpq-tool` and `d2-client play`. Set it in each new shell.
+`mpq-tool` and `d2-client play`. Set it in each new shell. `play` reads a
+converted native folder instead when one is configured (`--native DIR`,
+`D2_NATIVE_DIR`, or the default `%APPDATA%\d2gamma\native`) made by
+`cargo run --release -p d2-convert -- convert --install <install> --out <dir>`.
 
 ## 1. Tables and formats (fast, no Bevy)
 
@@ -46,7 +49,6 @@ save parses and rewrites byte for byte).
 
 | Command | Expect |
 |---|---|
-| `cargo run -p d2-client --release -- play --synthetic --frames 1500` | black 800×600 view, about 25 server ticks per second, `gpu: true`, exit 0 |
 | `cargo run -p d2-client --release -- play --frames 1500` | the game data line (levels, objects, level files), then a running game; exit 0 |
 | `cargo run -p d2-client --release -- play` | the full game: menu, character, play (see `docs/PLAYTEST.md`) |
 | `cargo run --release -p d2-client -- verify` | every render case passes (GPU matches the CPU reference) |

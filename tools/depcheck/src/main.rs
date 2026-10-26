@@ -1,4 +1,4 @@
-//! Enforces the crate dependency rules from CONTRIBUTING.md (rule 5) by inspecting
+//! Enforces the crate dependency rules from CONTRIBUTING.md (rules 4 and 5) by inspecting
 //! each crate's full normal+build dependency tree with `cargo tree`.
 //!
 //! Usage: `cargo run -p depcheck`. Exits non-zero on any violation.
@@ -81,8 +81,8 @@ const FORBIDDEN: &[(&str, &str)] = &[
     // The multiplayer test tool's bots are headless: they speak the wire
     // protocol, never the game client.
     ("mp-test", "d2-client"),
-    // The online session library has no game code: the game and the test
-    // bots share it.
+    // The online session library has no game code: the game applies what
+    // it hands over.
     ("d2-online", "d2-sim"),
     ("d2-online", "d2-server"),
     ("d2-online", "d2-client"),

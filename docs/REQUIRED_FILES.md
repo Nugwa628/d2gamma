@@ -17,7 +17,7 @@ it; tests that need it are `#[ignore]` and read `D2_GAME_DIR`.
 - `patch_d2.mpq`: patch data
 
 These total about 2 GB and stay on the player's machine. D2Gamma reads them
-at run time; `d2-verify` checks that they are present (it confirms the
+at run time (once converted into its native folder by `d2-convert`); `d2-verify` checks that they are present (it confirms the
 player has the game, it never compares against fixed hashes).
 
 ## Game versions
@@ -26,7 +26,7 @@ The game reads its rules from the player's own tables, so the version of
 the install is the version of the rules. Nothing checks the version: any
 folder with the archives starts.
 
-- **1.14d**: the reference. Everything is built and tested against it.
+- **1.14d**: the recommended install; the game is built and tested on it.
 - **1.13c / 1.13d**: play the same, single player and online. Older base
   installs keep the same base archives, and their `patch_d2.mpq` holds
   the same files as 1.14d's, packed differently. `d2sfx.mpq` and
@@ -47,5 +47,8 @@ installs are not part of that check.
 
 ## Saves
 
-Characters are stored in D2Gamma's own versioned format. Diablo II `.d2s`
-saves can be imported (`--save`, `tools/d2s-tool`).
+Single-player characters are `.d2s` files in the player's save folder
+(`Documents\D2Gamma\saves`); other Diablo II `.d2s` saves load with
+`--save` (`tools/d2s-tool` edits and checks them). Online characters live
+on the main server in D2Gamma's own versioned format (`.d2rc`) and never
+on the player's PC.

@@ -1,6 +1,6 @@
 //! Client<->server message types, shared by `d2-server` and `d2-client`.
 //!
-//! This crate is the wire protocol of D2RUST: every byte that crosses between
+//! This crate is the wire protocol of D2Gamma: every byte that crosses between
 //! the client and the server is described here, and nothing else in the
 //! workspace knows message ids or layouts.
 //!
@@ -19,8 +19,8 @@
 //! - [`item_bits`]: reader of the item bit stream (S→C 0x9C / 0x9D and the
 //!   `.d2s` item entries).
 //! - [`envelope`]: the mod message envelope (C→S 0x71, S→C 0xB5) a mod
-//!   game's wire adds; D2RUST's own wire refuses both ids.
-//! - [`dev`]: D2RUST's dev command channel, console to local server (not
+//!   game's wire adds; D2Gamma's own wire refuses both ids.
+//! - [`dev`]: D2Gamma's dev command channel, console to local server (not
 //!   part of the game protocol).
 //! - [`tsv`]: strict TSV parser and the TSV-vs-code check; [`codegen`]: the
 //!   generator.

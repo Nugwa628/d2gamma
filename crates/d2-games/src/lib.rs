@@ -1,7 +1,7 @@
 //! `d2-games`: running games (contracts section 6). Every game the lobby
 //! creates runs on its own looped [`GameThread`] at the server tick, with a
-//! hub of the players' game streams. Shared by v1's server and the game
-//! server; it holds no accounts, no database and no character folder: a
+//! hub of the players' game streams. The game server (`d2rust-node`) runs
+//! its games here; it holds no accounts, no database and no character folder: a
 //! seat brings its character's record, saves go to a [`SaveSink`], and a
 //! game's seed and its first block of realm item IDs come from a
 //! [`SeedSource`]. A game that numbers its items from blocks asks for more

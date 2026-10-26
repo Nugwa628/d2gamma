@@ -1,5 +1,5 @@
 //! `img-diff`: compare two screenshots, or two folders of screenshots, from
-//! two D2RUST builds.
+//! two D2Gamma builds.
 //!
 //! Usage:
 //!   img-diff A B [--tol N] [--max-pct P] [--mask M[,M..]]... [--out DIR]

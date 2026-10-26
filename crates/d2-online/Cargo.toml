@@ -1,6 +1,6 @@
 [package]
 name = "d2-online"
-description = "The online client session: connect, handshake, account and lobby requests, and the game stream. Shared by the game (feature `online`) and the multiplayer test bots; no game code."
+description = "The online client session: connect, handshake, account and lobby requests, and the game stream. Used by the game (feature `online`); no game code."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

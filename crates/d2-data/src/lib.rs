@@ -1,4 +1,4 @@
-//! Typed game data for D2RUST: the Diablo II data tables, read from the player's own
+//! Typed game data for D2Gamma: the Diablo II data tables, read from the player's own
 //! game files.
 //!
 //! The crate turns the game's `.txt` sheets and compiled `.bin` tables into typed

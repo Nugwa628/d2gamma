@@ -1,5 +1,5 @@
 //! `d2rust-node`: an official game server (multiplayer v2, contracts
-//! 11.1), as a library and D2RUST's thin binary over it. It runs games
+//! 11.1), as a library and D2Gamma's thin binary over it. It runs games
 //! only: no accounts, no character folder, no SQLite.
 //! It links out to its main server (`d2rust-realm`) over QUIC from the
 //! UDP port its players connect to, and the main server sends it games
@@ -45,7 +45,7 @@
 //! calls [`main`] with the mod game's program name, game id and version,
 //! data layers, rules and character format. Its games are built with the
 //! mod game's rules and save in its format; its hello names its game, and
-//! a main server of another game refuses it (`NodeGame`). D2RUST's binary
+//! a main server of another game refuses it (`NodeGame`). D2Gamma's binary
 //! passes [`NodeGame::own`].
 //!
 //! ```no_run

@@ -1,4 +1,4 @@
-//! The QUIC stream layer: how every online client reaches a D2RUST server.
+//! The QUIC stream layer: how every online client reaches a D2Gamma server.
 //!
 //! One QUIC connection carries one player session. Inside it, each
 //! bidirectional stream is a [`FramedStream`]: [`d2_net::wire`] frames in

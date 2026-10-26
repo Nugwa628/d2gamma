@@ -1,4 +1,4 @@
-//! Visual A/B diff for D2RUST screenshots.
+//! Visual A/B diff for D2Gamma screenshots.
 //!
 //! A lane takes the same shots from two builds (for example `main` and its
 //! branch, with `play --offscreen --shot-at ...`) and compares them here.

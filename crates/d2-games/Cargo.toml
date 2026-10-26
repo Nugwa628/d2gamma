@@ -1,6 +1,6 @@
 [package]
 name = "d2-games"
-description = "Running games: each game on its own thread at the server tick, its seats and its saves. Shared by v1's server and the game server; holds no accounts and no character folder: saves go to a SaveSink. Builds for Linux and Windows."
+description = "Running games: each game on its own thread at the server tick, its seats and its saves. The game server's games; holds no accounts and no character folder: saves go to a SaveSink. Builds for Linux and Windows."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,4 +1,4 @@
-//! `d2-service`: what every D2RUST server program shares, whatever it
+//! `d2-service`: what every D2Gamma server program shares, whatever it
 //! serves. It builds for Linux and Windows: the game server ships on both.
 //!
 //! - [`config`]: the `key = value` config file reader.

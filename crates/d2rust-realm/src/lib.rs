@@ -1,6 +1,6 @@
 //! `d2rust-realm`: the main server (multiplayer v2, contracts 11.1). It
 //! runs no games: it holds the sessions, the accounts, the lobby and chat,
-//! and the game-server list; its game servers (`d2rust-node`) link to it
+//! the ladder, the shared stash and market, and the game-server list; its game servers (`d2rust-node`) link to it
 //! and run the games.
 //!
 //! - [`config`]: the main server's settings, read from a `key = value`

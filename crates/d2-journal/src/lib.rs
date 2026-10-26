@@ -8,7 +8,7 @@
 //! - [`digest`]: the clients' intent digests and their check.
 //! - [`recorder`] (feature `host`): the recorder on the game host.
 //! - [`replay`]: the replay audit engine; [`server`] (feature `host`):
-//!   D2RUST's own game for it, built as the game server builds it.
+//!   D2Gamma's own game for it, built as the game server builds it.
 
 pub mod chunk;
 pub mod digest;

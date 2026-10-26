@@ -1,6 +1,6 @@
 [package]
 name = "d2rust-realm"
-description = "The main server: sessions, accounts, lobby, chat and the game-server list. Runs no games; its game servers (d2rust-node) link to it. Linux only."
+description = "The main server: sessions, accounts, lobby, chat, ladder, the shared stash and market, and the game-server list. Runs no games; its game servers (d2rust-node) link to it. Linux only."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

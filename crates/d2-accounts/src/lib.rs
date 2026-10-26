@@ -3,7 +3,7 @@
 //! never opens the accounts database or the character folder.
 //!
 //! - [`characters`]: the character folder. Online characters are created
-//!   on the server and stored here in D2RUST's own versioned format. They
+//!   on the server and stored here in D2Gamma's own versioned format. They
 //!   are never written to a client.
 //! - [`backup`]: validated snapshots of the server characters, offline and
 //!   on a running server's request.

@@ -1,5 +1,6 @@
-//! The online client session, shared by the game and the multiplayer test
-//! bots so both speak exactly one implementation of the protocol.
+//! The online client session of the game (its `online` feature): one
+//! implementation of the account, lobby and game protocol on the client
+//! side.
 //!
 //! - [`connect`]: the QUIC connection, the pinned certificate, the
 //!   handshake and the control stream ([`Session`]).

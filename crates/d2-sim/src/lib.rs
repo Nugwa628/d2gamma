@@ -1,4 +1,4 @@
-//! Deterministic D2RUST game logic at a fixed rate (60 Hz for base play).
+//! Deterministic D2Gamma game logic at a fixed rate (60 Hz for base play).
 //!
 //! Input: the previous state plus this tick's player intents.
 //! Output: the new state plus events. The crate holds the seeded RNG ([`rng`]), unit lists

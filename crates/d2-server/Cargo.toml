@@ -1,6 +1,6 @@
 [package]
 name = "d2-server"
-description = "Authoritative game server: owns d2-sim, accounts and character storage."
+description = "The authoritative game host: owns d2-sim and validates every intent. Runs in-process for single player and inside every game server."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

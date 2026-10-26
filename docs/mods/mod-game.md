@@ -73,9 +73,18 @@ no seam yet, the seam is added to D2Gamma there; mod games don't fork D2Gamma's 
 
 ## Multiplayer
 
-D2Gamma and the mod games share one server and session layer and one protocol. A mod game's own messages are to
-travel in the protocol's mod message envelope, and its server is D2Gamma's server built with the mod game's
-`Ruleset` (seams MS13 and MS15, not built yet).
+D2Gamma and the mod games share one server and session layer and one protocol.
+
+- **Mod messages.** A mod game's own messages travel in the protocol's mod message envelope (`d2_proto::envelope`:
+  C→S 0x71, S→C 0xB5), only on a mod game's wire; D2Gamma's own wire refuses both ids. The client sends them with
+  `Bridge::send_mod` and reads them through `ClientMods::with_mod_messages`; the mod stash panel uses them.
+- **Game server.** A mod game's game server is `d2rust-node` as a library with the mod game's own `NodeGame`
+  (`d2rust_node::main(NodeGame { program, game, .. })`): a binary of its own whose games are built with the mod
+  game's layers, rules and character format. Its link hello names its game, and a main server of another game
+  refuses it.
+- **Main server.** Each mod realm keeps its own economy (shared stash, market, item registry) in
+  `data/realms/<mod>/realm.sqlite`, and game servers are added to a realm with `d2rust-realm --add-node ... --realm
+  MOD`.
 
 ## Animation frame packs
 

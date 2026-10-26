@@ -5,7 +5,8 @@ reads them at run time. Before any architectural change, read [docs/ARCHITECTURE
 
 Players see the game as **D2Gamma**: the exe `D2Gamma-Game.exe`, the window title and version line
 (`launch::NAME`), and the player's folder `Documents\D2Gamma`. Crate names, code identifiers, `D2RUST_*`
-environment variables, file formats and the multiplayer protocol ids keep the earlier name, d2rust.
+environment variables, file formats and the multiplayer protocol ids keep the earlier name, d2rust. Older code
+comments and docs still say D2RUST, and mean D2Gamma.
 
 ## The code describes itself
 
@@ -32,18 +33,21 @@ Code comments cite these by number ("rule 6").
    trademark statement and the licences of the fonts the game ships (`crates/d2-client/fonts/`).
 4. **Bevy is for the client only.** `d2-client` is a Bevy app. Game logic never lives in Bevy systems, components
    or resources.
-5. **Layering.** `d2-sim`, `d2-data`, `d2-formats`, `d2-net` and `d2-server` must not depend on Bevy. The client
-   talks to the game only through `d2-client::bridge`. `tools/depcheck` checks the crate dependency rules.
+5. **Layering.** `d2-sim`, `d2-data`, `d2-formats`, `d2-net`, `d2-server`, the server programs and every library
+   they use must not depend on Bevy (`tools/depcheck` lists them). The client talks to the game only through
+   `d2-client::bridge`. `tools/depcheck` checks the crate dependency rules.
 6. **Determinism in `d2-sim`.** No I/O, no wall-clock time, no global or thread RNG, no `HashMap` iteration
    affecting outcomes, no floating point in game logic (integer / fixed-point math). All randomness flows through
    the seeded game RNG, in a fixed draw order. `crates/d2-sim/clippy.toml` and `tools/depcheck` enforce it.
-7. **Server-authoritative.** Even single player runs as a local in-process server. The client never decides
+7. **Server-authoritative.** Even single player runs as a local in-process server (`d2-server` over the in-memory
+   transport); online games run on a game server (`d2rust-node`). The client never decides
    outcomes (damage, drops, item stats, movement validity); it sends intents and renders state. Every decoder of
    outside input (messages, saves, mod packs) must refuse bad input without panicking; property tests and the
    fuzz targets in `fuzz/` check it.
 8. **Original behaviour is the default.** Changes to how the game plays go in data layers or behind explicit rule
    switches, never as edits to the original-behaviour code paths. Mod data is expressed as patches applied to the
-   player's own tables at load time; full modified Blizzard tables never go in the repository or a release.
+   player's own tables at load time; full modified Blizzard tables never go in the repository or a release. Each mod
+   is its own game (its own binary on these crates, `docs/mods/mod-game.md`); the D2Gamma exe never loads a mod.
 9. **The file check confirms the player has the game.** It never compares an install against fixed hashes and
    never scans beyond the game folder.
 
