@@ -686,12 +686,31 @@ fn difficulty_popup_starts_the_game_on_nightmare() {
     f.click_trigger(Trigger::SinglePlayer);
     assert_eq!(f.current(), CHAR_SELECT);
     f.click_custom(d2_client::ui::front_end::screens::char_select::ids::SLOT_TEXT);
+    // The box is a pop-up of the character select (`ui-frontend-charsel-ok`):
+    // Normal and Nightmare open, Hell off.
+    let buttons = |f: &Front| {
+        f.host()
+            .front
+            .controls()
+            .iter()
+            .filter_map(|c| match c.action {
+                Action::Trigger(Trigger::Difficulty(d)) => Some((d, c.enabled)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
     f.key(13);
-    assert_eq!(f.current(), DIFFICULTY);
+    assert_eq!(f.current(), CHAR_SELECT);
+    assert_eq!(buttons(&f), [(0, true), (1, true), (2, false)], "the box");
     f.key(27);
     assert_eq!(f.current(), CHAR_SELECT);
+    assert_eq!(buttons(&f), [], "Esc closes the box");
     f.key(13);
-    assert_eq!(f.current(), DIFFICULTY);
+    assert_eq!(
+        buttons(&f),
+        [(0, true), (1, true), (2, false)],
+        "the box again"
+    );
     f.click_trigger(Trigger::Difficulty(1));
     let (g, c) = f.choice();
     assert_eq!(g.difficulty, Some(1));

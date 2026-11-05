@@ -184,6 +184,12 @@ impl CodecFiles {
 }
 
 impl CharacterFiles for CodecFiles {
+    fn copy_to_mod(&self, bytes: &[u8]) -> Result<Vec<u8>, String> {
+        if self.codec.extension() != "d2s" {
+            return Err("Characters can only be copied from plain D2Gamma.".into());
+        }
+        d2_server::game::copy_d2gamma_character(bytes, &self.live.save)
+    }
     fn extension(&self) -> &str {
         self.codec.extension()
     }
@@ -252,6 +258,8 @@ impl FrontEndConfig {
         mods: ClientMods,
     ) -> FrontEndConfig {
         let save_dir = saves.folder.clone();
+        // The client's own skill reads run under the session's rules.
+        let mods = mods.with_rules(rules.clone());
         let game_mods = mods.clone();
         let GameData::Live(live) = &data;
         let files: Arc<dyn CharacterFiles> =
@@ -391,7 +399,7 @@ pub fn install_front_end(
             crate::launch::note("front end (main menu)");
             // Music on: the jukebox plays in the menus.
             let music = crate::audio::environment::frontend_stream::FrontMusic::new(
-                live.archives.source(),
+                crate::mod_look::music_source(live.archives.source()),
                 live.archives.lod(),
                 true,
                 std::time::SystemTime::now()

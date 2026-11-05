@@ -1,0 +1,36 @@
+version = 1
+
+# monstats aip1..aip4 of the deathmauler1 row (Normal): 75, 65, 15, 50.
+[[ai]]
+index = 130
+name = "DeathMauler (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "maul"
+
+# In reach: aip1 = 75% swing, else stand 15 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 75 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6
+when = [{ kind = "in_melee" }]
+
+# Nearer than aip3 = 15 and a aip4 = 50% draw: skill 1.
+[[ai.state.action]]
+kind = "use_skill"
+slot = 1
+when = [{ kind = "distance_below", value = 15 }, { kind = "random", percent = 50 }]
+
+# aip2 = 65% walk toward the target, else stand 15 frames.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 65 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6

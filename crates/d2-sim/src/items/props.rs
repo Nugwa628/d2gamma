@@ -247,7 +247,9 @@ fn add_stat<S: ItemStats>(
     if value == 0 || !t.stat_valid(id) {
         return 0;
     }
-    let v = value.wrapping_shl(u32::from(t.valshift[usize::from(id)]));
+    let v = value.wrapping_shl(u32::from(
+        t.valshift.get(usize::from(id)).copied().unwrap_or(0),
+    ));
     let key = ctx.list;
     let target: &mut dyn ItemStats = match ctx.owner.as_deref_mut() {
         Some(o) => o,
@@ -765,7 +767,17 @@ pub fn runeword_match<S: ItemStats>(
         return None;
     }
     let sockets = item.stats.stat(stat::NUMSOCKETS, 0) as u8;
-    runeword_row(t, item.record, item.quality, sockets, fillers)
+    let stat = |s| item.stats.stat(s, 0);
+    super::item_rules::runeword_for(
+        t,
+        &super::item_rules::RunewordItem {
+            record: item.record,
+            quality: item.quality,
+            sockets,
+            fillers,
+            stat: &stat,
+        },
+    )
 }
 
 /// Exact form on the item's parts: items class
@@ -784,7 +796,9 @@ pub fn runeword_row(
     }
     // Step 3: c ≠ the socket count (more than 6 fillers never matches a
     // u8 count of a 6-socket item either; the rune slots stop at 6).
-    if fillers.len() > 6 || usize::from(sockets) != fillers.len() {
+    if fillers.len() > t.rules.global_rules().runeword_max_runes.min(6) as usize
+        || usize::from(sockets) != fillers.len()
+    {
         return None;
     }
     let n = fillers.len();

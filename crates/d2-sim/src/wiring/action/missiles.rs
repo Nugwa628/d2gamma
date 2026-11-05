@@ -508,6 +508,13 @@ impl<X: Pending> View<'_, X> {
             merge_hit_class(rec, u32::from(row.hitclass));
         }
         rec.pierce_pct = View::stat(self, missile, PIERCE_PERCENT_STAT);
+        // What the mod declares for this missile's hits (nothing without a mod).
+        let declared = data.map_or_else(Vec::new, |d| {
+            self.h.rules.declared_cc(combat::cc::CcSource::Missile {
+                row: d.class,
+                skill: i32::from(d.skill),
+            })
+        });
         let mut w = self.combat(game);
         // The order is: block/dodge on the
         // unit's seed (avoid 1, block = physical != 0), the hit-class
@@ -526,6 +533,7 @@ impl<X: Pending> View<'_, X> {
         }
         rec.result = combat::hit_result(&mut w, owner, unit, rec.result, true);
         combat::monster_crit(&mut w, &t.combat, owner, unit, rec);
+        combat::cc::declare(&mut w, owner, rec, &declared);
         // Missile data flags: 1 → hit flag 0x20 ("rolled",
         // so `domissiledamage` fires), 2 → 0x80 (no `domissiledamage`).
         if data_flags & 1 != 0 {

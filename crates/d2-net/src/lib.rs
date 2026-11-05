@@ -23,6 +23,7 @@
 //! game outcome.
 
 pub mod memory;
+pub mod mod_identity;
 pub mod msg;
 pub mod wire;
 

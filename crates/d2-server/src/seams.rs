@@ -151,6 +151,10 @@ pub trait MessageSink {
 /// Provider: `d2-sim` (player units, player data, the game's client list
 /// in list order, and one handler per C→S id).
 pub trait Intents {
+    /// Explicit mod compatibility refusals, delivered before closing the connection.
+    fn mod_kicks(&mut self) -> Vec<(ClientId, String)> {
+        Vec::new()
+    }
     /// The client's game and player.
     fn player(&self, client: ClientId) -> PlayerLookup;
 

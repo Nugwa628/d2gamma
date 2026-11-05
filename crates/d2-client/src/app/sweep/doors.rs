@@ -69,17 +69,17 @@ fn pixels(dx: i32, dy: i32) -> (i32, i32) {
     ((dx - dy) * 16, (dx + dy) * 8)
 }
 
-pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
+pub(super) fn generate(live: &LiveData, g: &mut Generated, world: &World<'_>) -> Result<()> {
     let levels = live.tables.rows::<Leveldefs>()?;
     let objects = live.tables.rows::<Objects>()?;
     let tables = PresetTables::spec().map_err(|e| anyhow!("preset tables: {e:?}"))?;
     for (level, rows) in &tables.doors {
         let level = *level as usize;
-        let Some(act) = live.waypoints.levels.get(level).map(|l| l.act) else {
+        let Some(act) = world.act(level) else {
             g.skip("doors:level-not-loaded");
             continue;
         };
-        if !levels.get(level).is_some_and(|l| l.drlgtype > 0) || act >= 5 {
+        if !levels.get(level).is_some_and(|l| l.drlgtype > 0) {
             g.skip("doors:level-not-playable");
             continue;
         }

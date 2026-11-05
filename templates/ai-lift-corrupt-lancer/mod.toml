@@ -1,0 +1,7 @@
+id = "ai-lift-corrupt-lancer"
+name = "AI 36 CorruptLancer, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "CorruptLancer as a graph: AI 36 (CorruptLancer)."
+api = 1
+kind = "full"

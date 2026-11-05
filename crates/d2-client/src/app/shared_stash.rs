@@ -407,6 +407,8 @@ impl SharedStash {
     pub fn view(&self, page: Option<u8>, search: &str) -> Result<StashView, StoreError> {
         let mut st = self.lock();
         Ok(StashView {
+            shape: st.shape(),
+            gold_max: None,
             items: match page {
                 Some(p) => st.page(p)?,
                 None => Vec::new(),

@@ -31,6 +31,8 @@ const KEYWORDS: [(&str, u8); 11] = [
 
 /// The parameter the test mod adds past D2RUST's rows.
 const MOD_PARAM: u8 = 100;
+/// The parameter the test mod answers with the formula's skill and level.
+const SKILL_PARAM: u8 = 101;
 /// D2RUST's `par1` parameter (skillcalc row 8), which the mod replaces
 /// while a unit is in context.
 const PAR1: u8 = 8;
@@ -66,6 +68,7 @@ impl CalcProvider for Calc {
     fn param(&self, _: Family, code: u8, ctx: &mut dyn CalcContext) -> Option<i32> {
         match code {
             MOD_PARAM => Some(4242),
+            SKILL_PARAM => Some(ctx.skill().map_or(-1, |(s, l)| s * 100 + l)),
             // Through the context's own functions: max(2, 7) + 70.
             PAR1 if ctx.unit().is_some() => Some(ctx.call(1, &[2, 7]) + 70),
             _ => None,
@@ -214,6 +217,23 @@ fn mod_parameters_answer_first() {
     assert_eq!(run(modded(), &par1, true), 77);
     // No unit: the mod declines and D2RUST's `par1` stays.
     assert_eq!(run(modded(), &par1, false), 0);
+}
+
+#[test]
+fn mod_parameters_read_the_formula_skill_and_level() {
+    // A skills formula knows its skill and level (with no unit too: a
+    // description); a missiles formula has none.
+    let param = [0x04, SKILL_PARAM, 0x00];
+    for unit in [true, false] {
+        let (mut f, mut t, u) = world(modded());
+        t.skills = vec![skill_rec(); 3];
+        t.skills_code = param.to_vec();
+        assert_eq!(eval_skill(&mut f, &t, unit.then_some(u), 0, 2, 7), 207);
+        assert_eq!(eval_skill(&mut f, &t, unit.then_some(u), 0, 1, 12), 112);
+    }
+    let (mut f, mut t, u) = world(modded());
+    t.miss_code = param.to_vec();
+    assert_eq!(eval_missile(&mut f, &t, None, Some(u), 0, 0, 7), -1);
 }
 
 #[test]

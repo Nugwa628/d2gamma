@@ -1,0 +1,7 @@
+id = "no-hit-recovery"
+name = "No Hit Recovery"
+version = "1.0.0"
+author = "Your name"
+description = "Being hit does not interrupt anyone. Rules only, no tables."
+api = 1
+kind = "full"

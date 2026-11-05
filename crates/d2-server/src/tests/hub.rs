@@ -644,3 +644,22 @@ fn resume_over_quic_replaces_a_stale_connection() {
     hub.deliver_all();
     assert_eq!(wait_for(&mut c, 1), [Packet::Frame { ticked: false }]);
 }
+
+#[test]
+fn network_version_kick_delivers_then_closes_transport_and_resume_slot() {
+    let (mut h, mut c, _) = hub();
+    h.host.set_wire(d2_proto::envelope::Wire::Mod);
+    h.host
+        .game
+        .mod_kicks
+        .push((0, "This mod needs updating: server alpha 2.0.0".into()));
+    h.frame().unwrap();
+    h.deliver_all();
+    assert!(!h.clients().any(|id| id == 0));
+    let mut packets = Vec::new();
+    while let Ok(Some(packet)) = c.recv() {
+        packets.push(packet);
+    }
+    assert!(matches!(c.recv(), Err(NetError::Closed)));
+    assert!(packets.iter().any(|p|matches!(p,Packet::Deliver(b)if d2_proto::envelope::payload(d2_proto::envelope::Direction::ToClient,b).and_then(d2_proto::mod_ui::read_net_rejection).is_some())));
+}

@@ -31,11 +31,16 @@ const STAT_MANARECOVERYBONUS: u16 = 27;
 const STAT_EXPERIENCE: u16 = 13;
 const STAT_GOLD: u16 = 14;
 
+/// (unit type, GUID, stat id) identifies a total across unit slot reuse.
+pub type ModTotals = BTreeMap<(u8, u32, u16), i32>;
+
 /// The per-client caches of a game.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SyncState {
     /// A new client's cache starts all 0.
     pub caches: BTreeMap<ClientId, SyncCache>,
+    /// Authoritative mod totals, independent of the narrow changed-stat queue.
+    pub mod_totals: BTreeMap<ClientId, ModTotals>,
 }
 
 impl<X> ActionHooks<X> {
@@ -142,14 +147,72 @@ pub fn run<X>(
     }
     let force = sync::force(entry.update_count, queued);
     let now = current(sim, game, unit, staged);
-    let caches = &mut sim.sys.hooks.sync.as_mut()?.caches;
+    let mod_totals = sim
+        .sys
+        .hooks
+        .rules
+        .stat_rules()
+        .filter(|_| sim.sys.hooks.rules.wide_stat_ids())
+        .map(|named| {
+            let mut ids: Vec<_> = named
+                .custom_stats()
+                .map(|(_, id)| id)
+                .chain(named.targets().iter().copied())
+                .collect();
+            ids.sort_unstable();
+            ids.dedup();
+            // Follow the same adjacent/view rooms as the client update, even
+            // when a changed stat did not queue a unit's mode update.
+            let rooms = entry
+                .room
+                .and_then(|r| game.lists.room(r))
+                .into_iter()
+                .flat_map(|r| r.adjacent.iter())
+                .chain(entry.view_rooms.iter());
+            let mut units = std::collections::BTreeSet::from([unit]);
+            for &room in rooms {
+                units.extend(game.lists.room_units(room));
+            }
+            let mut totals = ModTotals::new();
+            for unit in units {
+                let Some(r) = sim.sys.units.get(unit) else {
+                    continue;
+                };
+                if !matches!(r.ty, UnitType::Player | UnitType::Monster) {
+                    continue;
+                }
+                for &id in &ids {
+                    totals.insert(
+                        (r.ty as u8, r.guid, id),
+                        sim.sys.stats.unit_total(unit, id, 0),
+                    );
+                }
+            }
+            totals
+        })
+        .unwrap_or_default();
+    let state = sim.sys.hooks.sync.as_mut()?;
+    let cache = state.mod_totals.entry(client).or_default();
+    let mut messages = Vec::new();
+    for (&(ty, guid, id), &value) in &mod_totals {
+        if cache.get(&(ty, guid, id)) != Some(&value) {
+            let mut bytes = vec![0xB8, 1, ty];
+            bytes.extend_from_slice(&guid.to_le_bytes());
+            bytes.extend_from_slice(&id.to_le_bytes());
+            bytes.extend_from_slice(&value.to_le_bytes());
+            messages.push(bytes);
+        }
+    }
+    *cache = mod_totals;
+    let caches = &mut state.caches;
     let r = sync::sync(caches.entry(client).or_default(), &now, force);
     if r.done {
         if let Some(e) = game.lists.client_mut(client) {
             e.update_count = 0;
         }
     }
-    Some(r.messages)
+    messages.extend(r.messages);
+    Some(messages)
 }
 
 /// The stat messages of the changed-stat array flush: one stat message

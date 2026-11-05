@@ -124,6 +124,9 @@ pub enum FromRealm {
         shape: StashShape,
         cap: u32,
         names: Vec<String>,
+        /// The most gold the stash holds (`None`: an older realm's
+        /// answer).
+        gold_max: Option<u64>,
     },
 }
 
@@ -141,6 +144,8 @@ pub struct OnlineStash<L: RealmStash> {
     /// The realm's item pages ([`OnlineStash::load_layout`]; D2Gamma's
     /// until then).
     shape: StashShape,
+    /// The realm's stash gold cap, once the layout said it.
+    gold_max: Option<u64>,
 }
 
 impl<L: RealmStash> OnlineStash<L> {
@@ -153,6 +158,7 @@ impl<L: RealmStash> OnlineStash<L> {
             catalog,
             next_req: first_req,
             shape: StashShape::DEFAULT,
+            gold_max: None,
         }
     }
 
@@ -161,8 +167,14 @@ impl<L: RealmStash> OnlineStash<L> {
     /// request (D2Gamma's before mod realms) leaves D2Gamma's shape.
     pub fn load_layout(&mut self) -> Result<Vec<String>, StoreError> {
         match self.link.call(ToRealm::Layout)? {
-            FromRealm::Shape { shape, names, .. } => {
+            FromRealm::Shape {
+                shape,
+                names,
+                gold_max,
+                ..
+            } => {
                 self.shape = shape;
+                self.gold_max = gold_max;
                 Ok(names)
             }
             other => Err(StoreError::Link(format!("unexpected answer {other:?}"))),
@@ -367,6 +379,10 @@ impl<L: RealmStash> StashStore for OnlineStash<L> {
 
     fn shape(&self) -> StashShape {
         self.shape
+    }
+
+    fn gold_max(&self) -> Option<u64> {
+        self.gold_max
     }
 
     fn page_names(&mut self) -> Result<Vec<String>, StoreError> {

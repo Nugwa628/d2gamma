@@ -17,13 +17,36 @@ use d2_sim::units::UnitType;
 use super::wired::{TradeRest, WiredWorld};
 use super::ActionEvents;
 
+/// How often (in frames) the hireling life percents are looked at.
+const LIFE_EVERY: i32 = 5;
+
 impl<R: TradeRest, S> WiredWorld<R, S> {
     /// One frame of the host's hireling work (module docs): the pet
     /// sweep, then the hireling facts. Without hireling tables there are
     /// no facts.
     pub fn drive_hirelings<D: ActionEvents>(&mut self, game: &mut Game, events: &mut D) {
         events.action().with(game, |g, v| v.pet_sweep(g));
+        // The summoned pets' life percents for their owners' icon rows.
+        if game.frame.rem_euclid(LIFE_EVERY) == 0 {
+            events.action().with(game, |g, v| v.pet_life_updates(g));
+        }
         self.publish_hireling_facts(game, events);
+        // Each owner's hireling life percent when it changed (S→C 0x7F),
+        // looked at every [`LIFE_EVERY`] frames while a hireling lives.
+        let living = self
+            .state
+            .hirelings
+            .lists
+            .values()
+            .any(|l| l.nodes.iter().any(|n| !n.dead));
+        if living && self.state.hireling_tables.is_some() && game.frame.rem_euclid(LIFE_EVERY) == 0
+        {
+            self.desk(game, events, |desk, _, _| {
+                desk.with_hirelings(|w, _, st| {
+                    d2_sim::world::hirelings::life::send_life_updates(w, st)
+                })
+            });
+        }
     }
 }
 

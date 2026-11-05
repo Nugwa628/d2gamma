@@ -316,8 +316,8 @@ fn read_list(
     let mut out = Vec::new();
     let mut last = None;
     loop {
-        let s = r.read(9)?;
-        if s == TERMINATOR {
+        let s = r.read(if t.wide_stats() { 16 } else { 9 })?;
+        if s == if t.wide_stats() { 0xFFFF } else { TERMINATOR } {
             return Ok(out);
         }
         let s = s as u16;

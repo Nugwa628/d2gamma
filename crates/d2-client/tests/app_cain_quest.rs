@@ -33,7 +33,8 @@ struct Out {
     cain_class: Option<u16>,
     portal: Option<UnitId>,
     found: Option<UnitId>,
-    removed_gone: bool,
+    /// The mode the removal left the monster in.
+    removed_mode: Option<i32>,
 }
 
 impl QuestCall for Probe {
@@ -47,19 +48,18 @@ impl QuestCall for Probe {
         let cain_class = cain.and_then(|c| w.monster_class(c));
         let portal = w.open_portal(None, self.room, x + 6, y, TRISTRAM, PORTAL_CLASS, false);
         let found = cain.and_then(|c| w.find_object_near(c, PORTAL_CLASS));
-        let removed_gone = match cain {
-            Some(c) => {
-                w.remove_monster(c);
-                w.monster_class(c).is_none()
-            }
-            None => false,
-        };
+        // The removal runs the death (mode 0): the monster stays, as its
+        // corpse.
+        let removed_mode = cain.map(|c| {
+            w.remove_monster(c);
+            w.unit_mode(c)
+        });
         Out {
             cain,
             cain_class,
             portal,
             found,
-            removed_gone,
+            removed_mode,
         }
     }
 }
@@ -127,7 +127,11 @@ fn run(s: &mut d2_client::app::single_player::Sim) {
     assert_eq!(out.cain_class, Some(class::CAIN5));
     let portal = out.portal.expect("the portal object");
     assert_eq!(out.found, Some(portal));
-    assert!(out.removed_gone, "{out:?}");
+    assert_eq!(
+        out.removed_mode,
+        Some(0),
+        "the removal runs the death: {out:?}"
+    );
     // Class 59's init sets `InteractType` to the town level of the
     // room's act (object init 11), here the Rogue
     // Encampment; the far end's destination is the requested level.

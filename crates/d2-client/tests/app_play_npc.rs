@@ -176,12 +176,25 @@ fn clicking_the_waypoint_walks_there_and_interacts() {
     let ms = Arc::new(AtomicU32::new(1000));
     let wire = Arc::new(Mutex::new(Wire::default()));
     let (mut app, server) = play_app(&ms, &wire);
+    // A new character knows only its town's waypoint: the server's record
+    // is staged to know the Cold Plains' (index 1) too, so the menu has a
+    // row to travel to.
+    app_support::with(&server, |l| {
+        let (p, _) = single_player::local_player(&l.host().game).unwrap();
+        let g = &mut l.host_mut().game;
+        let wp = g.events.action.hooks().waypoints.entry(p).or_default();
+        wp.get_mut(0).set(1).unwrap();
+    });
     let (guid, at) = waypoint_on_screen(&app);
     assert!(
         (0..800).contains(&at.x) && (0..560).contains(&at.y),
         "the waypoint is on screen: {at:?}"
     );
     assert_eq!(waypoint_open(&app), None);
+    // The pointer moves onto the waypoint and one frame draws its hover:
+    // a press reads the hover the previous frame drew.
+    queue(&mut app, UiEvent::CursorMoved(at));
+    step(&mut app, &ms, 1);
     queue(
         &mut app,
         UiEvent::Press {
@@ -196,7 +209,10 @@ fn clicking_the_waypoint_walks_there_and_interacts() {
             at,
         },
     );
-    step(&mut app, &ms, 2);
+    // The frame of the click walks toward the waypoint and leaves the
+    // interaction pending; the next one (2–3 ticks at 60 Hz) is already
+    // in range and sends it.
+    step(&mut app, &ms, 1);
     assert!(
         app.world()
             .resource::<WorldViewState>()
@@ -237,7 +253,8 @@ fn clicking_the_waypoint_walks_there_and_interacts() {
     assert!(o.is_open(0x14), "the waypoint menu is open");
     // The rows: the Act I waypoint levels in index order (`levels`
     // `Waypoint`), known as the server's record holds them, the town
-    // current.
+    // current. The current level's row is never known (used 0: the rows'
+    // rebuild leaves it so, and a click can't choose it).
     let map = app_support::waypoints().map;
     let known = app_support::with(&server, |l| {
         let (p, _) = single_player::local_player(&l.host().game).unwrap();
@@ -255,11 +272,8 @@ fn clicking_the_waypoint_walks_there_and_interacts() {
     let want: Vec<(u16, bool, bool)> = want
         .into_iter()
         .map(|(i, lv)| {
-            (
-                lv,
-                known[usize::from(i)],
-                u32::from(lv) == single_player::ACT1_TOWN,
-            )
+            let current = u32::from(lv) == single_player::ACT1_TOWN;
+            (lv, known[usize::from(i)] && !current, current)
         })
         .collect();
     let rows: Vec<(u16, bool, bool)> = o
@@ -268,10 +282,7 @@ fn clicking_the_waypoint_walks_there_and_interacts() {
         .map(|r| (r.level, r.known, r.current))
         .collect();
     assert_eq!(rows, want);
-    assert!(
-        rows[1].1,
-        "row 1 is known (the loader's staging, q-fix-real-known-wp)"
-    );
+    assert!(rows[1].1, "row 1 is known (staged above)");
     // A click on row 1 (the menu hit at 800 wide: x' = x − 80,
     // y' = y − 60) sends C→S 0x49 [GUID][level 3] and closes the menu.
     let at = Point::new(80 + 150, 60 + 110);

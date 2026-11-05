@@ -95,6 +95,8 @@ The game exe:
 
 | Crate | What it is |
 |---|---|
+| `d2-item-text` | Renderer-free item descriptions and the shared item-stream lookup over engine tables. Used by the client and Mod Studio; depends on data, simulation and protocol crates without Bevy. |
+| `mod-studio` | The egui mod authoring program. Table and item forms share a patch working set; background hosts run engine item, treasure and cube code over snapshots. Does not link the game client or server. |
 | `d2-client` | The Bevy app, built as `D2Gamma-Game`: the front end (`app::play::run_front_end`, also the entry point of every mod game's binary), the bridge, the world view and its CPU / GPU compositors, UI, audio, input, the client hooks of mod games (`mods::ClientMods`), and the dev and test subcommands (`verify`, `sweep`, `soak`, `state-dump`, `bake-anims`, ...). Uses mimalloc as its allocator (default feature `mimalloc`). |
 | `d2-online` | The online client session: QUIC connect and handshake, account and lobby requests, chat, ladder, stash and market requests, the game stream, server pings. Linked by the exe only with its `online` feature. |
 | `d2-shared-stash` | The shared stash as the client sees it: one seam, a local SQLite store in single player and the online store through the main server. |
@@ -126,7 +128,7 @@ example mod game), and under `tools/`: `d2-convert` (install → native
 folder), `data-tool`, `mpq-tool`, `d2s-tool`, `img-diff`, `depcheck`
 (enforces the dependency rules), `report-service`, `d2rust-audit`.
 
-The launcher is a separate program, versioned on its own. It
+The launcher is its own program, in its own repository. It
 installs and updates the game, writes `servers.toml` next to the exe for
 online play from its signed manifest, and starts the game with
 `play --game-dir <dir>`; it reads the exe's `version.json` and

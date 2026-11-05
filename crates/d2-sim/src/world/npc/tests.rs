@@ -7,6 +7,7 @@ use super::hire::{capped_level, hire_init, price, resurrect_cost};
 use super::services::{can_imbue, can_personalize, can_socket, imbue_level, socket_count};
 use super::*;
 
+mod mod_hire_tests;
 mod mod_npc_tests;
 mod mod_player_roles_tests;
 mod mutant_tests;
@@ -39,6 +40,7 @@ struct Unit {
 
 #[derive(Default)]
 struct Fake {
+    data_travel: bool,
     units: BTreeMap<UnitId, Unit>,
     dist: i32,
     axis: u32,
@@ -149,6 +151,12 @@ impl Fake {
 }
 
 impl NpcWorld for Fake {
+    fn data_act_travel(&mut self, _: UnitId, _: u16, action: u32) -> bool {
+        if self.data_travel {
+            self.log.push(format!("data travel {action}"));
+        }
+        self.data_travel
+    }
     fn rules(&self) -> &crate::rules::Ruleset {
         &self.rules
     }
@@ -1080,6 +1088,28 @@ fn chat_close_states() {
 }
 
 // ------------------------------------------------------------ menu actions
+
+#[test]
+fn acts_travel_requires_this_players_interaction_node() {
+    let mut c = control(0);
+    let mut w = Fake::new();
+    let npc = w.npc(class::WARRIV1, 6);
+    w.data_travel = true;
+    c.menu_action(&mut w, PLAYER, &msg38(77, 6, 0)).unwrap();
+    assert!(w.log.is_empty());
+    w.interaction(npc)
+        .unwrap()
+        .nodes
+        .push((UnitId(2), talk::CHATTING));
+    c.menu_action(&mut w, PLAYER, &msg38(77, 6, 0)).unwrap();
+    assert!(w.log.is_empty());
+    w.interaction(npc)
+        .unwrap()
+        .nodes
+        .push((PLAYER, talk::CHATTING));
+    c.menu_action(&mut w, PLAYER, &msg38(77, 6, 0)).unwrap();
+    assert_eq!(w.log, ["data travel 77"]);
+}
 
 #[test]
 fn menu_trade_and_gamble() {

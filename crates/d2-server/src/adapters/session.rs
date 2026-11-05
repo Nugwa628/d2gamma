@@ -636,10 +636,11 @@ pub fn enter_game<D: ActionEvents, W: GolemWorld>(
     if let Some(r) = a.sys.units.get_mut(player) {
         r.act = entry.act;
     }
-    a.sys
-        .hooks
-        .x
-        .send(player, &load_act(entry.act, map_seed, obj_seed).encode());
+    let mut load = load_act(entry.act, map_seed, obj_seed);
+    if let Some(town) = a.sys.hooks.rules.act_town(entry.act) {
+        load.f6 = town as u16;
+    }
+    a.sys.hooks.x.send(player, &load.encode());
     // The act is built here when its slot is empty: a fresh environment
     // record.
     let env = s
@@ -748,8 +749,20 @@ pub fn load_save<D: ActionEvents, W>(
     ctx: &LoadContext,
 ) -> Result<(Entry, LoadReport), LoadError> {
     let report = s.events.action().with(&mut s.game, |_, v| {
+        let town = (v.h.rules.difficulties().is_some() || v.h.rules.acts().is_some())
+            .then_some(())
+            .and(save.body.as_ref())
+            .and_then(|b| d2_formats::d2m::progress::read(b, save.header.towns).ok())
+            .and_then(|records| records.get(usize::from(ctx.difficulty)).map(|r| r.town));
+        let town = town.map(|t| {
+            if usize::from(t & 0x7f) < v.h.rules.act_count() {
+                t
+            } else {
+                t & 0x80
+            }
+        });
         let mut cw = ActionCharacter { v, player };
-        let mut r = character::load(save, ctx, &mut cw)?;
+        let mut r = character::load_with_town(save, ctx, &mut cw, town)?;
         if !r.new_character {
             if let Err(u) = cw.quest_entry(0) {
                 r.unapplied.push(u);

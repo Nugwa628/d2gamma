@@ -104,6 +104,7 @@ mod tests {
             miss_code: Vec::new(),
             level_cap: 99,
             stat_count: 359,
+            data_rules: d2_data::bin::DataRules::Original,
         }));
         (w, i, key)
     }

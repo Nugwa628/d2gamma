@@ -12,6 +12,7 @@ use super::{
     HirelingWorld, Offer, Slot, NEW_HIRE, UNIT_PLAYER,
 };
 use crate::units::UnitId;
+use crate::world::npc::npc_rules::{mod_offer, HireRequest};
 
 /// Unit mode: neutral (alive).
 pub const MODE_NEUTRAL: u8 = 1;
@@ -75,15 +76,28 @@ pub fn init<W: HirelingWorld>(
     // Step 5.
     let act0 = t.rows.act_of_name(w.expansion(), slot.name);
     let player_level = w.stat(player, stat::LEVEL);
-    let Some(offer) = t.rows.offer(
-        w.expansion(),
+    let req = HireRequest {
+        expansion: w.expansion(),
+        name: slot.name,
+        seed: slot.seed,
+        act: act0,
+        difficulty: w.difficulty(),
         player_level,
-        slot.seed,
-        act0,
-        u32::from(w.difficulty()),
-    ) else {
+    };
+    let offer = match mod_offer(w.rules(), &req) {
+        Some(o) => o.filter(|o| o.row < t.rows.rows.len()),
+        None => t.rows.offer(
+            w.expansion(),
+            player_level,
+            slot.seed,
+            act0,
+            u32::from(w.difficulty()),
+        ),
+    };
+    let Some(mut offer) = offer else {
         return Ok(None);
     };
+    offer.experience = crate::world::npc::npc_rules::scale_merc_exp(w.rules(), offer.experience);
     // Step 6. The add is void in the base game (no test after the
     // call): a `false` (no node added) does not stop the init.
     pets::add(w, t, st, player, merc, slot.seed, slot.name, offer.id)?;
@@ -636,4 +650,46 @@ pub fn restore_stats<W: HirelingWorld>(
     let max = w.max_life(merc);
     w.set_base_stat(merc, stat::HITPOINTS, max);
     let _ = level::send_stats(w, st, player);
+}
+
+/// S→C 0x7F (`AllyPartyInfo`) of a hireling: `[0x7F][0][life % u16][GUID
+/// u32][0 u16]` (not a player; the area word is not filled).
+pub fn ally_life_message(guid: u32, percent: u16) -> [u8; 10] {
+    let mut m = [0u8; 10];
+    m[0] = 0x7F;
+    m[2..4].copy_from_slice(&percent.to_le_bytes());
+    m[4..8].copy_from_slice(&guid.to_le_bytes());
+    m
+}
+
+/// The hireling's life percent: life over maximum life, 0–100 (0 without
+/// a maximum).
+pub fn life_percent<W: HirelingWorld>(w: &W, merc: UnitId) -> u16 {
+    let max = i64::from(w.max_life(merc));
+    if max <= 0 {
+        return 0;
+    }
+    let life = i64::from(w.stat(merc, super::stat::HITPOINTS).max(0));
+    (life * 100 / max).clamp(0, 100) as u16
+}
+
+/// Each player's living hireling's life percent, sent to the player
+/// (S→C 0x7F, [`ally_life_message`]) when it is new or changed since the
+/// last send; the client's hireling portrait draws it. Run once per frame.
+pub fn send_life_updates<W: HirelingWorld>(w: &mut W, st: &mut HirelingState) {
+    let mut now = std::collections::BTreeMap::new();
+    for (&player, list) in &st.lists {
+        let Some(node) = list.nodes.iter().find(|n| !n.dead) else {
+            continue;
+        };
+        let Some(merc) = w.monster_by_guid(node.guid) else {
+            continue;
+        };
+        let pct = life_percent(w, merc);
+        if st.life_sent.get(&node.guid) != Some(&pct) {
+            w.send(player, &ally_life_message(node.guid, pct));
+        }
+        now.insert(node.guid, pct);
+    }
+    st.life_sent = now;
 }

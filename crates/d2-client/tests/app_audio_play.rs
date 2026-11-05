@@ -161,21 +161,28 @@ fn a_pending_sound_input_does_not_stop_play() {
         SoundRequest::UnitRequest { id: 1, unit: p },
         SoundRequest::Ui(2),
     ]);
-    frames(&mut app, &ms, 3);
+    // Play goes on: every frame presents the sound tick of every server
+    // tick it ran. The first server tick runs none and the presented tick
+    // counts from 0, so it is two behind the server's count.
+    for _ in 0..3 {
+        frames(&mut app, &ms, 1);
+        let ticks = app
+            .world()
+            .resource::<BridgeResource>()
+            .0
+            .world()
+            .server_ticks;
+        let audio = app.world().resource::<GameAudio>();
+        assert_eq!(
+            u64::from(audio.stats.presented) + 2,
+            ticks,
+            "a sound tick per server tick"
+        );
+    }
     let audio = app.world().resource::<GameAudio>();
     assert!(
         !audio.stats.pending.is_empty(),
         "the pending questions are reported"
-    );
-    let ticks = app
-        .world()
-        .resource::<BridgeResource>()
-        .0
-        .world()
-        .server_ticks;
-    assert_eq!(
-        audio.stats.presented, ticks as u32,
-        "a sound tick per server tick"
     );
 }
 

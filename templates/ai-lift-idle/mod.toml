@@ -1,0 +1,7 @@
+id = "ai-lift-idle"
+name = "AI 1 Idle, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "Stands where it is. Lifted from the Rust body of AI 1 (Idle)."
+api = 1
+kind = "full"

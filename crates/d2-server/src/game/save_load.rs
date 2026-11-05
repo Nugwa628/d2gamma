@@ -342,7 +342,7 @@ pub fn loader(mut characters: Characters) -> CharacterLoader<WorldSim<LocalSeams
                         }
                         // The save reader: fields A
                         // and B back into the player's NPC record.
-                        quests.first_talk = body.npcs.a;
+                        quests.first_talk = body.npcs.a.to_vec();
                         for (d, &b) in body.npcs.b.iter().enumerate() {
                             quests.set_intro_bits(d, b);
                         }
@@ -365,6 +365,11 @@ pub fn loader(mut characters: Characters) -> CharacterLoader<WorldSim<LocalSeams
         let rest = &mut s.world.rest;
         rest.quests.insert(player, quests);
         rest.names.insert(player, name[..n].to_vec());
+        if s.events.action.hooks().rules.difficulties().is_some()
+            || s.events.action.hooks().rules.acts().is_some()
+        {
+            super::difficulty_progress::restore(s, player, &character);
+        }
         // The quest entry (single player takes, mode 0; a new
         // character's stub load calls mode 1 first): its messages (0x5E, 0x28,
         // 0x29, 0x89) are part of the join, sent after the loader's

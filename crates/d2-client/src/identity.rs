@@ -20,6 +20,10 @@ use std::sync::{Arc, OnceLock};
 /// `None` falls through to the text the game files carry.
 pub type CreditsText = Arc<dyn Fn(bool) -> Option<Vec<u8>> + Send + Sync>;
 
+/// The game id D2Gamma's main server runs, and a game says until it names
+/// its own ([`GameIdentity::with_realm_game`]).
+pub const D2GAMMA_REALM_GAME: &str = "d2rust";
+
 /// Who the running game is ([`current`]).
 #[derive(Clone)]
 pub struct GameIdentity {
@@ -38,6 +42,11 @@ pub struct GameIdentity {
     pub folder: String,
     /// The game's own credits text, read before the game files' text.
     pub credits: Option<CreditsText>,
+    /// The game id the game says when it connects to a main server
+    /// (`"d2rust"` for D2Gamma); a server runs one game and refuses a client
+    /// that says another. A mod game that has its own realm sets the id the
+    /// realm's `game` setting names ([`GameIdentity::with_realm_game`]).
+    pub realm_game: String,
 }
 
 impl std::fmt::Debug for GameIdentity {
@@ -49,6 +58,7 @@ impl std::fmt::Debug for GameIdentity {
             .field("window_title", &self.window_title)
             .field("folder", &self.folder)
             .field("credits", &self.credits.is_some())
+            .field("realm_game", &self.realm_game)
             .finish()
     }
 }
@@ -64,6 +74,7 @@ impl GameIdentity {
             window_title: crate::launch::NAME.into(),
             folder: crate::user_dir::FOLDER.into(),
             credits: None,
+            realm_game: D2GAMMA_REALM_GAME.into(),
         }
     }
 
@@ -83,7 +94,21 @@ impl GameIdentity {
             data_version: String::new(),
             folder: folder.into(),
             credits: None,
+            realm_game: D2GAMMA_REALM_GAME.into(),
         }
+    }
+
+    /// The identity of a mod-kit mod run by D2Gamma: its name as the window
+    /// title and version line, its version, and its own folder
+    /// `Documents\D2Gamma\mods\<id>` ([`crate::user_dir::mod_folder`]) for
+    /// saves, settings, logs and baked animations.
+    pub fn for_mod(manifest: &d2_modkit::Manifest) -> GameIdentity {
+        GameIdentity::new(
+            manifest.name.clone(),
+            manifest.version.to_string(),
+            crate::user_dir::mod_folder(&manifest.id),
+        )
+        .with_realm_game(manifest.id.clone())
     }
 
     /// The same identity with its own window title.
@@ -95,6 +120,13 @@ impl GameIdentity {
     /// The same identity with the line under the version line.
     pub fn with_data_version(mut self, line: impl Into<String>) -> GameIdentity {
         self.data_version = line.into();
+        self
+    }
+
+    /// The same identity with the game id it says to a main server: the id
+    /// of the realm that serves this game.
+    pub fn with_realm_game(mut self, game: impl Into<String>) -> GameIdentity {
+        self.realm_game = game.into();
         self
     }
 
@@ -167,6 +199,29 @@ mod tests {
         assert_eq!(credits(false), None);
         // A new mod identity titles its window with its name.
         assert_eq!(GameIdentity::new("M", "1", "M").window_title, "M");
+    }
+
+    #[test]
+    fn a_kit_mod_is_titled_by_its_name_and_lives_under_the_mods_folder() {
+        let m = d2_modkit::Manifest::parse(
+            "id = \"ember-age\"\nname = \"Ember Age\"\nversion = \"1.2.0\"\nauthor = \"A\"\ndescription = \"\"\napi = 1\nkind = \"full\"\n",
+        )
+        .unwrap();
+        let id = GameIdentity::for_mod(&m);
+        assert_eq!(id.window_title, "Ember Age");
+        assert_eq!(id.version_line(), "Ember Age 1.2.0");
+        assert_eq!(id.folder, "D2Gamma/mods/ember-age");
+        assert!(id.data_version.is_empty());
+        assert!(!id.is_d2gamma_folder());
+    }
+
+    #[test]
+    fn a_game_says_its_realms_game_id() {
+        assert_eq!(GameIdentity::d2gamma().realm_game, "d2rust");
+        // A mod game says d2rust until it names its realm's game.
+        assert_eq!(GameIdentity::new("M", "1", "M").realm_game, "d2rust");
+        let id = GameIdentity::new("M", "1", "M").with_realm_game("mymod");
+        assert_eq!(id.realm_game, "mymod");
     }
 
     #[test]

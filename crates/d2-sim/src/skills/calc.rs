@@ -42,6 +42,12 @@ pub trait CalcContext {
     fn unit(&mut self) -> Option<&mut dyn CalcUnit> {
         None
     }
+    /// The skill and level a skills formula is evaluated for, for a mod
+    /// game's parameters that read the skill's own records; `None` outside
+    /// a skills formula.
+    fn skill(&self) -> Option<(i32, i32)> {
+        None
+    }
 }
 
 /// A mod game's value of parameter `c` in `ctx` (see

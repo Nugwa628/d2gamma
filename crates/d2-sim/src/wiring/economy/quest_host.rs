@@ -641,8 +641,13 @@ impl<X: Pending, R: QuestRest> QuestWorld for HostQuests<'_, '_, X, R> {
     fn quests(&mut self, player: UnitId) -> Option<&mut PlayerQuests> {
         self.inner.quests(player)
     }
+    /// The act the rest knows the unit in; a unit created since its last
+    /// sync (a boss in its creation's quest hook) is not known there yet:
+    /// the act of its room's level ([`Self::unit_level`]).
     fn unit_act(&self, unit: UnitId) -> Option<u8> {
-        self.inner.unit_act(unit)
+        self.inner
+            .unit_act(unit)
+            .or_else(|| self.unit_level(unit).map(crate::drlg::act_of_level))
     }
     fn player_class(&self, player: UnitId) -> u8 {
         self.inner.player_class(player)
@@ -1240,7 +1245,7 @@ impl<X: Pending, R: QuestRest> QuestWorld for HostQuests<'_, '_, X, R> {
     fn level_monsters(&mut self, level: u32) -> Vec<UnitId> {
         let e = &*self.inner.econ;
         let lists = &e.game.lists;
-        (0..5u8)
+        (0..lists.act_count() as u8)
             .flat_map(|act| lists.active_rooms(act))
             .filter(|&r| e.hooks.drlg.level_id(e.game, r) == Some(level))
             .flat_map(|r| lists.room_units(r))
@@ -1319,7 +1324,7 @@ impl<X: Pending, R: QuestRest> QuestWorld for HostQuests<'_, '_, X, R> {
             return;
         };
         let rec = h.waypoints.entry(player).or_default();
-        let _ = rec.get_mut(difficulty.min(2)).set(u32::from(idx));
+        let _ = rec.get_mut(difficulty).set(u32::from(idx));
     }
     fn player_busy(&mut self, player: UnitId) -> bool {
         self.inner.player_busy(player)
@@ -1662,7 +1667,14 @@ impl<X: Pending, R: QuestRest> QuestWorld for HostQuests<'_, '_, X, R> {
         h.monster_flag(victim, 12) || h.x.is_boss(victim)
     }
     fn has_act3(&mut self) -> bool {
-        self.inner.econ.hooks.drlg.dungeon.acts[2].is_some()
+        self.inner
+            .econ
+            .hooks
+            .drlg
+            .dungeon
+            .acts
+            .get(2)
+            .is_some_and(Option::is_some)
     }
     /// The Act III active room whose sub-tile rectangle holds (x, y).
     fn room_covering(&mut self, x: i32, y: i32) -> Option<RoomId> {
@@ -1811,14 +1823,15 @@ impl<X: Pending, R: QuestRest> QuestWorld for HostQuests<'_, '_, X, R> {
     /// without records: not active.
     fn waypoint_active(&mut self, player: UnitId, level: u32) -> bool {
         use crate::world::waypoints::WaypointMap;
-        let d = usize::from(self.difficulty().min(2));
+        let d = usize::from(self.difficulty());
         let h = &self.inner.econ.hooks;
         let Some(idx) = WaypointMap::new(&h.tables.levels).index_of_level(level) else {
             return false;
         };
-        h.waypoints
-            .get(&player)
-            .is_some_and(|r| r.0[d].test(u32::from(idx)).unwrap_or(false))
+        h.waypoints.get(&player).is_some_and(|r| {
+            r.0.get(d)
+                .is_some_and(|r| r.test(u32::from(idx)).unwrap_or(false))
+        })
     }
     /// Clears state 54; an Ancient in a room then takes mode 12, leaves it
     /// and is kept (the steps of [`Self::kill_in_place`]).

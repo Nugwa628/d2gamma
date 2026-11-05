@@ -76,3 +76,58 @@ fn box_buttons_and_keys() {
         );
     }
 }
+
+#[test]
+fn mod_difficulty_list_picks_fourth_and_pages_to_the_last_id() {
+    let mut f = at_box(4);
+    f.register_screen(
+        DIFFICULTY,
+        Box::new(ModDifficultyScreen::new(vec![
+            "Dawn".into(),
+            "Day".into(),
+            "Dusk".into(),
+            "Night".into(),
+        ])),
+    );
+    let row = f
+        .controls()
+        .iter()
+        .find(|c| c.action == Action::Trigger(Trigger::Difficulty(3)))
+        .unwrap();
+    assert!(row.enabled);
+    f.trigger(Trigger::Difficulty(3));
+    assert!(matches!(
+        f.outcome(),
+        Some(Outcome::GameLoad(GameLoad {
+            difficulty: Some(3),
+            ..
+        }))
+    ));
+    let mut f = at_box(255);
+    f.register_screen(
+        DIFFICULTY,
+        Box::new(ModDifficultyScreen::new(
+            (0..255).map(|i| format!("Tier {i}")).collect(),
+        )),
+    );
+    for _ in 0..50 {
+        f.input(FrontInput::Key(34));
+        f.tick();
+    }
+    assert!(f
+        .controls()
+        .iter()
+        .any(|c| c.action == Action::Trigger(Trigger::Difficulty(254))));
+    assert!(!f
+        .controls()
+        .iter()
+        .any(|c| c.action == Action::Trigger(Trigger::Difficulty(0))));
+    for _ in 0..50 {
+        f.input(FrontInput::Key(33));
+        f.tick();
+    }
+    assert!(f
+        .controls()
+        .iter()
+        .any(|c| c.action == Action::Trigger(Trigger::Difficulty(0))));
+}

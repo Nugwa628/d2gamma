@@ -37,6 +37,8 @@ pub const DRLG_PRESET: u32 = 2;
 /// The level types of every act DRLG of a game: their tables, their
 /// per-act state, the DS1 sources and the process-wide DS1 cache.
 pub struct WorldTypes {
+    maps: crate::drlg::maps::Maps,
+    pub acts: Option<crate::rules::acts::Acts>,
     /// The DRLG table view (the preset context of the hooks that are not
     /// given it: status 3, reset).
     pub drlg_data: Arc<DrlgData>,
@@ -84,6 +86,8 @@ impl WorldTypes {
     ) -> Self {
         Self {
             drlg_data,
+            maps: Default::default(),
+            acts: None,
             maze,
             presets: BTreeMap::new(),
             outdoor: BTreeMap::new(),
@@ -94,6 +98,17 @@ impl WorldTypes {
             subs,
             errors: Vec::new(),
         }
+    }
+
+    pub fn with_maps(mut self, maps: crate::drlg::maps::Maps) -> Self {
+        maps.aliases(&mut self.preset_data);
+        self.maps = maps;
+        self
+    }
+
+    pub fn with_acts(mut self, acts: Option<crate::rules::acts::Acts>) -> Self {
+        self.acts = acts;
+        self
     }
 
     pub(super) fn parts(&mut self, act: u8) -> Parts<'_> {
@@ -234,6 +249,63 @@ impl LevelTypes for WorldTypes {
     /// the preset infos (overwriting the preset's own). Allocation inits the
     /// levels' types on the way.
     fn create_act_levels(&mut self, drlg: &mut Drlg, data: &DrlgData) -> Result<(), DrlgError> {
+        if !self.maps.level.is_empty() {
+            let mut prepared = BTreeMap::new();
+            for l in &self.maps.level {
+                let owner = self.acts.as_ref().map_or_else(
+                    || Some(crate::drlg::act_of_level(l.id)),
+                    |a| a.find_act(l.id),
+                );
+                if owner == Some(drlg.act) {
+                    let map = self
+                        .maps
+                        .realize(l.id, drlg.start_seed, &*self.ds1)
+                        .map_err(|_| DrlgError::LevelType(l.id))?;
+                    prepared.insert(crate::drlg::maps::Maps::alias(l.id), map);
+                }
+            }
+            if !prepared.is_empty() {
+                let base =
+                    std::mem::replace(&mut self.ds1, Box::new(crate::drlg::maps::EmptySource));
+                self.ds1 = Box::new(crate::drlg::maps::MapSource {
+                    base,
+                    maps: prepared,
+                });
+            }
+            // An authored town opts this act into explicit map offsets instead of the native act placer.
+            let town = self
+                .acts
+                .as_ref()
+                .and_then(|a| a.town(drlg.act))
+                .unwrap_or_else(|| {
+                    crate::drlg::TOWN_LEVELS
+                        .get(usize::from(drlg.act))
+                        .copied()
+                        .unwrap_or(0)
+                });
+            if self.maps.level.iter().any(|l| l.id == town) {
+                return Ok(());
+            }
+        }
+        if let Some(acts) = &self.acts {
+            let Some(a) = acts.rows().get(usize::from(drlg.act)) else {
+                return Err(DrlgError::UnknownAct(drlg.act));
+            };
+            let base = crate::rules::acts::Acts::default();
+            let native = base
+                .rows()
+                .get(usize::from(drlg.act))
+                .is_some_and(|b| a.start == b.start && a.town == b.town && a.end >= b.end.min(137));
+            if !native {
+                return Ok(());
+            }
+        }
+        let authored: Vec<_> = self
+            .maps
+            .level
+            .iter()
+            .map(|l| (l.id, l.offset, l.size))
+            .collect();
         let p = self.parts(drlg.act);
         let mut alloc = AllocView {
             maze: Some(p.maze),
@@ -247,6 +319,9 @@ impl LevelTypes for WorldTypes {
         let r = p.outdoor.create_act_levels(drlg, data, p.od, &mut alloc);
         r.map_err(|e| outdoor_err(alloc.errors, 0, e))?;
         for (&id, &dir) in &p.outdoor.preset_direction {
+            if authored.iter().any(|l| l.0 == id) {
+                continue;
+            }
             let Some(l) = drlg.find_level(id) else {
                 continue;
             };
@@ -257,6 +332,12 @@ impl LevelTypes for WorldTypes {
                 .presets
                 .set_direction(l, dir)
                 .map_err(|e| preset_err(alloc.errors, id, e))?;
+        }
+        for (id, [x, y], [w, h]) in authored {
+            if let Some(l) = drlg.find_level(id) {
+                drlg.level_mut(l).rect =
+                    crate::drlg::TileRect::new(x, y, i32::from(w), i32::from(h));
+            }
         }
         Ok(())
     }

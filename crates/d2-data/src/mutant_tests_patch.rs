@@ -39,6 +39,7 @@ fn rules_of(
         fixed,
         scope: scope.into(),
         lists: vec![fields.iter().map(|f| v(f)).collect()],
+        adopt: false,
     }
 }
 
@@ -236,11 +237,12 @@ fn human_form_colon_after_table_only() {
     );
 }
 
-/// 85 patchable tables in the game's data set.
+/// 86 patchable tables in the game's data set.
 #[test]
-fn rules_are_the_85_tables() {
+fn rules_are_the_86_tables() {
     let r = rules();
-    assert_eq!(r.len(), 85);
+    assert_eq!(r.len(), 86);
+    assert!(r.iter().any(|t| t.name == "soundenviron"));
     assert!(r.iter().any(|t| t.name == "weapons"));
 }
 
@@ -666,7 +668,7 @@ fn c04_out_of_range_int_under_mod_rules() {
 
 /// A missing string key and a name a callback doesn't know are errors
 /// (C02) under `DataRules::Original` and notes (C04) under
-/// `DataRules::Mod`.
+/// `DataRules::Mod`. A broken callback reference also gets C03 under both.
 #[test]
 fn c04_strmiss_and_cbmiss_under_mod_rules() {
     for (body, kind) in [
@@ -676,18 +678,28 @@ fn c04_strmiss_and_cbmiss_under_mod_rules() {
         let (base, data, _) = patched(body);
         let r = compile_patched(&base, &data, &live());
         let codes: Vec<Code> = r.findings.iter().map(|f| f.code).collect();
-        assert_eq!(codes, [Code::C02], "{body}: {:?}", r.findings);
+        let expected = if kind == "CbMiss" {
+            vec![Code::C03, Code::C02]
+        } else {
+            vec![Code::C02]
+        };
+        assert_eq!(codes, expected, "{body}: {:?}", r.findings);
         let mut m = live();
         m.rules = crate::bin::DataRules::Mod;
         let r = compile_patched(&base, &data, &m);
         let codes: Vec<Code> = r.findings.iter().map(|f| f.code).collect();
-        assert_eq!(codes, [Code::C04], "{body}: {:?}", r.findings);
+        let expected = if kind == "CbMiss" {
+            vec![Code::C03, Code::C04]
+        } else {
+            vec![Code::C04]
+        };
+        assert_eq!(codes, expected, "{body}: {:?}", r.findings);
         assert!(
-            r.findings[0].detail.starts_with(kind),
+            r.findings.last().unwrap().detail.starts_with(kind),
             "{}",
             r.findings[0].detail
         );
-        assert!(r.live.is_some());
+        assert_eq!(r.live.is_some(), kind == "StrMiss");
     }
 }
 

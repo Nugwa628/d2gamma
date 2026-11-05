@@ -12,6 +12,7 @@ pub mod class_pick;
 pub mod drop;
 pub mod quality;
 pub mod quest_drop;
+pub mod rules;
 pub mod runtime;
 pub mod softfloat;
 pub mod walk;
@@ -85,3 +86,6 @@ pub enum TreasureError {
     #[error("quest class pick without a `gld ` row (fatal 0x17C / 0x17F)")]
     NoGold,
 }
+
+#[cfg(test)]
+mod rule_tests;

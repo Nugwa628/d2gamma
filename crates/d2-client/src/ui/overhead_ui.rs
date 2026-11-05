@@ -80,7 +80,11 @@ impl Bubbles {
 /// anchor; without one (no host), the local player's own position
 /// ([`ClientWorld::local_position`]) with no shake. None without a local
 /// player.
-fn camera(w: &ClientWorld, anchor: Option<FrameAnchor>, open_mode: u8) -> Option<Camera> {
+pub(crate) fn camera(
+    w: &ClientWorld,
+    anchor: Option<FrameAnchor>,
+    open_mode: u8,
+) -> Option<Camera> {
     let mode = OpenMode::new(open_mode).unwrap_or(OpenMode::NONE);
     if let Some(a) = anchor {
         return Some(a.camera(FrameSize::play(), mode));
@@ -97,7 +101,7 @@ fn camera(w: &ClientWorld, anchor: Option<FrameAnchor>, open_mode: u8) -> Option
 /// A unit's feet under the frame's camera: the local player at the anchor's
 /// position, the one it is drawn at, every other unit at its draw anchor by
 /// type.
-fn unit_point(
+pub(crate) fn unit_point(
     w: &ClientWorld,
     cam: &Camera,
     anchor: Option<FrameAnchor>,
@@ -113,6 +117,12 @@ fn unit_point(
 /// The panel that draws the bubbles (module doc).
 pub(super) struct OverheadUi {
     pub(super) sh: SharedRef,
+    /// A mod game draws the texts itself
+    /// (`ClientMods::without_overhead_bubbles`): the records age and free
+    /// as ever, nothing is drawn.
+    pub(super) hidden: bool,
+    /// A mod game's panels read the texts (`mod_io::UiCtx::speech`).
+    pub(super) feed: bool,
 }
 
 impl Panel for OverheadUi {
@@ -129,7 +139,11 @@ impl Panel for OverheadUi {
         let sh = &mut *sh;
         let now = sh.ui_ms(ctx.tick);
         sh.bubbles.step(now);
+        let mut speech = Vec::new();
         if sh.bubbles.records.is_empty() {
+            if self.feed {
+                crate::ui::mod_io::set_speech(speech);
+            }
             return;
         }
         // Bubbles sit over world units, so they are placed on the whole UI
@@ -198,6 +212,16 @@ impl Panel for OverheadUi {
             else {
                 continue;
             };
+            if self.feed {
+                speech.push(crate::ui::mod_io::Speech {
+                    unit: *key,
+                    text: text.clone(),
+                    at: Point::new(at.x - ox, at.y),
+                });
+            }
+            if self.hidden {
+                continue;
+            }
             let bx = BubbleBox::new(&text, &m).at(px, py);
             if let BubbleResult::Drawn {
                 draw: Some(draw), ..
@@ -222,6 +246,9 @@ impl Panel for OverheadUi {
         }
         for k in freed {
             sh.bubbles.records.remove(&k);
+        }
+        if self.feed {
+            crate::ui::mod_io::set_speech(speech);
         }
     }
 

@@ -5,7 +5,7 @@
 //! level and stats from the owner's skill, the source link), records it
 //! in the owner's pet lists and makes it follow; a revive body tests a
 //! corpse, stands it up and binds it to its new owner. These are the
-//! steps D2RUST's own summon and revive bodies run, one seam each, so a
+//! steps D2Gamma's own summon and revive bodies run, one seam each, so a
 //! mod can run them in its own order. Every method has a default that
 //! does nothing.
 
@@ -13,10 +13,53 @@ use crate::units::UnitId;
 
 pub use crate::skills::use_::bodies::Summon;
 
+/// Explicit placement and setup values for a class sentry.
+#[derive(Clone, Copy, Debug)]
+pub struct SentrySetup {
+    pub class: u16,
+    pub pet_type: u16,
+    pub mode: u8,
+    pub cap: i32,
+    pub skill: i32,
+    pub level: i32,
+    pub in_town: bool,
+    pub at: (i32, i32),
+}
+
 /// Summons, pets, revives and paths (a supertrait of
 /// [`super::SkillHost`]).
 #[allow(unused_variables)]
 pub trait SkillPets {
+    /// Schedule a pet event after a delay in base ticks at the game's tick rate.
+    fn pet_timer(&mut self, pet: UnitId, kind: u8, delay: i32) {}
+    /// Apply explicit shadow life/stat values; the level-one setup is skipped.
+    fn shadow_stats(
+        &mut self,
+        pet: UnitId,
+        level: i32,
+        life_percent: i32,
+        stats: &[super::StateStat],
+        umod: Option<u8>,
+    ) {
+    }
+    /// Generate the pet's equipment using the normal monster equipment rows.
+    fn equip_pet(&mut self, owner: UnitId, pet: UnitId, skill: i32, level: i32, item_level: i32) {}
+    /// Apply one monster modifier through the shared modifier path.
+    fn pet_umod(&mut self, pet: UnitId, umod: u8, arg: i32) {}
+    /// Add the owner's summon resistance, respecting the pet's elemental absorbs.
+    fn summon_resistance(&mut self, owner: UnitId, pet: UnitId) {
+        let _ = (owner, pet);
+    }
+    /// Announce an ally without changing its path target.
+    fn announce_pet(&mut self, owner: UnitId, pet: UnitId) {
+        let _ = (owner, pet);
+    }
+    /// Place a sentry, apply pet stats/alignment and request its initial mode.
+    fn place_sentry(&mut self, caster: UnitId, setup: &SentrySetup) -> Option<UnitId> {
+        None
+    }
+    /// Join the pet to its owner's player target list.
+    fn join_owner_targets(&mut self, owner: UnitId, pet: UnitId) {}
     /// Spawns a summon: a monster of `req.class` in `req.mode` at the
     /// owner's target point (or at `req.x`, `req.y` with flag 1), added to
     /// the owner's pet list of `req.pet_type` (at most `req.pet_max`, at
@@ -82,4 +125,46 @@ pub trait SkillPets {
     fn start_dash(&mut self, u: UnitId, to: (i32, i32), path_type: u8, velocity: i32) -> bool {
         false
     }
+    /// Sets the collision masks of the unit's path: `move_mask`, what
+    /// blocks its steps, and `foot_mask`, what its footprint marks on the
+    /// rooms. `None` keeps a mask as it is. A leap clears both before it
+    /// starts, so the unit flies over what would stop a walk. False when
+    /// the unit has no path.
+    fn set_path_masks(
+        &mut self,
+        u: UnitId,
+        move_mask: Option<u16>,
+        foot_mask: Option<u16>,
+    ) -> bool {
+        false
+    }
+    /// The landing step of a leap, on each do frame of its flight: the
+    /// engine's own Leap landing on the unit's entry of `skill`. A unit on
+    /// the entry's point (params 1 and 2) lands: its path takes back its
+    /// walk masks and type, the landing message goes out, and a player's
+    /// animation ends on the next frame. A player still in flight holds
+    /// its animation at frame 10. True on the frame the unit lands; false
+    /// in flight, or without the entry or a path.
+    fn leap_land(&mut self, u: UnitId, skill: i32) -> bool {
+        false
+    }
+    /// The next target of a leap attack, on the unit's entry of `skill`:
+    /// its target when within melee range, else the target the entry
+    /// keeps (params 3 and 4), else the next unit around it the leap
+    /// attack may hit. The target found is kept on the entry; false
+    /// (the entry keeps none) when there is none, or without the entry.
+    fn leap_next_target(&mut self, u: UnitId, skill: i32) -> bool {
+        false
+    }
+    /// The engine's own Leap Attack strike of `skill` at `level`: a melee
+    /// hit on the entry's next target ([`SkillPets::leap_next_target`])
+    /// with the skill's damage bonus, element and overlay, which also
+    /// ends a stun on it. True when there was a target (hit or miss).
+    fn leap_strike(&mut self, u: UnitId, skill: i32, level: i32) -> bool {
+        false
+    }
+    /// Plays the unit's current animation again from `frame` (its timers
+    /// of the mode are posted anew), as a leap attack does after each
+    /// strike.
+    fn anim_from(&mut self, u: UnitId, frame: i32) {}
 }

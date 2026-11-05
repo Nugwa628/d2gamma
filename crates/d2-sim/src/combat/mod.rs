@@ -9,6 +9,8 @@
 //! [`CombatWorld`] seam, which extends [`crate::skills::SkillUnits`].
 //! Table data comes from `d2_data` typed records ([`CombatTables`]).
 
+/// Declared crowd control: what a hit's source states it stuns, interrupts or freezes.
+pub mod cc;
 /// Damage roll, resistances, application, leech and the death trigger.
 pub mod damage;
 /// The unit event functions (on-hit, on-kill and similar triggers).

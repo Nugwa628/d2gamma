@@ -1,0 +1,7 @@
+id = "ai-lift-minion"
+name = "AI 116 Minion, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "A minion as a graph: AI 116 (Minion), without its orders."
+api = 1
+kind = "full"

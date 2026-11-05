@@ -635,6 +635,19 @@ struct Ctx<'a> {
 }
 
 impl Ctx<'_> {
+    /// True when `f` keeps the byte a compile writes by wrapping, also under
+    /// [`DataRules::Mod`]: a level's `Id` cell past 255 is stored modulo 256
+    /// rather than clamped, so a table compiled here matches one compiled by
+    /// the original tool. Nothing reads the byte: a level is its row.
+    fn wraps_byte(&self, f: &FieldDef) -> bool {
+        let table = self
+            .file
+            .rsplit([':', '/', '\\'])
+            .next()
+            .unwrap_or_default();
+        table.eq_ignore_ascii_case("levels.txt") && f.column.eq_ignore_ascii_case(b"id")
+    }
+
     fn diag(&mut self, kind: DiagKind, line: usize, column: usize, field: &FieldDef) {
         self.diagnostics.push(Diagnostic {
             kind,
@@ -792,10 +805,36 @@ pub fn compile_table_with(
         }
     }
 
+    let disabled_column = txt
+        .header
+        .iter()
+        .position(|h| h == crate::patch::DISABLED_COLUMN);
     // Pass 2: everything else, then missing fields.
     let linkers: &Linkers = linkers;
     for (r, rec) in txt.records.iter().enumerate() {
         let record = &mut records[r * record_size..(r + 1) * record_size];
+        if disabled_column.is_some_and(|c| rec.cells[c] == b"1") {
+            // Retain identity labels used by hand-built linkers, including
+            // the automatic treasure-class allocation of an item type.
+            for (c, cell) in rec.cells.iter().enumerate() {
+                if let Some(fi) = binding.column_field[c] {
+                    let f = &fields[fi];
+                    if (matches!(f.field_type, FieldType::Ascii | FieldType::Byte2)
+                        && txt
+                            .header
+                            .first()
+                            .is_some_and(|h| names_equal(h, &f.column)))
+                        || f.column.eq_ignore_ascii_case(b"treasureclass")
+                        || (f.field_type.is_integer() && f.column.eq_ignore_ascii_case(b"Id"))
+                    {
+                        pass2(
+                            &mut ctx, f, cell, record, rec.line, c, r, linkers, callbacks,
+                        )?;
+                    }
+                }
+            }
+            continue;
+        }
         for (c, cell) in rec.cells.iter().enumerate() {
             let Some(fi) = binding.column_field[c] else {
                 continue;
@@ -877,6 +916,11 @@ fn pass1(
             let key = name_key(cell).ok_or_else(|| ctx.err(ErrorCode::E11, line, c, f))?;
             let index = l.find_or_add(&key);
             if f.field_type.id() == 17 {
+                if ctx.rules == DataRules::Mod && index >= u32::from(u16::MAX) {
+                    return Err(ctx
+                        .err(ErrorCode::E12, line, c, f)
+                        .with_detail(format!("{name}: id space exhausted (maximum 65535 keys)")));
+                }
                 put(record, f.offset, &(index as u16).to_le_bytes());
             } else {
                 put(record, f.offset, &index.to_le_bytes());
@@ -914,7 +958,7 @@ fn pass2(
                     let (lo, hi) = int_range(t);
                     if v < lo || v > hi {
                         ctx.diag(DiagKind::IntRange, line, c, f);
-                        if ctx.rules == DataRules::Mod {
+                        if ctx.rules == DataRules::Mod && !ctx.wraps_byte(f) {
                             // Two's complement of the clamped value, as
                             // parse_int writes a negative cell.
                             clamped = Some(v.clamp(lo, hi) as i64 as u32);
@@ -960,6 +1004,17 @@ fn pass2(
             };
             if index.is_none() && !cell.is_empty() {
                 ctx.diag(DiagKind::LinkMiss, line, c, f);
+            }
+            let capacity = match t.id() {
+                13 | 21 => u32::from(u8::MAX),
+                15 | 20 => u32::from(u16::MAX),
+                _ => u32::MAX,
+            };
+            if ctx.rules == DataRules::Mod && index.is_some_and(|id| id >= capacity) {
+                return Err(ctx.err(ErrorCode::E12, line, c, f).with_detail(format!(
+                    "{name}: id space exhausted for {} (maximum {capacity} keys)",
+                    f.name()
+                )));
             }
             let v = index.unwrap_or(u32::MAX);
             match t.id() {

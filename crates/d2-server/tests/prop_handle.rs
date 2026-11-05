@@ -213,6 +213,7 @@ fn skills() -> SkillTables {
         miss_code: Vec::new(),
         level_cap: LEVEL_CAP_114D,
         stat_count: N_STATS as _,
+        data_rules: d2_data::bin::DataRules::Original,
     }
 }
 
@@ -1088,6 +1089,7 @@ fn empty_action_tables() -> ActionTables {
             miss_code: Vec::new(),
             level_cap: 0,
             stat_count: 0,
+            data_rules: d2_data::bin::DataRules::Original,
         },
         combat: CombatTables {
             charstats: Vec::new(),
@@ -1523,6 +1525,7 @@ mod trade {
                 miss_code: Vec::new(),
                 level_cap: 0,
                 stat_count: 0,
+                data_rules: d2_data::bin::DataRules::Original,
             },
             combat: CombatTables {
                 charstats: Vec::new(),

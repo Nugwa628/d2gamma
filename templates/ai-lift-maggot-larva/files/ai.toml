@@ -1,0 +1,38 @@
+version = 1
+
+# monstats aip1..aip5 of the maggotlarva1 row 180: 75, 20, 60, 15, 20. The body keeps a flag in its AI params: after a swing it must
+# stand once before it can swing again. The graph keeps that with a cooldown on the swing: the larva swings, thinks again when the
+# swing is over (inside the cooldown, so it stands aip2 = 20 frames), and swings again only when the cooldown has run out.
+[[ai]]
+index = 38
+name = "MaggotLarva (lifted)"
+target = "enemy"
+
+[[ai.cooldown]]
+name = "swung"
+seconds = 1.2
+
+[[ai.state]]
+name = "crawl"
+
+# In reach and rested: aip1 = 75 percent swing 1.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+starts_cooldown = "swung"
+when = [{ kind = "in_melee" }, { kind = "cooldown_ready", name = "swung" }, { kind = "random", percent = 75 }]
+
+# Else (in reach) stand aip2 = 20 frames.
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.8
+when = [{ kind = "in_melee" }]
+
+# Out of reach: aip3 = 60 percent walk to the target (one step short of it), else stand aip4 = 15 frames.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 60 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6

@@ -1,0 +1,9 @@
+id="showcase-notes"
+name="Lantern Reach field notes"
+author="Nugwa"
+version="1.0.0"
+description="An optional route reminder approved by Lantern Reach."
+api=1
+kind="addon"
+for="showcase"
+screen_only=true

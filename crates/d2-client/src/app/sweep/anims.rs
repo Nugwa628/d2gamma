@@ -11,7 +11,6 @@
 use super::*;
 use d2_data::tables::{Leveldefs, Monstats, Monstats2, Skills};
 use d2_sim::monsters::population::placement::water_only;
-use d2_sim::world::vendors::TOWNS;
 
 /// How far the drawn rate may be from the table rate: about a frame more
 /// or less over the shortest measured stretch.
@@ -19,7 +18,7 @@ const TOLERANCE: &str = "0.15";
 
 /// Walking as a player does: the left button held right of the player for
 /// a little over two seconds.
-const HOLD: &str = "at 2 input hold 560 300 140";
+const HOLD: &str = "at 2 input hold 560 380 140";
 
 /// The player's cast mode: a skill whose `anim` is this plays the cast.
 const CAST_MODE: u8 = 10;
@@ -47,17 +46,14 @@ fn unmeasurable(class: usize, m: &Monstats, m2: Option<&Monstats2>) -> Option<&'
     None
 }
 
-pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
+pub(super) fn generate(live: &LiveData, g: &mut Generated, world: &World<'_>) -> Result<()> {
     let levels = live.tables.rows::<Leveldefs>()?;
     let monsters = live.tables.rows::<Monstats>()?;
     let monsters2 = live.tables.rows::<Monstats2>()?;
     let skills = live.tables.rows::<Skills>()?;
     // The first Act I field (not a town) with a generator.
-    let field = (1..levels.len()).find(|&id| {
-        levels[id].drlgtype > 0
-            && live.waypoints.levels.get(id).is_some_and(|l| l.act == 0)
-            && !TOWNS.contains(&(id as u16))
-    });
+    let field = (1..levels.len())
+        .find(|&id| levels[id].drlgtype > 0 && world.act(id) == Some(0) && !world.is_town(id));
     let Some(field) = field else {
         g.skip("anims:no-act1-field");
         return Ok(());
@@ -68,9 +64,40 @@ pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
     let check = |ty: &str, class: &str, mode: &str, by: u32| {
         format!("by {by} check anim_rate({ty}, {class}, {mode}).ratio ~ 1 {TOLERANCE}")
     };
+    // A mod's waypoint may occupy the warp arrival cell. Start at its declared
+    // entry so the movement click reaches ground rather than opening that UI.
+    let area = |class, level| {
+        let mut header = format!("char class {class}\nchar area 0 {level}");
+        if let Some(map) = live.maps.level.iter().find(|m| m.id == level) {
+            let mut entry = map.entry;
+            // Keep the setup outside an exit's automatic activation radius.
+            if map
+                .warp
+                .iter()
+                .any(|w| w.at[0].abs_diff(entry[0]).max(w.at[1].abs_diff(entry[1])) <= 2)
+            {
+                for (v, size) in entry.iter_mut().zip(map.size) {
+                    *v = if *v < size / 2 {
+                        (*v + 2).min(size - 2)
+                    } else {
+                        v.saturating_sub(2).max(1)
+                    };
+                }
+            }
+            let x = (map.offset[0] + i32::from(entry[0])) * 5 + 2;
+            let y = (map.offset[1] + i32::from(entry[1])) * 5 + 2;
+            header.push_str(&format!("\nchar at {x} {y}"));
+        }
+        header
+    };
     for class in 0..7u8 {
-        let town = format!("char class {class}\nchar area 0 {}", TOWNS[0]);
-        let out = format!("char class {class}\nchar area 0 {field}");
+        let town = area(
+            class,
+            world
+                .town(0)
+                .expect("the selected field belongs to act zero"),
+        );
+        let out = area(class, field as u32);
         // Movement goes through the client's own input, as a player's does:
         // the left button held right of the player (a message sent past the
         // client would leave the client drawing its player standing). The
@@ -83,7 +110,7 @@ pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
             (
                 "neutral",
                 &out,
-                format!("{god}\nat 2 input click 560 300"),
+                format!("{god}\nat 2 input click 560 380"),
                 "neutral",
             ),
             ("walk", &out, format!("{god}\n{HOLD}"), "walk"),
@@ -157,11 +184,8 @@ pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
         )?;
     }
     // Town NPCs in every act: the first one in view.
-    for (act, town) in TOWNS.iter().enumerate() {
-        if !levels
-            .get(usize::from(*town))
-            .is_some_and(|l| l.drlgtype > 0)
-        {
+    for (act, town) in world.towns() {
+        if !levels.get(town as usize).is_some_and(|l| l.drlgtype > 0) {
             g.skip("anims:town-not-playable");
             continue;
         }

@@ -1,0 +1,7 @@
+id = "ai-lift-blood-lord"
+name = "AI 125 BloodLord, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "BloodLord as a graph: AI 125 (BloodLord)."
+api = 1
+kind = "full"

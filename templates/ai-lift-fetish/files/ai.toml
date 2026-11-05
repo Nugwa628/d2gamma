@@ -1,0 +1,67 @@
+version = 1
+
+# monstats aip1..aip4 of every fetish row (Normal): 100, 10, 4, 33.
+# The body keeps a phase (0 close in, 1 fight, 2 back off) and a think counter
+# in the monster's AI params; here the phases are states.
+[[ai]]
+index = 30
+name = "Fetish (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "approach"
+
+[[ai.state.transition]]
+to = "fight"
+when = [{ kind = "in_melee" }]
+
+# The body asks for a walking speed of 50 percent (set_velocity) on its way in.
+[[ai.state.action]]
+kind = "move_to"
+speed = 50
+
+[[ai.state]]
+name = "fight"
+
+# aip3 = 4 thinks in this phase: about as many seconds as it takes to swing four times.
+# (The body also wants the target's life above aip4 = 33%; a graph cannot read it.)
+[[ai.state.transition]]
+to = "back_off"
+when = [{ kind = "in_state_for", seconds = 4 }]
+
+# aip1 = 100: always swing when in reach.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 100 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4
+when = [{ kind = "in_melee" }]
+
+[[ai.state.action]]
+kind = "move_to"
+speed = 50
+
+[[ai.state]]
+name = "back_off"
+
+# Far enough (12) for two thinks: back to closing in.
+[[ai.state.transition]]
+to = "approach"
+when = [{ kind = "distance_above", value = 12 }, { kind = "in_state_for", seconds = 1 }]
+
+[[ai.state.action]]
+kind = "flee"
+steps = 14
+when = [{ kind = "distance_below", value = 12 }]
+
+[[ai.state.action]]
+kind = "move_around"
+steps = 4
+when = [{ kind = "random", percent = 20 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4

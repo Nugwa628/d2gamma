@@ -83,6 +83,7 @@ impl FrontCanvas {
             | DrawItem::Rect { at, .. }
             | DrawItem::Border { at, .. }
             | DrawItem::Pill { at, .. }
+            | DrawItem::Picture { at, .. }
             | DrawItem::Cut { at, .. } => at,
             DrawItem::Frame { rect, .. } => {
                 rect.x += self.left();

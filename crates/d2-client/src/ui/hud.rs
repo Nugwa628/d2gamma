@@ -30,7 +30,7 @@ use crate::bridge::world::{ClientWorld, UnitKey, PLAYER};
 use crate::ui::draw::{ImageRef, ImageRequest, UiDraw, UiDrawSink};
 use crate::ui::geom::{Point, Rect};
 use crate::ui::layout::Screen;
-use crate::ui::panel::{Panel, PanelId, UiCtx, UiEvent, UiResponse, WidgetId};
+use crate::ui::panel::{ClientIntent, Panel, PanelId, UiCtx, UiEvent, UiResponse, WidgetId};
 use crate::ui::panels::control::belt::BeltColor;
 use crate::ui::panels::control::buttons::{
     draw_800, help_caption, menu_button, run_button, skill_icon_file, skill_icon_pos,
@@ -44,6 +44,7 @@ use crate::ui::panels::control::globes::{
 use crate::ui::panels::control::input::{CtrlEffect, CtrlInput, InputEnv, UpFacts};
 use crate::ui::panels::control::minipanel::{self, MiniAction, MiniPanel, PlayerFacts, UI_MINI};
 use crate::ui::panels::{PanelOutput, UiFiles};
+use crate::ui::PointerButton;
 
 /// The HUD adapter's id: not a UI state, open for good (like the border).
 pub const HUD_PANEL: PanelId = PanelId(0x101);
@@ -850,6 +851,45 @@ fn model_k(
 }
 
 impl HudUi {
+    /// A right click on a belt item uses it (C→S 0x26, as its belt key
+    /// does); with Shift held in an expansion game the hireling drinks it.
+    /// The press uses the item and the release over the belt is taken. Any
+    /// other event: `None`.
+    fn belt_right_click(&mut self, e: UiEvent, ctx: &UiCtx) -> Option<UiResponse> {
+        let (down, at) = match e {
+            UiEvent::Press {
+                button: PointerButton::Right,
+                at,
+            } => (true, at),
+            UiEvent::Release {
+                button: PointerButton::Right,
+                at,
+            } => (false, at),
+            _ => return None,
+        };
+        let mut sh = self.sh.borrow_mut();
+        let sh = &mut *sh;
+        let screen = sh.config.screen;
+        if !sh.hud.belt.over(ctx.world, &screen, (at.x, at.y)) {
+            return None;
+        }
+        if down {
+            let facts = crate::bridge::belt::KeyFacts {
+                shift: sh.items.shift,
+                ui9_open: sh.states.is_open(9),
+            };
+            let msg = sh
+                .hud
+                .belt
+                .use_slot(ctx.world, &screen, (at.x, at.y))
+                .and_then(|slot| crate::bridge::belt::slot_message(ctx.world, slot, facts));
+            if let Some(m) = msg {
+                sh.outputs.push(PanelOutput::Intent(ClientIntent(m)));
+            }
+        }
+        Some(UiResponse::Consumed)
+    }
+
     /// The skill hotkey commands: 14–21 and 46–53 (46–53 in an expansion game
     /// only) assign with state 3 open and use otherwise; 39 / 40 the wheel step
     /// −1 / +1. None runs without a living player.
@@ -1494,6 +1534,9 @@ impl Panel for HudUi {
     fn event(&mut self, e: UiEvent, ctx: &UiCtx) -> UiResponse {
         if let UiEvent::Action(a) = e {
             return self.hotkey_action(a, ctx);
+        }
+        if let Some(r) = self.belt_right_click(e, ctx) {
+            return r;
         }
         let Some((down, at)) = left(e) else {
             return UiResponse::Ignored;

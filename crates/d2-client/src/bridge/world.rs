@@ -268,6 +268,8 @@ pub struct ClientUnit {
     pub follows: u32,
     /// Stat list layer 0 base values.
     pub stats: BTreeMap<u16, i32>,
+    /// Totals supplied by the versioned mod stat message.
+    pub mod_totals: BTreeMap<u16, i32>,
     /// Client copy of the unit seed {lo, hi}. `None` when it
     /// was derived from a client room's seed with no client DRLG in the
     /// model (no DRLG source).
@@ -385,6 +387,10 @@ pub struct ClientUnit {
     /// The stat list of each state:
     /// (stat, param) → value, attached to the unit.
     pub state_lists: BTreeMap<u16, BTreeMap<(u16, u16), i32>>,
+    /// The stack count of each state that has stacks (a mod game's
+    /// `states.toml`), as the server last sent it (S→C 0xB7, op 3). A state
+    /// with no entry has no stacks to show. Never in D2Gamma's own games.
+    pub state_stacks: BTreeMap<u16, u16>,
     /// The expire counter (in client unit updates) of each
     /// state list the client made itself with flag 2 (NEWLENGTH): the
     /// `cltstfunc` 15 list of state 12. The unit update's first step
@@ -525,6 +531,7 @@ impl ClientUnit {
             server_point: (0, 0),
             follows: 0,
             stats: BTreeMap::new(),
+            mod_totals: BTreeMap::new(),
             seed: Some(INIT_SEED),
             seed_sets: 0,
             queue: Vec::new(),
@@ -557,6 +564,7 @@ impl ClientUnit {
             states: BTreeSet::new(),
             palette_index: 0,
             state_lists: BTreeMap::new(),
+            state_stacks: BTreeMap::new(),
             timed_lists: BTreeMap::new(),
             temp_lists: Vec::new(),
             turned_toward: None,
@@ -960,6 +968,9 @@ impl GfxReady {
 /// The client world model.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ClientWorld {
+    /// Transient server-published script values for the mod HUD, bounded by the wire service.
+    pub synced_values: BTreeMap<String, i32>,
+    pub ui_variables: BTreeMap<String, i32>,
     /// Session messages seen so far (count, never reset).
     pub session_total: u64,
     /// The latest authority view acknowledgement: sequence, width, height.
@@ -979,6 +990,8 @@ pub struct ClientWorld {
     /// The item tables the streams are decoded with
     /// (`bridge::item_lists`).
     pub item_tables: super::item_lists::ItemTablesRef,
+    /// The rules the game runs under (`Bridge::set_rules`).
+    pub rules: super::passive::RulesRef,
     /// Per class: charstats life per vitality, stamina per vitality, mana
     /// per energy (`class_bonus`).
     pub class_vitals: Vec<[u8; 3]>,
@@ -1544,6 +1557,11 @@ impl ClientWorld {
         let Some(u) = self.units.get(&key) else {
             return 0;
         };
+        if layer == 0 {
+            if let Some(value) = u.mod_totals.get(&stat) {
+                return *value;
+            }
+        }
         let t = u
             .state_lists
             .values()
@@ -1903,7 +1921,7 @@ pub struct ClientTables {
     pub monsters: Vec<Option<MonsterClass>>,
     /// The act level bonus of the monster skills by difficulty
     /// (the difficulty record +0x10, `difficultylevels`).
-    pub monster_skill_bonus: [i32; 3],
+    pub monster_skill_bonus: Vec<i32>,
     /// One entry per `itemstatcost` row.
     pub stats: Vec<StatSend>,
     /// One entry per `Levels.txt` row, by level id.

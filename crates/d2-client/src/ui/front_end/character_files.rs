@@ -35,6 +35,11 @@ pub trait CharacterFiles: fmt::Debug + Send + Sync {
     /// character; `None`: it cannot be converted (the select screen shows
     /// its "conversion failed" message).
     fn to_expansion(&self, bytes: &[u8]) -> Option<Vec<u8>>;
+
+    /// Explicit plain-to-mod copy using the plain game's save tables.
+    fn copy_to_mod(&self, _bytes: &[u8]) -> Result<Vec<u8>, String> {
+        Err("Open the D2Gamma Mods screen from plain D2Gamma to copy a character.".into())
+    }
 }
 
 /// The tables of a stub's write: a stub has no body, so none is read.

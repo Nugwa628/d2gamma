@@ -78,6 +78,11 @@ pub trait AutomapLevels {
     fn layer(&self, level: u32) -> Option<u32>;
     fn level_type(&self, level: u32) -> Option<u32>;
     fn act(&self, level: u32) -> Option<u8>;
+    /// The highest `Layer` any level has; sizes the data file's offset
+    /// table ([`persist::table_entries`]). `None`: the default table.
+    fn max_layer(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// The tables of the cell sources.

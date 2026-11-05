@@ -1,0 +1,18 @@
+version = 1
+
+# Skill 395 "Shockwave" (a block-slot skills row): damage around the caster and a
+# 1.5 second stun. Only parts that write `cc` can stun; the same skill without
+# the `cc` block would hurt but never interrupt.
+[[skill]]
+id = 395
+name = "Shockwave"
+[[skill.part]]
+kind = "area_hit"
+radius = 8
+around = "caster"
+[skill.part.damage]
+min = "lvl * 12"
+max = "lvl * 12"
+[[skill.part.cc]]
+kind = "stun"
+seconds = 1.5

@@ -340,16 +340,25 @@ pub struct AreaNode {
 }
 
 /// The per-act node lists (game +0xD8 + 4·act), descending x.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InactiveStore {
-    pub acts: [Vec<AreaNode>; 5],
+    pub acts: Vec<Vec<AreaNode>>,
 }
 
+impl Default for InactiveStore {
+    fn default() -> Self {
+        Self {
+            acts: vec![Vec::new(); 5],
+        }
+    }
+}
 impl InactiveStore {
     /// The node of the room at (`x`, `y`) in `act`, created when missing:
     /// a new node goes before the first node of smaller x.
     pub fn node_mut(&mut self, act: u8, x: i32, y: i32) -> &mut AreaNode {
-        let list = &mut self.acts[usize::from(act.min(4))];
+        self.acts
+            .resize_with(self.acts.len().max(usize::from(act) + 1), Vec::new);
+        let list = &mut self.acts[usize::from(act)];
         if let Some(i) = list.iter().position(|n| n.x == x && n.y == y) {
             return &mut list[i];
         }
@@ -379,7 +388,9 @@ impl InactiveStore {
     /// Restore's unlink of the room's node; `None`: no
     /// records for that room.
     pub fn take(&mut self, act: u8, x: i32, y: i32) -> Option<AreaNode> {
-        let list = &mut self.acts[usize::from(act.min(4))];
+        self.acts
+            .resize_with(self.acts.len().max(usize::from(act) + 1), Vec::new);
+        let list = &mut self.acts[usize::from(act)];
         let i = list.iter().position(|n| n.x == x && n.y == y)?;
         Some(list.remove(i))
     }

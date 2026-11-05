@@ -387,6 +387,7 @@ mod tests {
             miss_code: Vec::new(),
             level_cap: 99,
             stat_count: 359,
+            data_rules: d2_data::bin::DataRules::Original,
         }));
         let do_ = super::super::client_do::client_do;
         assert_eq!(do_(&mut w, &i, key, 140, 1).unwrap(), 1);

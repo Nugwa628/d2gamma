@@ -416,6 +416,75 @@ fn a_freed_monster_frees_the_items_it_holds() {
     fx.assert_clean();
 }
 
+// ---- a mod game's pet hook -------------------------------------------------
+
+/// The pets a mod game's event hooks heard of: (owner, pet, skill, level).
+#[derive(Debug, Default)]
+struct SummonLog(std::sync::Mutex<Vec<(UnitId, UnitId, i32, i32)>>);
+
+impl crate::rules::EventHooks for SummonLog {
+    fn pet_summoned(
+        &self,
+        _h: &mut dyn crate::rules::EventHost,
+        owner: UnitId,
+        pet: UnitId,
+        skill: i32,
+        level: i32,
+    ) {
+        self.0.lock().unwrap().push((owner, pet, skill, level));
+    }
+}
+
+/// Event hooks that hear of nothing.
+#[derive(Debug)]
+struct NoHooks;
+
+impl crate::rules::EventHooks for NoHooks {}
+
+#[derive(Debug)]
+struct PetGame<E>(Arc<E>);
+
+impl<E: crate::rules::EventHooks + 'static> crate::rules::ModRules for PetGame<E> {
+    fn name(&self) -> &str {
+        "pet-test"
+    }
+    fn events(&self) -> Option<&dyn crate::rules::EventHooks> {
+        Some(self.0.as_ref())
+    }
+}
+
+/// A summon tells the hooks its owner, the pet, the skill and its level,
+/// after the skill function (the pet is listed by then).
+#[test]
+fn a_mod_hears_of_a_summoned_pet() {
+    let (mut fx, p) = summoner(F_2);
+    let log = Arc::new(SummonLog::default());
+    fx.sim.sys.hooks.rules = crate::rules::Ruleset::Mod(Arc::new(PetGame(log.clone())));
+    assert_eq!(cast(&mut fx, p, (12, 10)), 1);
+    let m = fx.game.lists.units_of_type(UnitType::Monster);
+    assert_eq!(m.len(), 1);
+    assert_eq!(*log.0.lock().unwrap(), [(p, m[0], 0, 1)]);
+    assert!(fx.sim.sys.hooks.mod_pets.is_empty());
+    fx.assert_clean();
+}
+
+/// Without a pet hook a mod game's summon is D2RUST's.
+#[test]
+fn a_summon_is_unchanged_without_the_pet_hook() {
+    let run = |modded: bool| {
+        let (mut fx, p) = summoner(F_2);
+        if modded {
+            fx.sim.sys.hooks.rules =
+                crate::rules::Ruleset::Mod(Arc::new(PetGame(Arc::new(NoHooks))));
+        }
+        let r = cast(&mut fx, p, (12, 10));
+        (r, pets(&fx, p), pet_msgs(&mut fx))
+    };
+    let own = run(false);
+    assert_eq!(own.1.len(), 1);
+    assert_eq!(run(true), own);
+}
+
 /// A mod game logging the pets its hook was told of.
 #[derive(Debug, Default)]
 struct PetLog(std::sync::Mutex<Vec<(UnitId, UnitId, i32)>>);
@@ -448,4 +517,50 @@ fn a_mod_game_is_told_of_each_listed_summon() {
     assert_eq!(pets(&fx, p), vec![guid as i32]);
     assert_eq!(pet_msgs(&mut fx), vec![(1, 2, guid)]);
     fx.assert_clean();
+}
+
+/// A summoned pet's owner gets its life percent (S→C 0x7F, not a player)
+/// the first time and when it changes; nothing while it stays.
+#[test]
+fn the_owner_gets_a_summons_life_percent_when_it_changes() {
+    let (mut fx, p) = summoner(F_1);
+    cast(&mut fx, p, (12, 10));
+    let m = fx.game.lists.units_of_type(UnitType::Monster)[0];
+    let guid = fx.sim.sys.units.get(m).unwrap().guid;
+    let set = |fx: &mut Fx, stat: u16, v: i32| {
+        fx.sim
+            .sys
+            .stats
+            .unit_set(&mut fx.sim.sys.hooks, m, stat, v, 0)
+    };
+    set(&mut fx, crate::stats::ids::MAXHP, 80 << 8);
+    set(&mut fx, crate::stats::ids::HITPOINTS, 20 << 8);
+    let life = |fx: &mut Fx| -> Vec<(UnitId, Vec<u8>)> {
+        fx.sim
+            .hooks()
+            .x
+            .msgs
+            .iter()
+            .filter(|(_, b)| b[0] == 0x7F)
+            .cloned()
+            .collect()
+    };
+    let game = &mut fx.game;
+    fx.sim.with(game, |g, v| v.pet_life_updates(g));
+    let want = crate::world::hirelings::life::ally_life_message(guid, 25).to_vec();
+    assert_eq!(life(&mut fx), vec![(p, want.clone())]);
+    let game = &mut fx.game;
+    fx.sim.with(game, |g, v| v.pet_life_updates(g));
+    assert_eq!(life(&mut fx).len(), 1, "unchanged: nothing more");
+    set(&mut fx, crate::stats::ids::HITPOINTS, 80 << 8);
+    let game = &mut fx.game;
+    fx.sim.with(game, |g, v| v.pet_life_updates(g));
+    let all = life(&mut fx);
+    assert_eq!(
+        all.last(),
+        Some(&(
+            p,
+            crate::world::hirelings::life::ally_life_message(guid, 100).to_vec()
+        ))
+    );
 }

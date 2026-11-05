@@ -1,0 +1,7 @@
+id = "ai-lift-greater-mummy"
+name = "AI 22 GreaterMummy, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "GreaterMummy as a graph: AI 22 (GreaterMummy)."
+api = 1
+kind = "full"

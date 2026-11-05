@@ -253,11 +253,24 @@ pub fn dispatch<S: ItemStats>(
     if !known {
         return Ok(false);
     }
-    if item.format >= 100 {
-        ethereal_roll(t, item, rq);
+    // A mod game's ethereal and socket rolls (asked for every item).
+    let quality = item.quality;
+    match provider.and_then(|p| p.ethereal_roll(&mut GenView { t, item }, quality, rq)) {
+        Some(true) => item.flags |= flag::ETHEREAL,
+        Some(false) => {}
+        None if item.format >= 100 => ethereal_roll(t, item, rq),
+        None => {}
     }
-    if matches!(item.quality, q::LOW | q::NORMAL | q::SUPERIOR) {
-        socket_roll(t, game, item, rq);
+    match provider.and_then(|p| p.socket_roll(&mut GenView { t, item }, quality, rq)) {
+        Some(n) if n > 0 => {
+            item.flags |= flag::SOCKETED;
+            item.stats.set_base(stat::NUMSOCKETS, 0, n);
+        }
+        Some(_) => {}
+        None if matches!(quality, q::LOW | q::NORMAL | q::SUPERIOR) => {
+            socket_roll(t, game, item, rq);
+        }
+        None => {}
     }
     if item.format >= 100
         && item.quality != q::SET

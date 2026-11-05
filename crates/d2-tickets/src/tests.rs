@@ -317,7 +317,7 @@ fn tickets_fit_their_limits() {
         ..grant(5)
     };
     assert_eq!(ticket(&issuer, &g).len(), MAX_TICKET);
-    assert_eq!(MAX_TICKET, 190);
+    assert_eq!(MAX_TICKET, 214);
 
     let mut long = g.clone();
     long.character.push('c');

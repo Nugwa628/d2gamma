@@ -125,6 +125,11 @@ const MULTI: i32 = 1;
 const MIGHT: i32 = 2;
 /// A learnable skill: max level 3.
 const LEARN: i32 = 3;
+/// A learnable skill whose `skpoints` is formula 3: parameter
+/// [`COST_PARAM`], a row only a mod game answers (0 in D2RUST's).
+const COSTED: i32 = 4;
+/// The `skillcalc` row [`COSTED`]'s point cost reads.
+const COST_PARAM: u8 = 0x60;
 
 /// Start slot of the synthetic start skills: srvst 52 (Emerge: unit
 /// flags |= 0xE, return 1) stands in for Multiple Shot's srvst 4, whose
@@ -133,21 +138,24 @@ const LEARN: i32 = 3;
 /// `unreferenced`, no body) stands in for Might's 65, so the fake's seam
 /// answers.
 fn skills() -> SkillTables {
-    let mut v: Vec<Skills> = (0..4).map(|_| skill_rec()).collect();
+    let mut v: Vec<Skills> = (0..5).map(|_| skill_rec()).collect();
     let m = &mut v[MULTI as usize];
     (m.srvstfunc, m.mana, m.lvlmana, m.manashift) = (52, 4, 1, 8);
     let m = &mut v[MIGHT as usize];
     (m.aura, m.immediate, m.perdelay, m.srvdofunc, m.aurastate) = (true, true, 0, 53, 33);
     v[LEARN as usize].maxlvl = 3;
+    let c = &mut v[COSTED as usize];
+    (c.maxlvl, c.skpoints) = (3, 3);
     SkillTables {
         skills: v,
         skilldesc: vec![blank::<Skilldesc>()],
         missiles: Vec::new(),
-        // Formula 0: the constant 50.
-        skills_code: vec![0x07, 50, 0x00],
+        // Formula 0: the constant 50; formula 3: parameter COST_PARAM.
+        skills_code: vec![0x07, 50, 0x00, 0x04, COST_PARAM, 0x00],
         miss_code: Vec::new(),
         level_cap: LEVEL_CAP_114D,
         stat_count: 359,
+        data_rules: d2_data::bin::DataRules::Original,
     }
 }
 

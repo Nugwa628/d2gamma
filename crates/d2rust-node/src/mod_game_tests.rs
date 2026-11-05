@@ -301,3 +301,52 @@ fn a_game_started_on_a_mod_games_server_plays_its_rules() {
     g.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A mod game whose rules read the game data gets them made from the data
+/// the game server loads, once ([`crate::NodeGame::rules_of`]); when they
+/// can't be made no game can play, and the reason is kept. D2Gamma's own
+/// game server plays its given rules.
+#[test]
+#[ignore = "real data: needs D2_GAME_DIR (tools/realdata-gate.sh)"]
+fn a_mod_games_rules_are_made_from_the_data_the_game_server_loaded() {
+    use crate::RulesOf;
+    use d2_server::game::GameData;
+    let data_dir = std::env::var_os("D2_GAME_DIR").expect("D2_GAME_DIR");
+    let dir = Path::new(&data_dir);
+    let tiny = Arc::new(TinyMod::default());
+    let calls = Arc::new(AtomicU32::new(0));
+    let seen: Arc<Mutex<Option<GameData>>> = Arc::default();
+    let (c, s) = (calls.clone(), seen.clone());
+    let game = NodeGame {
+        rules_of: Some(RulesOf::new(move |data| {
+            c.fetch_add(1, Ordering::SeqCst);
+            *s.lock().unwrap() = Some(data.clone());
+            Ok(GameRules {
+                rules: Ruleset::Mod(tiny.clone()),
+                ..GameRules::default()
+            })
+        })),
+        ..NodeGame::own()
+    };
+    let (data, rules) = game.load(dir);
+    let GameData::Live(loaded) = data.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let GameData::Live(given) = seen.lock().unwrap().take().unwrap();
+    assert!(
+        Arc::ptr_eq(&loaded, &given),
+        "the loaded data, not a second load"
+    );
+    assert_eq!(rules.rules.mod_rules().map(|r| r.name()), Some("tiny"));
+
+    let failing = NodeGame {
+        rules_of: Some(RulesOf::new(|_| Err("no tables".into()))),
+        ..NodeGame::own()
+    };
+    let (data, rules) = failing.load(dir);
+    assert!(data.unwrap_err().contains("no tables"));
+    assert!(rules.rules.is_original());
+
+    let (data, rules) = NodeGame::own().load(dir);
+    assert!(data.is_ok());
+    assert!(rules.rules.is_original());
+}

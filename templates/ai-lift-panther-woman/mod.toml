@@ -1,0 +1,7 @@
+id = "ai-lift-panther-woman"
+name = "AI 83 PantherWoman, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "PantherWoman as a graph: AI 83 (PantherWoman)."
+api = 1
+kind = "full"

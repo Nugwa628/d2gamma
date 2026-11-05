@@ -63,7 +63,7 @@ use crate::log::ServerLog;
 use crate::session::ControlTx;
 use cells::{Layout, Placement};
 pub use settings::StashSettings;
-use store::{Owners, ReadFacts, RealmItems, Records, Store};
+use store::{Owners, ReadFacts, RealmItems, Records, Store, Summaries};
 
 /// How long a client's move waits for its game server before it is
 /// answered; the move itself goes on and ends with the game's answer or
@@ -172,6 +172,9 @@ pub struct Stash {
     /// The pages of [`Stash::settings`].
     grid: Grid,
     owners: Owners,
+    /// The summaries reported with the moves' saves, stored with their
+    /// records (a realm of the game's own records writes them with them).
+    summaries: Summaries,
     moves: Mutex<Moves>,
     next: AtomicU64,
     /// Characters whose stored record couldn't be written to their file.
@@ -235,10 +238,12 @@ impl Stash {
     ) -> Result<Arc<Self>, String> {
         let store = Store::open(path)?;
         let owners = Owners::default();
+        let summaries = Summaries::default();
         let mut economy = Economy::open(path, mod_id, config.clone())
             .map_err(|e| e.to_string())?
             .with_records(Box::new(Records {
                 owners: owners.clone(),
+                summaries: summaries.clone(),
             }));
         if guard.config().registry != RegistryMode::Off {
             economy = economy.with_registry(Box::new(RealmItems::new(
@@ -255,6 +260,7 @@ impl Stash {
             grid: settings.grid(),
             settings,
             owners,
+            summaries,
             moves: Mutex::new(Moves::default()),
             // Above every number an earlier run used under a lease that
             // could still be answered: none can (leases end with the run).
@@ -700,6 +706,7 @@ impl Stash {
             rows: shape.rows,
             renamable: shape.renamable,
             cap: self.settings.cap,
+            gold_max: Some(self.config.stash_gold_max),
             names: (0..shape.pages)
                 .map(|p| {
                     named

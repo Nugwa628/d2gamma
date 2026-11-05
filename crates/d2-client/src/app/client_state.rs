@@ -218,7 +218,9 @@ fn act(w: &ClientWorld, u: &ClientUnit, x: u16, y: u16) -> u8 {
     w.active_rooms
         .as_deref()
         .and_then(|rooms| room_of_point(rooms, i32::from(x), i32::from(y)))
-        .map_or(0, |r| d2_sim::drlg::act_of_level(u32::from(r.level)))
+        .map_or(0, |r| {
+            crate::kit_mod::ruleset().act_of_level(u32::from(r.level))
+        })
 }
 
 fn unit_json(o: &mut String, w: &ClientWorld, set: char, u: &ClientUnit, fp: Option<&Footprints>) {

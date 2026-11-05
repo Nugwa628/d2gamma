@@ -81,6 +81,34 @@ pub fn state_change(
     Some(b)
 }
 
+/// The op byte of the stack count form of [`WIDE_STATE`] (a state's stack
+/// count, [`stack_count_message`]).
+pub const OP_STACKS: u8 = 3;
+
+/// The message telling that `state` on the unit (`unit_type`, `guid`) has
+/// `count` stacks: [`WIDE_STATE`] with op [`OP_STACKS`] and the count as a
+/// u16. Only a mod game's wire carries it (the states with stacks are the
+/// mod kit's).
+pub fn stack_count_message(unit_type: u8, guid: u32, state: u16, count: u16) -> Vec<u8> {
+    let g = guid.to_le_bytes();
+    let s = state.to_le_bytes();
+    let c = count.to_le_bytes();
+    vec![
+        WIDE_STATE,
+        unit_type,
+        g[0],
+        g[1],
+        g[2],
+        g[3],
+        (WIDE_HEADER + 2) as u8,
+        OP_STACKS,
+        s[0],
+        s[1],
+        c[0],
+        c[1],
+    ]
+}
+
 /// The wide state messages that follow a unit's 0xAA for its states past
 /// the stream's byte (0xAA leaves them out): each state on, with its
 /// list's entries ([`StateChange::Set`]) or without
@@ -146,6 +174,17 @@ mod tests {
         let byte_set = set_state(1, 7, 44, &e, row);
         assert_eq!(&set[..10], [WIDE_STATE, 1, 7, 0, 0, 0, 14, 1, 0x2C, 0x01]);
         assert_eq!(set[10..], byte_set[8..]);
+    }
+
+    #[test]
+    fn the_stack_count_message_has_the_protocols_layout() {
+        let m = stack_count_message(1, 0x0102_0304, 380, 513);
+        // The layout `d2_proto::wide_state::stacks` builds (its test pins the
+        // same bytes).
+        assert_eq!(
+            m,
+            [WIDE_STATE, 1, 4, 3, 2, 1, 12, 3, 0x7C, 0x01, 0x01, 0x02]
+        );
     }
 
     #[test]

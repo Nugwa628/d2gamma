@@ -356,6 +356,10 @@ impl<H: LifecycleHooks, R: InvRest + ?Sized> MovePending for InvDesk<'_, '_, H, 
     /// Whether the player's room is a town (through the unit side's levels;
     /// the stash page needs a town),
     /// else the rest's answer.
+    /// The item tables' rules.
+    fn item_rules(&self) -> crate::rules::Ruleset {
+        self.econ.tables.rules.clone()
+    }
     fn in_town(&self, player: Owner) -> bool {
         let room = self
             .unit_of(player)
@@ -535,6 +539,14 @@ impl<H: LifecycleHooks, R: InvRest + ?Sized> MovePending for InvDesk<'_, '_, H, 
             self.send_item_stat(Owner::player(g), item, QUANTITY);
         }
         true
+    }
+    /// The 0x61 give's potion: when the item is the player's cursor
+    /// item, S→C 0x42 to the player, the cursor clears and the unit is
+    /// freed ([`InvDesk::take_cursor`]).
+    fn use_up_cursor_item(&mut self, player: Owner, item: Guid) {
+        if let (Some(p), Some(i)) = (self.unit_of(player), self.item_unit(item)) {
+            self.take_cursor(p, i);
+        }
     }
     fn set_owner(&mut self, item: Guid, owner: Owner) {
         self.rest.set_owner(item, owner)

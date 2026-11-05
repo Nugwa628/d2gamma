@@ -255,3 +255,10 @@ path = "fuzz_targets/save_checks.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "mod_network"
+path = "fuzz_targets/mod_network.rs"
+test = false
+doc = false
+bench = false

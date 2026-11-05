@@ -13,9 +13,12 @@
 pub mod gamble;
 pub mod price;
 pub mod provider;
+pub mod stock;
 pub mod store;
 pub mod trade;
 
+#[cfg(test)]
+mod mod_stock_tests;
 #[cfg(test)]
 mod mod_store_tests;
 #[cfg(test)]
@@ -104,20 +107,20 @@ pub mod class {
 
 /// Stat ids read or written.
 pub mod stat {
-    pub const LEVEL: u16 = 12;
-    pub const GOLD: u16 = 14;
-    pub const GOLD_BANK: u16 = 15;
-    pub const ARMORCLASS: u16 = 31;
-    pub const QUANTITY: u16 = 70;
-    pub const DURABILITY: u16 = 72;
-    pub const MAXDURABILITY: u16 = 73;
-    pub const REDUCED_PRICES: u16 = 87;
-    pub const ITEM_SINGLESKILL: u16 = 107;
-    pub const INDESTRUCTIBLE: u16 = 152;
-    pub const CHARGED_SKILL: u16 = 204;
-    pub const REPLENISH_DURABILITY: u16 = 252;
-    pub const REPLENISH_QUANTITY: u16 = 253;
-    pub const EXTRA_STACK: u16 = 254;
+    pub use crate::stats::ids::ARMORCLASS;
+    pub use crate::stats::ids::DURABILITY;
+    pub use crate::stats::ids::EXTRA_STACK;
+    pub use crate::stats::ids::GOLD;
+    pub use crate::stats::ids::GOLDBANK as GOLD_BANK;
+    pub use crate::stats::ids::INDESTRUCTIBLE;
+    pub use crate::stats::ids::ITEM_CHARGED_SKILL as CHARGED_SKILL;
+    pub use crate::stats::ids::ITEM_SINGLESKILL;
+    pub use crate::stats::ids::LEVEL;
+    pub use crate::stats::ids::MAXDURABILITY;
+    pub use crate::stats::ids::QUANTITY;
+    pub use crate::stats::ids::REDUCED_PRICES;
+    pub use crate::stats::ids::REPLENISH_DURABILITY;
+    pub use crate::stats::ids::REPLENISH_QUANTITY;
 }
 
 /// Item flags.

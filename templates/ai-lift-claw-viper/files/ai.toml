@@ -1,0 +1,43 @@
+version = 1
+
+# monstats aip1..aip6 of the clawviper1 row 73: 40, 8, 75, 50, 15, 1. Skill 1 is SerpentCharge. The body also turns on a glow state
+# (aip6) from the first charge on, a look only; the graph leaves it out.
+[[ai]]
+index = 16
+name = "ClawViper (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "coil"
+
+# In reach: aip3 = 75 percent strike (half swing 1, half swing 2), else stand aip5 = 15 frames.
+# 38 percent swing 1, then 60 percent of the rest swing 2: 37 and 37 of every 100.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 38 }]
+
+[[ai.state.action]]
+kind = "attack"
+attack = 2
+when = [{ kind = "in_melee" }, { kind = "random", percent = 60 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6
+when = [{ kind = "in_melee" }]
+
+# Under aip2 = 8 subtiles: aip1 = 40 percent charge.
+[[ai.state.action]]
+kind = "use_skill"
+slot = 1
+when = [{ kind = "distance_below", value = 8 }, { kind = "random", percent = 40 }]
+
+# Else half walk at the target, half stand 15 frames.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 50 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6

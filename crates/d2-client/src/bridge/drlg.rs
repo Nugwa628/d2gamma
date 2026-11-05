@@ -371,12 +371,18 @@ impl ClientDrlg {
         difficulty: u8,
     ) -> Result<Self, DrlgError> {
         let mut types = (src.types)();
-        let mut drlg = Drlg::create(
+        let difficulty = if crate::kit_mod::ruleset().difficulties().is_some() {
+            difficulty.min(2)
+        } else {
+            difficulty
+        };
+        let mut drlg = Drlg::create_with_towns(
             act,
             init_seed,
             difficulty,
             0,
             true,
+            &crate::kit_mod::ruleset().town_levels(),
             &src.data,
             types.as_mut(),
         )?;
@@ -391,6 +397,20 @@ impl ClientDrlg {
             data: src.data.clone(),
             tiles: src.tiles.clone(),
         })
+    }
+
+    /// The host's LoadAct packet is authoritative for this act's town,
+    /// including checks that run an explicit ruleset without a selected mod.
+    pub fn build_for_town(
+        src: &DrlgSource,
+        act: u8,
+        init_seed: u32,
+        difficulty: u8,
+        town: u16,
+    ) -> Result<Self, DrlgError> {
+        let mut result = Self::build(src, act, init_seed, difficulty)?;
+        result.drlg.towns = d2_sim::drlg::TownLevels::new([u32::from(town)]);
+        Ok(result)
     }
 
     fn split(&mut self) -> Result<(&mut Drlg, Services<'_>), ClientDrlgError> {

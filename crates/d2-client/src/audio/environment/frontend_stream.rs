@@ -7,9 +7,10 @@
 
 use std::sync::Arc;
 
-use super::frontend::{Jukebox, JukeboxHost};
+use super::frontend::{Jukebox, JukeboxHost, LIST_A, LIST_B};
 use crate::assets::path::{read_asset, CanonicalPath, FileSource};
 use crate::audio::sound_table::volume::device_volume;
+use d2_native::source::NativeAsset;
 
 /// Archive folder of the playlists' paths.
 pub const MUSIC_DIR: &str = "data\\global\\music\\";
@@ -35,6 +36,46 @@ struct Voice {
     pos: usize,
     channels: u16,
     gain_db: i32,
+}
+
+/// A [`FileSource`] that plays a mod's own WAV in the place of the menu
+/// playlist's first track (the intro music: `introedit.wav` with the
+/// expansion, `common\options.wav` without). Every other file, and the first
+/// track too when the WAV cannot be read, comes from the source underneath.
+pub struct IntroTrack {
+    inner: Arc<dyn FileSource>,
+    wav: std::path::PathBuf,
+}
+
+impl IntroTrack {
+    pub fn new(inner: Arc<dyn FileSource>, wav: std::path::PathBuf) -> Self {
+        IntroTrack { inner, wav }
+    }
+
+    fn is_intro(archive_name: &str) -> bool {
+        [LIST_A[0], LIST_B[0]]
+            .iter()
+            .any(|first| archive_name.eq_ignore_ascii_case(&format!("{MUSIC_DIR}{first}")))
+    }
+}
+
+impl FileSource for IntroTrack {
+    fn read_file(&self, archive_name: &str) -> Option<Result<Vec<u8>, String>> {
+        if Self::is_intro(archive_name) {
+            if let Ok(bytes) = std::fs::read(&self.wav) {
+                return Some(Ok(bytes));
+            }
+        }
+        self.inner.read_file(archive_name)
+    }
+
+    fn read_native(&self, path: &CanonicalPath) -> Option<Result<NativeAsset, String>> {
+        self.inner.read_native(path)
+    }
+
+    fn is_native(&self) -> bool {
+        self.inner.is_native()
+    }
 }
 
 /// The music voice, its random source and the jukebox state.
@@ -324,6 +365,37 @@ mod tests {
             // not picked again while the voice plays
             assert_eq!(m.service(), None);
         }
+    }
+
+    #[test]
+    fn a_mods_intro_music_takes_the_first_track_only() {
+        let dir = std::env::temp_dir().join(format!("d2g-intro-music-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("intro.wav");
+        std::fs::write(&file, wav(5)).unwrap();
+        for (exp, first) in [(true, "introedit.wav"), (false, r"common\options.wav")] {
+            let mut m = FrontMusic::new(
+                Arc::new(IntroTrack::new(source(), file.clone())),
+                exp,
+                true,
+                1,
+            );
+            assert_eq!(m.service(), Some(first));
+            // The mod's 5 frames, not the game's 20,000.
+            assert_eq!(m.events[0].first_block.len(), 5 * 4);
+            // When it is over, the next track is the game's.
+            while m.playing() {
+                m.next_frame();
+            }
+            assert!(m.service().is_some_and(|t| t != first));
+            assert_eq!(m.events[1].first_block.len(), FIRST_BLOCK_BYTES);
+        }
+        // A file that cannot be read leaves the game's first track.
+        let gone = dir.join("gone.wav");
+        let mut m = FrontMusic::new(Arc::new(IntroTrack::new(source(), gone)), true, true, 1);
+        assert_eq!(m.service(), Some("introedit.wav"));
+        assert_eq!(m.events[0].first_block.len(), FIRST_BLOCK_BYTES);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

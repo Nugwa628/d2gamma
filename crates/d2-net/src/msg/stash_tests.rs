@@ -218,6 +218,7 @@ fn layout_and_rename_round_trip() {
         renamable: true,
         cap: 9_999_999,
         names: vec!["I".into(), "Charms".into(), "Ünïcode ✓".into()],
+        gold_max: Some(2_500_000),
     });
     let body = shape.body();
     assert_eq!(body[0], kind::STASH_SHAPE);
@@ -231,9 +232,22 @@ fn layout_and_rename_round_trip() {
         renamable: true,
         cap: u32::MAX,
         names: vec!["é".repeat(MAX_PAGE_NAME / 2); MAX_PAGE_NAMES],
+        gold_max: Some(u64::MAX),
     });
     assert!(big.body().len() <= MAX_FRAME);
     assert_eq!(StashEvent::parse(&big.body()).unwrap(), big);
+    // An older realm's answer (no gold cap) reads as before, and is the
+    // same bytes as the answer without one.
+    let old = StashEvent::Shape(StashShapeMsg {
+        gold_max: None,
+        ..match &shape {
+            StashEvent::Shape(s) => s.clone(),
+            _ => unreachable!(),
+        }
+    });
+    let old_body = old.body();
+    assert_eq!(old_body.len() + 8, shape.body().len());
+    assert_eq!(StashEvent::parse(&old_body).unwrap(), old);
     // A name past its limit, a bad flag.
     let long = StashRequest::Rename {
         req: 1,

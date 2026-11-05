@@ -9,6 +9,7 @@ mod gaps_affixes;
 mod gaps_generation;
 mod gaps_props;
 mod gaps_quality;
+mod mod_item_rules;
 mod mod_props;
 mod mod_quality;
 mod mod_raw_props;

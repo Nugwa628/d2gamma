@@ -294,12 +294,7 @@ pub const ITEM_PALETTE_MAPS: u8 = 21;
 /// Which item palette map an item color `(t, c)` selects: `(t, c)` for a map of file
 /// `ITEM_PALETTE_FILES[t − 1]`, or `None` (no map) for `t` = 0, 3, 4 or ≥ 9, or `c` ≥ 21.
 /// Files 3 (`gold`) and 4 (`brown`) are loaded but never selected.
-pub fn item_color(t: u8, c: u8) -> Option<(u8, u8)> {
-    match t {
-        1 | 2 | 5..=8 if c < ITEM_PALETTE_MAPS => Some((t, c)),
-        _ => None,
-    }
-}
+pub use d2_item_text::item_tip::item_color;
 
 // ---------------------------------------------------------------------
 // Monster palette shift and blood map.

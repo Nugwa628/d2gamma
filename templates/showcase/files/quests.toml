@@ -1,0 +1,33 @@
+version=1
+[[quest]]
+id=1
+name="Gather the light"
+text="Enter the Shifting Garden to recover two glimmers from its beacon."
+done_text="The beacon shares its glimmers. Carry them to the Glass Warden."
+[[quest.objective]]
+kind="enter"
+level=138
+[[quest.reward]]
+kind="item"
+item="glmr"
+count=2
+[[quest]]
+id=2
+name="Quiet the lens"
+text="Carry two glimmers and defeat the Glass Warden in the Lens Court."
+done_text="The Reach is quiet. Your Beacon Seal marks the return of its light."
+[[quest.objective]]
+kind="collect"
+item="glmr"
+count=2
+[[quest.objective]]
+kind="kill"
+monster=734
+count=1
+[[quest.reward]]
+kind="item"
+item="seal"
+count=1
+[[quest.reward]]
+kind="message"
+text="You restored Lantern Reach."

@@ -1,11 +1,13 @@
 //! Level stats, experience and level-up, the restore level
 //! and the stat / experience / speech messages.
 
-use super::{stat, threshold, HirelingError, HirelingRow, HirelingState, HirelingTables};
+use super::{stat, HirelingError, HirelingRow, HirelingState, HirelingTables};
 use super::{HirelingWorld, UNIT_PLAYER};
 use crate::combat::pct;
 use crate::combat::vitals::level_factor;
+use crate::rules::Ruleset;
 use crate::units::UnitId;
+use crate::world::npc::npc_rules::merc_exp;
 
 /// String id of the level speech.
 pub const LEVEL_SPEECH: u16 = 0xD7C;
@@ -92,15 +94,29 @@ pub fn apply_level<W: HirelingWorld>(
     let per = |lvl: i32| lvl.wrapping_mul(d);
     // Step 6.
     let next = if level < t.max_level.wrapping_sub(1) {
-        threshold(r.exp_lvl, level.wrapping_add(1))
+        merc_exp(w.rules(), &r, level.wrapping_add(1))
     } else {
         0
     };
     w.set_base_stat(merc, stat::NEXTEXP, next);
     // Step 7 (unsigned compare of the total value).
-    let base_exp = threshold(r.exp_lvl, level);
+    let base_exp = merc_exp(w.rules(), &r, level);
     if (w.stat(merc, stat::EXPERIENCE) as u32) < base_exp as u32 {
         w.set_base_stat(merc, stat::EXPERIENCE, base_exp);
+    }
+    // A mod game's growth replaces steps 8 and 9.
+    let rules = w.rules().clone();
+    if let Some(p) = rules.npcs() {
+        let req = |s: u32| w.skill_reqlevel(s);
+        if let Some(g) = p.merc_growth(&r, level, &req) {
+            for (s, v) in g.stats {
+                w.set_base_stat(merc, s, v);
+            }
+            for (s, l) in g.skills {
+                w.set_skill_level(merc, s, l);
+            }
+            return;
+        }
     }
     // Step 8, in the table's order.
     let strength = r.str_.wrapping_add(div(per(r.str_lvl), 8)).max(10);
@@ -303,7 +319,7 @@ pub fn add_experience<W: HirelingWorld>(
     let mut lvl = merc_level;
     loop {
         let next = lvl.wrapping_add(1);
-        if threshold(r.exp_lvl, next) as u32 > new {
+        if merc_exp(w.rules(), &r, next) as u32 > new {
             break;
         }
         lvl = next;
@@ -358,8 +374,9 @@ pub fn gain<W: HirelingWorld>(
         && w.unit_type(player) == UNIT_PLAYER;
     if owned {
         if let Some(r) = merc_row(w, t, st, player, merc, alvl) {
-            let step = (threshold(r.exp_lvl, alvl.wrapping_add(1))
-                .wrapping_sub(threshold(r.exp_lvl, alvl)) as u32)
+            let rules = w.rules();
+            let step = (merc_exp(rules, r, alvl.wrapping_add(1))
+                .wrapping_sub(merc_exp(rules, r, alvl)) as u32)
                 >> 6;
             g = (g as u32).min(step) as i32;
         }
@@ -416,6 +433,17 @@ pub fn kill_share<W: HirelingWorld>(
 /// case 6). The row (`Id`, level) is looked up once per step;
 /// `None`: a step found no row (live rows never give one).
 pub fn restore_level(t: &HirelingTables, id: u32, experience: u32, expansion: bool) -> Option<i32> {
+    restore_level_in(&crate::rules::ORIGINAL, t, id, experience, expansion)
+}
+
+/// [`restore_level`] under `rules` (a mod game's hireling experience).
+pub fn restore_level_in(
+    rules: &Ruleset,
+    t: &HirelingTables,
+    id: u32,
+    experience: u32,
+    expansion: bool,
+) -> Option<i32> {
     let mut level = 1i32;
     loop {
         let next = level.wrapping_add(1);
@@ -423,7 +451,7 @@ pub fn restore_level(t: &HirelingTables, id: u32, experience: u32, expansion: bo
             break;
         }
         let r = t.rows.row_at(expansion, id, level)?;
-        if threshold(t.rows.rows[r].exp_lvl, next) as u32 > experience {
+        if merc_exp(rules, &t.rows.rows[r], next) as u32 > experience {
             break;
         }
         level = next;
@@ -462,7 +490,7 @@ pub fn restore_experience<W: HirelingWorld>(
     let exp = w.stat(merc, stat::EXPERIENCE) as u32;
     w.queue_stat(merc, stat::EXPERIENCE, exp);
     // Step 6.
-    let Some(level) = restore_level(t, node.id, exp, w.expansion()) else {
+    let Some(level) = restore_level_in(w.rules(), t, node.id, exp, w.expansion()) else {
         if old {
             return Err(HirelingError::Fatal(FATAL_LEVEL_ROW));
         }

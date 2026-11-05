@@ -22,12 +22,16 @@ use d2_client::app::play::{
 };
 use d2_client::app::server_thread::ThreadLink;
 use d2_client::app::single_player::{self, BuildError, Link};
+use d2_client::bridge::click::{screen_to_world, ClickView};
 use d2_client::bridge::link::{LinkError, Pumped, SendQueue, Sent, ServerLink};
 use d2_client::bridge::local::{LocalLink, PendingSession};
 use d2_client::bridge::mirror::DynLink;
 use d2_client::bridge::predict::WalkTap;
 use d2_client::bridge::BridgeResource;
+use d2_client::controls::click::{ClickState, Kind};
+use d2_client::rules::camera::{moving_to_client, Camera, FrameSize, OpenMode};
 use d2_client::world_view::tile_assets::TileAssets;
+use d2_client::world_view::walk::PreviewWalk;
 use d2_data::tables::Skills;
 use d2_server::adapters::ProtoSizes;
 use d2_server::host::Host;
@@ -55,12 +59,22 @@ impl Clock for StepClock {
     }
 }
 
+/// The drained C→S messages of every server pump, as (id, fate).
+type Fates = Arc<Mutex<Vec<(u8, String)>>>;
+
 /// The shared server link; what the client receives is also kept in `rx`
-/// (see [`Rig::saw_s2c`]).
+/// (see [`Rig::s2c_since`]), and the fate of every C→S message the server
+/// drains in `fates`: one rig step runs as many server ticks as its 40 ms
+/// hold (two or three at the game's 60 Hz), so the last pump's report
+/// alone misses a message drained by an earlier pump of the same step.
+/// The last field makes the link act as a realm's ([`Rig::remote`]).
 struct Shared<L>(
     Arc<Mutex<L>>,
     Arc<Mutex<Vec<Vec<u8>>>>,
     Arc<Mutex<Vec<Vec<u8>>>>,
+    Arc<Mutex<ThreadLink<Link<StepClock>>>>,
+    Fates,
+    bool,
 );
 
 impl<L: ServerLink> ServerLink for Shared<L> {
@@ -73,11 +87,22 @@ impl<L: ServerLink> ServerLink for Shared<L> {
     fn server_frame(&mut self) -> Option<i32> {
         self.0.lock().unwrap().server_frame()
     }
+    // A realm's link has no server units to copy: the client has only
+    // the messages.
     fn server_paths(&mut self) -> Vec<d2_client::bridge::critter_path::ServerPath> {
+        if self.5 {
+            return Vec::new();
+        }
         self.0.lock().unwrap().server_paths()
     }
     fn step_paths(&mut self) -> Vec<d2_client::bridge::critter_path::ServerPath> {
+        if self.5 {
+            return Vec::new();
+        }
         self.0.lock().unwrap().step_paths()
+    }
+    fn is_remote(&self) -> bool {
+        self.5
     }
     fn set_send_now(&mut self, now: Option<u32>) {
         self.0.lock().unwrap().set_send_now(now);
@@ -87,7 +112,12 @@ impl<L: ServerLink> ServerLink for Shared<L> {
         self.0.lock().unwrap().send(q, msg)
     }
     fn pump(&mut self) -> Result<Pumped, LinkError> {
-        self.0.lock().unwrap().pump()
+        let pumped = self.0.lock().unwrap().pump()?;
+        let drained = self.3.lock().unwrap().with(drained_of_last_pump);
+        if let Ok(d) = drained {
+            self.4.lock().unwrap().extend(d);
+        }
+        Ok(pumped)
     }
     fn set_display_catch_up(&mut self, enabled: bool) {
         self.0.lock().unwrap().set_display_catch_up(enabled);
@@ -100,6 +130,15 @@ impl<L: ServerLink> ServerLink for Shared<L> {
         self.1.lock().unwrap().extend(got.iter().cloned());
         got
     }
+}
+
+/// The C→S messages the server's last pump drained, as (id, fate).
+fn drained_of_last_pump(l: &mut Link<StepClock>) -> Vec<(u8, String)> {
+    l.last_frame()
+        .messages
+        .iter()
+        .map(|m| (m.id, format!("{:?}", m.handled)))
+        .collect()
 }
 
 /// The install's `skills` row `id`.
@@ -178,6 +217,8 @@ pub struct Rig {
     pub tx: Arc<Mutex<Vec<Vec<u8>>>>,
     /// Every S→C message the client received so far.
     rx: Arc<Mutex<Vec<Vec<u8>>>>,
+    /// The fate of every C→S message the server drained so far.
+    fates: Fates,
 }
 
 impl Rig {
@@ -190,6 +231,17 @@ impl Rig {
 
     /// [`Rig::new`] on the game seed `seed`.
     pub fn with_seed(class: &str, learned: &[usize], seed: u32) -> Rig {
+        Rig::build(class, learned, seed, false)
+    }
+
+    /// [`Rig::new`] with the client on a link that acts as a realm's: the
+    /// same server and messages, but no single-player server copy (the
+    /// client reads no server unit) and `is_remote`.
+    pub fn remote(class: &str, learned: &[usize]) -> Rig {
+        Rig::build(class, learned, single_player::DEFAULT_SEED, true)
+    }
+
+    fn build(class: &str, learned: &[usize], seed: u32, remote: bool) -> Rig {
         let character = single_player::new_character(class, "Test").unwrap();
         let class_id = i32::from(single_player::parse_class(class).unwrap());
         let ms = Arc::new(AtomicU32::new(1000));
@@ -212,8 +264,15 @@ impl Rig {
         let link = shared.server();
         let rx: Arc<Mutex<Vec<Vec<u8>>>> = Arc::default();
         let tx: Arc<Mutex<Vec<Vec<u8>>>> = Arc::default();
-        let dyn_link: DynLink =
-            Box::new(Shared(Arc::new(Mutex::new(shared)), rx.clone(), tx.clone()));
+        let fates: Fates = Arc::default();
+        let dyn_link: DynLink = Box::new(Shared(
+            Arc::new(Mutex::new(shared)),
+            rx.clone(),
+            tx.clone(),
+            link.clone(),
+            fates.clone(),
+            remote,
+        ));
         let (dyn_link, tap) = d2_client::app::play::predict_link(dyn_link);
         let mut app = App::new();
         app.insert_resource(d2_client::bridge::mirror::ScriptedClock(ms.clone()));
@@ -254,6 +313,7 @@ impl Rig {
             tap,
             tx,
             rx,
+            fates,
         };
         while r.joined().is_none() {
             r.step(1);
@@ -284,18 +344,16 @@ impl Rig {
     }
 
     /// How many S→C messages the client has received so far (a mark for
-    /// [`Rig::s2c_contains_since`]).
+    /// [`Rig::s2c_since`]).
     pub fn s2c_mark(&self) -> usize {
         self.rx.lock().unwrap().len()
     }
 
-    /// Whether a message the client received after `mark` has the byte
-    /// `byte` anywhere in it (the loose test the old rigs made of their
-    /// `got` list).
-    pub fn s2c_contains_since(&self, mark: usize, byte: u8) -> bool {
+    /// Whether the client received a message with id `id` after `mark`.
+    pub fn s2c_since(&self, mark: usize, id: u8) -> bool {
         self.rx.lock().unwrap()[mark..]
             .iter()
-            .any(|m| m.contains(&byte))
+            .any(|m| m.first() == Some(&id))
     }
 
     /// How many S→C messages with id `id` the client has received so far.
@@ -313,6 +371,44 @@ impl Rig {
             self.app.update();
             self.ms.fetch_add(40, Ordering::SeqCst);
         }
+    }
+
+    /// The server ticks the client has seen.
+    fn server_ticks(&self) -> u64 {
+        self.app
+            .world()
+            .resource::<BridgeResource>()
+            .0
+            .world()
+            .server_ticks
+    }
+
+    /// Runs updates at the current time until one sees no new server tick:
+    /// the ticks a [`Self::step`] left due have all run, and the next
+    /// [`Self::tick`] sees exactly one.
+    pub fn settle_ticks(&mut self) {
+        loop {
+            let seen = self.server_ticks();
+            self.app.update();
+            if self.server_ticks() == seen {
+                return;
+            }
+        }
+    }
+
+    /// Runs updates 1 ms apart until the client has seen one more server
+    /// tick: the update that sees it runs at the tick's scheduled time, so
+    /// the next tick is still a whole tick length ahead. For checks of what
+    /// the game advances once per tick (an animation frame, a motion
+    /// record), where one 40 ms [`Self::step`] runs two or three ticks at
+    /// the game's 60 Hz. Call [`Self::settle_ticks`] after a step first.
+    pub fn tick(&mut self) {
+        let start = self.server_ticks();
+        while self.server_ticks() == start {
+            self.ms.fetch_add(1, Ordering::SeqCst);
+            self.app.update();
+        }
+        assert_eq!(self.server_ticks(), start + 1, "one server tick");
     }
 
     /// Runs `f` on the server's sim with the local player.
@@ -485,6 +581,81 @@ impl Rig {
         });
     }
 
+    /// Makes `skill` the client's right skill as the skill menu does: the
+    /// client learns it (S→C 0x94; [`Rig::new`] stages the list on the
+    /// server only) and the picker's C→S 0x3C selects it, the server
+    /// answering 0x23.
+    pub fn select_right_as_client(&mut self, skill: usize) {
+        let guid = self.with(|sim, p| sim.game.lists.unit(p).expect("player").guid);
+        let mut learned = vec![0x94, 1];
+        learned.extend(guid.to_le_bytes());
+        learned.extend((skill as u16).to_le_bytes());
+        learned.push(1);
+        self.app
+            .world_mut()
+            .resource_mut::<BridgeResource>()
+            .0
+            .receive_chunk(&learned)
+            .unwrap();
+        self.send(&d2_client::ui::original::hud_hotkeys::select(skill as i32, false, u32::MAX).0);
+        self.step(4);
+        let bridge = &self.app.world().resource::<BridgeResource>().0;
+        let list = bridge.world().local().unwrap().skills.as_ref().unwrap();
+        let right = list.right.expect("a right skill");
+        assert_eq!(
+            usize::from(list.entries[right].skill),
+            skill,
+            "the client's right skill"
+        );
+    }
+
+    /// The right skill at the point `dx`, `dy` sub-tiles from the
+    /// player's predicted cell, clicked as a player clicks it: a right
+    /// press and its release before the next update, through the client's
+    /// world-click dispatcher with no unit hovered. The press starts the
+    /// client's own cast (the local player's mode request) and sends
+    /// C→S 0x0C. The server sends the caster's own client no skill
+    /// message, so the client draws only the casts it started itself.
+    pub fn right_click_point_as_client(&mut self, dx: i32, dy: i32) {
+        let size = FrameSize::D2RUST;
+        let (at, mode, speeds) = {
+            let walk = self.app.world().resource::<PreviewWalk>();
+            (walk.pump_position(), walk.predict.mode(), walk.speeds)
+        };
+        let (x16, y16) = at.expect("the predicted player");
+        let camera = Camera::new(size, OpenMode::NONE, moving_to_client(x16, y16), (0, 0));
+        let goal = ((x16 >> 16) as i32 + dx, (y16 >> 16) as i32 + dy);
+        let mouse = (
+            16 * (goal.0 - goal.1) - camera.unit.x + camera.view.shift_x,
+            8 * (goal.0 + goal.1) + 8 - camera.unit.y,
+        );
+        assert_eq!(screen_to_world(&camera, mouse.0, mouse.1), goal);
+        let mut state = ClickState::default();
+        for kind in [Kind::RightDown, Kind::RightUp] {
+            let view = ClickView {
+                size,
+                ui: d2_client::ui::ui_space::UiSpace::identity(size),
+                open_mode: 0,
+                right_panel_bottom: size.play_height(),
+                skill_y_limit: size.play_height(),
+                mouse,
+                game_menu_open: false,
+                pick: false,
+                shake: (0, 0),
+                prev_hover: Some(None),
+                local_mode: mode,
+                speeds,
+            };
+            self.app
+                .world_mut()
+                .resource_mut::<BridgeResource>()
+                .0
+                .world_click_at(&mut state, view, kind, Some(mouse), 0, at)
+                .unwrap();
+            state.end_pass();
+        }
+    }
+
     /// C→S 0x0D: the right skill on a monster.
     pub fn right_click_unit(&mut self, m: UnitId) {
         let guid = self.with(move |sim, _| sim.game.lists.unit(m).expect("unit").guid);
@@ -607,25 +778,17 @@ impl Rig {
         );
     }
 
-    /// The drained C→S messages of the last server frame (id, fate).
+    /// The C→S messages the server drained since the last call, every
+    /// pump of every step, as (id, fate).
     pub fn drained(&mut self) -> Vec<(u8, String)> {
-        self.link
-            .lock()
-            .unwrap()
-            .with(|l| {
-                l.last_frame()
-                    .messages
-                    .iter()
-                    .map(|m| (m.id, format!("{:?}", m.handled)))
-                    .collect()
-            })
-            .unwrap()
+        std::mem::take(&mut *self.fates.lock().unwrap())
     }
 
     /// Sends `msg` (C→S) and steps one frame at a time until the server
     /// drains it; returns its fate.
     pub fn send_for_fate(&mut self, msg: &[u8]) -> String {
         let id = msg[0];
+        self.drained();
         self.send(msg);
         for _ in 0..5 {
             self.step(1);

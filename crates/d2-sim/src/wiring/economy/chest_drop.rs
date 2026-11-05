@@ -60,6 +60,10 @@ pub fn object_chest_drop<X: Pending, F: FreeSpot>(
         sim.data.expansion,
         std::mem::take(&mut h.uniques),
     );
+    // Native loot tables have three columns; configured extra difficulties use Hell.
+    if h.rules.difficulties().is_some() {
+        fields.difficulty = fields.difficulty.min(2);
+    }
     let facts = fields.treasure_facts(super::death::living_players(sim), d.players_setting);
     let area = area_level(levels, level, fields.difficulty, fields.expansion);
     let drop_by = dropper(sim.units, sim.stats, Some(object), area, x, y);

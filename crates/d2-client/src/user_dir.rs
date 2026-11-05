@@ -20,6 +20,13 @@
 //!
 //! A mod game names its own folder ([`crate::identity`]): its files live in
 //! `Documents\<folder>` and nothing is migrated into it.
+//!
+//! A mod-kit mod run by D2Gamma (`--mod <id>`) lives inside D2Gamma's folder:
+//! `Documents\D2Gamma\mods\<id>\` holds its saves, settings, controls,
+//! logs and baked animations, none of D2Gamma's own ([`mod_folder`]). The
+//! mod's files themselves are installed in the same `mods\<id>\` folder
+//! ([`mods_dir`]); [`d2gamma_root`] names D2Gamma's own folder from inside
+//! a mod.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -40,6 +47,34 @@ const STAGING: &str = "D2Gamma.moving";
 /// The variable that overrides the folder (the older `D2RS_HOME` is read
 /// too, [`crate::launch::env_os`]).
 pub const HOME_VAR: &str = "D2RUST_HOME";
+
+/// The subfolder of D2Gamma's folder that holds installed mods, one folder
+/// per mod id; a mod's own saves and settings live in its folder too.
+pub const MODS_DIR: &str = "mods";
+
+/// The identity folder (under Documents) of the mod-kit mod `id`.
+pub fn mod_folder(id: &str) -> String {
+    format!("{FOLDER}/{MODS_DIR}/{id}")
+}
+
+/// The part of the identity's folder below D2Gamma's, for a mod-kit mod
+/// (`mods/<id>`); `None` for D2Gamma and for mod games with their own folder.
+fn kit_mod_subfolder(folder: &str) -> Option<&str> {
+    folder
+        .strip_prefix(FOLDER)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .filter(|rest| rest.starts_with("mods/"))
+}
+
+/// `$D2RUST_HOME` for this run: the folder itself for D2Gamma and mod
+/// games, its `mods/<id>` subfolder for a mod-kit mod, so a mod never
+/// shares saves with D2Gamma.
+fn home_root(home: PathBuf) -> PathBuf {
+    match kit_mod_subfolder(&crate::identity::current().folder) {
+        Some(sub) => home.join(sub),
+        None => home,
+    }
+}
 
 static ROOT: OnceLock<PathBuf> = OnceLock::new();
 
@@ -215,7 +250,7 @@ pub fn follow_move(path: &Path) -> PathBuf {
 /// and what the move did.
 pub fn init() -> (PathBuf, Migration) {
     if let Some(home) = crate::launch::env_os(HOME_VAR).filter(|h| !h.is_empty()) {
-        let root = PathBuf::from(home);
+        let root = home_root(PathBuf::from(home));
         let _ = ROOT.set(root.clone());
         return (root, Migration::None);
     }
@@ -240,7 +275,7 @@ pub fn root() -> PathBuf {
         let id = crate::identity::current();
         crate::launch::env_os(HOME_VAR)
             .filter(|h| !h.is_empty())
-            .map(PathBuf::from)
+            .map(|h| home_root(PathBuf::from(h)))
             .or_else(|| {
                 documents().map(|d| match id.is_d2gamma_folder() {
                     true => resolve(&d),
@@ -249,6 +284,22 @@ pub fn root() -> PathBuf {
             })
             .unwrap_or_else(|| PathBuf::from(&id.folder))
     })
+}
+
+/// D2Gamma's own folder, whatever game this run is (the mods folder, the
+/// last-played file and the mods list live there). Resolved without moving
+/// anything.
+pub fn d2gamma_root() -> PathBuf {
+    crate::launch::env_os(HOME_VAR)
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| documents().map(|d| resolve(&d)))
+        .unwrap_or_else(|| PathBuf::from(FOLDER))
+}
+
+/// Where installed mods live: `<D2Gamma's folder>\mods`.
+pub fn mods_dir() -> PathBuf {
+    d2gamma_root().join(MODS_DIR)
 }
 
 /// Where characters are saved.

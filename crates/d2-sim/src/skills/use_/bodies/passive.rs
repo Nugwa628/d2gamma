@@ -20,6 +20,9 @@ pub const PASSIVE_SKILL: i32 = 350;
 pub const PASSIVE_LEVEL: i32 = 351;
 
 pub fn refresh<W: BodyWorld>(w: &mut W, t: &SkillTables, u: W::Unit, skill: i32) {
+    if w.refresh_data_passive(u, skill) {
+        return;
+    }
     let Some(r) = rec(t, skill) else {
         return;
     };

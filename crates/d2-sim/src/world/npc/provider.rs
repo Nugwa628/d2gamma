@@ -23,10 +23,15 @@
 
 use std::fmt::Debug;
 
+use super::hire::{HireRow, HireSlot};
+use super::npc_rules::{HireRequest, MercGrowth};
 use super::{NpcControl, NpcError, NpcVendors, NpcWorld};
 use super::{GAMBLERS, HEALERS, IDENTIFIERS, RESURRECTORS, SELLERS, TRADERS};
+use crate::rng::Seed;
 use crate::rules::Ruleset;
 use crate::units::UnitId;
+use crate::world::hirelings::rows::{HirelingRow, Offer};
+use crate::world::quests::{QuestWorld, TextList};
 
 /// Every seam an NPC interaction needs, as one object-safe trait.
 pub trait NpcHost: NpcWorld + NpcVendors {}
@@ -113,6 +118,65 @@ pub trait NpcProvider: Send + Sync + Debug {
         item: u32,
     ) -> Option<Result<u32, NpcError>> {
         let _ = (ctl, w, player, npc, class, action, item);
+        None
+    }
+
+    /// The lines NPC `npc` of `class` says to `player` at a chat open or
+    /// a text refresh ([`super::npc_rules`]): `list` (string id, menu)
+    /// holds the quest records' lines, and the mod may add to it or change
+    /// it (an intro by the player's class, gossip that rotates by
+    /// [`QuestWorld::frame`]). The default leaves it.
+    fn chat_text(
+        &self,
+        w: &mut dyn QuestWorld,
+        player: UnitId,
+        npc: UnitId,
+        class: u16,
+        list: &mut TextList,
+    ) {
+        let _ = (w, player, npc, class, list);
+    }
+
+    /// The hire list of seller `class`, whose Normal `hireling` row is
+    /// `row`: `Some(slots)` replaces D2RUST's draw. Slot k must name
+    /// `row.name_first + k` (a hire finds its slot that way); slots past
+    /// [`super::hire::HIRE_SLOTS`] are dropped. Draws come from `seed` only
+    /// (the NPC-control seed).
+    fn hire_list(&self, class: u16, row: &HireRow, seed: &mut Seed) -> Option<Vec<HireSlot>> {
+        let _ = (class, row, seed);
+        None
+    }
+
+    /// The offer of a hire slot: `Some(Some(o))` replaces D2RUST's offer
+    /// both at the hire (the price, the row, the level) and at the
+    /// mercenary's init (its level and experience); `Some(None)` offers
+    /// nothing. `o.row` is a `hireling` row index; an offer past the rows
+    /// is no offer.
+    fn hire_offer(&self, req: &HireRequest) -> Option<Option<Offer>> {
+        let _ = req;
+        None
+    }
+
+    /// The experience of hireling level `level` on `hireling` row `row`
+    /// (the next-level experience, the level-ups, the restore level, the
+    /// kill gain cap); `None`: D2RUST's.
+    fn merc_exp(&self, row: &HirelingRow, level: i32) -> Option<i32> {
+        let _ = (row, level);
+        None
+    }
+
+    /// A hireling's stats and skills at `level` (a level-up or a new
+    /// hire), from `hireling` row `row`: `Some` replaces D2RUST's stat
+    /// growth and skills; the level, the experience and the level speech
+    /// stay D2RUST's. `req_level` gives a skill's required level (`None`:
+    /// no such skill).
+    fn merc_growth(
+        &self,
+        row: &HirelingRow,
+        level: i32,
+        req_level: &dyn Fn(u32) -> Option<i16>,
+    ) -> Option<MercGrowth> {
+        let _ = (row, level, req_level);
         None
     }
 }

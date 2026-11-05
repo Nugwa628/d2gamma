@@ -106,6 +106,8 @@ pub use world::{ClientUnit, UnitKey};
 /// A bridge failure. All of them stop the frame.
 #[derive(Debug, thiserror::Error)]
 pub enum BridgeError {
+    #[error("{0}")]
+    ModVersion(String),
     #[error("server protocol version {server}, client {client}")]
     Version { client: u32, server: u32 },
     #[error(transparent)]
@@ -200,6 +202,9 @@ pub struct Bridge<L> {
     /// A mod game's handler of its S→C mod messages
     /// ([`Bridge::set_mod_messages`]).
     mod_hook: Option<Box<dyn ModMessages>>,
+    pub mod_network: mod_network::Network,
+    visual_events: Vec<d2_proto::mod_ui::VisualEvent>,
+    visual_epoch: u64,
 }
 
 impl<L: ServerLink> Bridge<L> {
@@ -242,6 +247,9 @@ impl<L: ServerLink> Bridge<L> {
             ping_on: false,
             mods: ModInbox::default(),
             mod_hook: None,
+            mod_network: Default::default(),
+            visual_events: Vec::new(),
+            visual_epoch: 0,
         })
     }
 
@@ -279,6 +287,8 @@ impl<L: ServerLink> Bridge<L> {
         self.server_copy = false;
         self.inputs.objclient.quest_flags = None;
         self.outputs.clear();
+        self.visual_events.clear();
+        self.visual_epoch = self.visual_epoch.wrapping_add(1);
     }
 
     /// Sends a typed C→S message.
@@ -360,17 +370,51 @@ impl<L: ServerLink> Bridge<L> {
         self.send_bytes(&msg)
     }
 
+    pub fn take_visual_events(&mut self) -> Vec<d2_proto::mod_ui::VisualEvent> {
+        std::mem::take(&mut self.visual_events)
+    }
+    pub fn visual_epoch(&self) -> u64 {
+        self.visual_epoch
+    }
     /// Hands the mod messages received so far to the mod hook, in order.
-    fn run_mod_hook(&mut self) {
+    fn run_mod_hook(&mut self) -> Result<(), BridgeError> {
         if self.mods.payloads.is_empty() {
-            return;
+            return Ok(());
         }
         let payloads = std::mem::take(&mut self.mods.payloads);
+        for p in &payloads {
+            self.mod_network
+                .receive(p, &mut self.world)
+                .map_err(BridgeError::ModVersion)?;
+            if let Some(event) = d2_proto::mod_ui::read_visual(p) {
+                if let Some(i) = self.visual_events.iter().position(|old| {
+                    old.source_type == event.source_type
+                        && old.source_guid == event.source_guid
+                        && old.name == event.name
+                }) {
+                    self.visual_events.remove(i);
+                }
+                if self.visual_events.len() >= 256 && event.duration == 0 {
+                    self.visual_events.pop();
+                }
+                if self.visual_events.len() < 256 {
+                    self.visual_events.push(event);
+                }
+            }
+            if let Some((name, value)) = d2_proto::mod_ui::read_variable(p) {
+                if self.world.ui_variables.len() < d2_proto::mod_ui::MAX_VARIABLES
+                    || self.world.ui_variables.contains_key(name)
+                {
+                    self.world.ui_variables.insert(name.into(), value);
+                }
+            }
+        }
         if let Some(hook) = self.mod_hook.as_mut() {
             for p in &payloads {
                 hook.message(&mut self.world, p);
             }
         }
+        Ok(())
     }
 
     /// Whether the single-player game is paused: UI state 9 (the Esc
@@ -468,6 +512,7 @@ impl<L: ServerLink> Bridge<L> {
         // dropped before any of it is applied.
         if self.link.take_resume() {
             self.clear_after_resume();
+            self.mod_network.restart();
         }
         self.ping()?;
         let pumped = self.link.pump()?;
@@ -500,7 +545,12 @@ impl<L: ServerLink> Bridge<L> {
             report.rejected += c.rejected;
             report.discarded_bytes += c.discarded_bytes;
         }
-        self.run_mod_hook();
+        self.run_mod_hook()?;
+        // The server cannot associate a contract with this client before
+        // its player joins. LoadComplete confirms that association exists.
+        if let Some(hello) = self.mod_network.after_join(self.world.in_game) {
+            self.send_mod(&hello)?;
+        }
         if pumped.ticked && self.world.in_game {
             let before = self.log.rejected.len();
             // A moving skill's path step runs
@@ -579,7 +629,7 @@ impl<L: ServerLink> Bridge<L> {
             &mut self.outputs,
             chunk,
         )?;
-        self.run_mod_hook();
+        self.run_mod_hook()?;
         Ok(report)
     }
 
@@ -1108,6 +1158,11 @@ impl<L: ServerLink> Bridge<L> {
         self.world.set_item_tables(t);
     }
 
+    /// Sets the rules the model's skill reads run under.
+    pub fn set_rules(&mut self, rules: d2_sim::rules::Ruleset) {
+        self.world.rules = passive::RulesRef(rules);
+    }
+
     pub fn world(&self) -> &ClientWorld {
         &self.world
     }
@@ -1156,6 +1211,7 @@ impl<L: ServerLink> Bridge<L> {
     /// unverified; [`motion`]).
     pub fn preview_motion(&mut self, m: &mut motion::MonsterMotion) {
         if !self.server_copy {
+            m.set_class_velocities(&self.inputs.tables.class_velocities);
             for key in m.frame(&mut self.world, &self.inputs.tables.monsters) {
                 modes::end_walk(&mut self.world, &self.inputs, key);
             }
@@ -1230,3 +1286,5 @@ impl<L: ServerLink + ?Sized> ServerLink for Box<L> {
 
 #[cfg(test)]
 mod client_rate_tests;
+
+pub mod mod_network;

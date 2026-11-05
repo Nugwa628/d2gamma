@@ -43,6 +43,21 @@ fn diff_table(b: &PatchTable, edited: &[u8], no_like: bool) -> Result<Vec<String
     let file = format!("edited:{}", b.rules.txt_name);
     let x = TxtTable::parse(&file, edited)
         .map_err(|e| Box::new(d(Code::D04, b, None, &e.to_string())))?;
+    let mut expanded;
+    let b = if x.header.last().is_some_and(|h| h == super::DISABLED_COLUMN)
+        && x.header[..x.header.len() - 1] == b.header
+    {
+        expanded = b.clone();
+        expanded.header.push(super::DISABLED_COLUMN.to_vec());
+        expanded.bound.push(false);
+        for r in &mut expanded.rows {
+            r.cells.push(Vec::new());
+            r.writers.push(super::Writer::Base);
+        }
+        &expanded
+    } else {
+        b
+    };
     if x.header != b.header {
         return Err(Box::new(d(Code::D02, b, None, "header differs")));
     }
@@ -119,6 +134,23 @@ fn diff_table(b: &PatchTable, edited: &[u8], no_like: bool) -> Result<Vec<String
         } else {
             format!("#{i} {}", token(key, b, i)?)
         };
+        if let Some(c) = b.header.iter().position(|h| h == super::DISABLED_COLUMN) {
+            if xr[i][c] != br[i][c] {
+                if !br[i][c].is_empty()
+                    || xr[i][c] != b"1"
+                    || (0..b.header.len()).any(|j| j != c && xr[i][j] != br[i][j])
+                {
+                    return Err(Box::new(d(
+                        Code::D03,
+                        b,
+                        Some(i),
+                        "disable must retain row cells and cannot be reversed",
+                    )));
+                }
+                out.push(format!("remove {sel}"));
+                continue;
+            }
+        }
         let cols = (0..b.header.len())
             .filter(|&c| c != kc)
             .chain(std::iter::once(kc));
@@ -144,6 +176,13 @@ fn diff_table(b: &PatchTable, edited: &[u8], no_like: bool) -> Result<Vec<String
         } else {
             let mut best: Option<(usize, usize)> = None;
             for (t, xt) in xr.iter().enumerate().take(nb) {
+                if b.header
+                    .iter()
+                    .position(|h| h == super::DISABLED_COLUMN)
+                    .is_some_and(|c| xt[c] == b"1")
+                {
+                    continue;
+                }
                 let shares = filled.iter().filter(|&&c| xt[c] == row[c]).count();
                 if shares >= 1 && 2 * shares >= filled.len() && best.is_none_or(|(s, _)| shares > s)
                 {

@@ -266,6 +266,23 @@ pub fn world_sync<R, S>(game: &Game, sim: &mut WorldSim<LocalSeams>, world: &mut
 }
 
 impl Pending for LocalSeams {
+    fn script_ui_variable(&mut self, unit: UnitId, name: &str, value: i32) {
+        if let Some(payload) = d2_proto::mod_ui::variable(name, value) {
+            if let Ok(message) =
+                d2_proto::envelope::encode(d2_proto::envelope::Direction::ToClient, &payload)
+            {
+                self.send(unit, &message);
+            }
+        }
+    }
+    fn script_error(&mut self, message: &str) {
+        self.log.push(message.to_owned());
+    }
+    fn script_message(&mut self, unit: UnitId, message: &str) {
+        let bytes =
+            crate::adapters::handlers::player::chat_line(1, 0, 0, b"Mod", message.as_bytes());
+        self.sent.push((unit, bytes));
+    }
     /// A key in the player's inventory (the last sync's copy): the key is
     /// used up on the inventory model at the mark's place of the tick.
     fn object_key_test(&mut self, player: UnitId) -> bool {
@@ -988,6 +1005,20 @@ pub const DURANCE_2: u32 = 101;
 mod player_melee_range_tests {
     use super::*;
     use crate::weapons::{Hands, ItemFacts};
+
+    #[test]
+    fn hud_publication_uses_the_player_addressed_mod_envelope() {
+        let mut seams = LocalSeams::default();
+        Pending::script_ui_variable(&mut seams, UnitId(7), "combat/rage", 42);
+        let (player, bytes) = &seams.sent[0];
+        assert_eq!(*player, UnitId(7));
+        let payload =
+            d2_proto::envelope::payload(d2_proto::envelope::Direction::ToClient, bytes).unwrap();
+        assert_eq!(
+            d2_proto::mod_ui::read_variable(payload),
+            Some(("combat/rage", 42))
+        );
+    }
 
     /// A player at (100, 100) with a weapon of `rangeadder` `adder` and a
     /// hostile monster at (x, 100); both size 2 (the default).

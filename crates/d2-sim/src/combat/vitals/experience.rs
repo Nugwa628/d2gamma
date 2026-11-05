@@ -287,8 +287,37 @@ pub fn gold_penalty(
     stash_limit: i32,
     gold_limit: i32,
 ) -> GoldPenalty {
+    gold_penalty_in(
+        &crate::rules::Ruleset::Original,
+        l,
+        gi,
+        gs,
+        pvp,
+        game_type,
+        stash_limit,
+        gold_limit,
+    )
+}
+
+/// Scale gold loss before protection and allocation, keeping the loss stat,
+/// carried and banked gold, and the ground drop coherent.
+#[allow(clippy::too_many_arguments)]
+pub fn gold_penalty_in(
+    rules: &crate::rules::Ruleset,
+    l: i32,
+    gi: i32,
+    gs: i32,
+    pvp: bool,
+    game_type: u8,
+    stash_limit: i32,
+    gold_limit: i32,
+) -> GoldPenalty {
     let total = gi.wrapping_add(gs);
     let mut q = l.min(20).wrapping_mul(total) / 100;
+    q = crate::treasure::rules::scale(q, rules.global_rules().death_gold_percent);
+    if rules.global_rules().death_gold_percent != 100 {
+        q = q.clamp(0, total.max(0));
+    }
     let keep = total.wrapping_sub(q);
     let base = l.wrapping_mul(500);
     let mut out = GoldPenalty {
@@ -340,6 +369,10 @@ pub fn death_experience<W: VitalsUnits>(
     let hi = t.threshold_in(w.rules(), c, l as u32);
     let x = w.stat(u, stat::EXPERIENCE);
     let mut loss = penalty.wrapping_mul(hi.wrapping_sub(lo)) / 100;
+    let multiplier = w.rules().global_rules().death_experience_percent;
+    if multiplier != 100 {
+        loss = crate::rules::global::percent(loss, multiplier).min((x as u32).saturating_sub(lo));
+    }
     if loss == 0 {
         return None;
     }

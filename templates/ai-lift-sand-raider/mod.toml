@@ -1,0 +1,7 @@
+id = "ai-lift-sand-raider"
+name = "AI 8 SandRaider, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "SandRaider as a graph: AI 8 (SandRaider)."
+api = 1
+kind = "full"

@@ -57,7 +57,9 @@
 //! The routine works on the new item through [`GenHost`]: draws on the
 //! item seed, D2RUST's property path for property records. After it the
 //! item is finished as D2RUST's are (the ethereal roll, automagic affixes;
-//! sockets only for low, normal and superior items).
+//! sockets only for low, normal and superior items). A charm whose affix
+//! rolls find nothing is a fatal creation error unless the provider
+//! [`keeps`](ItemProvider::keeps_charm_without_affix) it.
 //!
 //! The provider comes from the game's rules, which the item tables carry
 //! ([`ItemTables::rules`]): every path that creates an item or applies
@@ -66,6 +68,7 @@
 
 use std::fmt::Debug;
 
+use super::item_rules::{ItemMove, MoveView, Requirement, RequirementView, RunewordItem};
 use super::tables::{ItemTables, PropRec};
 use super::{ItemRequest, ItemStats};
 use crate::combat::events::EventCall;
@@ -173,6 +176,52 @@ pub trait ItemProvider: Send + Sync + Debug {
     fn quality_fn(&self, host: &mut dyn GenHost, quality: u8, rq: &ItemRequest) -> Option<bool> {
         let _ = (host, quality, rq);
         None
+    }
+    /// The ethereal roll of a new item of `quality`, asked after its
+    /// quality routine (for every item; the engine's own roll is for item
+    /// formats from 100): `Some(true)` makes the item ethereal (the engine
+    /// sets the flag; the provider changes the stats it wants through
+    /// `host` first), `Some(false)` keeps it plain, `None` runs the
+    /// engine's roll.
+    fn ethereal_roll(&self, host: &mut dyn GenHost, quality: u8, rq: &ItemRequest) -> Option<bool> {
+        let _ = (host, quality, rq);
+        None
+    }
+    /// The sockets of a new item of `quality`, asked after the ethereal
+    /// roll (for every item; the engine's own roll is for low, normal and
+    /// superior items): `Some(n)` gives it `n` sockets (none for `n` ≤ 0),
+    /// `None` runs the engine's roll.
+    fn socket_roll(&self, host: &mut dyn GenHost, quality: u8, rq: &ItemRequest) -> Option<i32> {
+        let _ = (host, quality, rq);
+        None
+    }
+    /// Whether a charm whose affix rolls find no affix is still made, with
+    /// no affix (the charm routine of the normal quality). Default: the
+    /// creation fails ([`super::Fatal::Charm`]).
+    fn keeps_charm_without_affix(&self) -> bool {
+        false
+    }
+    /// The runeword a socketed item forms
+    /// ([`super::item_rules::runeword_for`], asked for every match):
+    /// `Some(Some(row))` the runes row, `Some(None)` none, `None` the
+    /// engine's match.
+    fn runeword(&self, t: &ItemTables, item: &RunewordItem<'_>) -> Option<Option<usize>> {
+        let _ = (t, item);
+        None
+    }
+    /// Whether a unit meets an item's requirements (to use it, to wear
+    /// it; a hireling's too): `Some(ok)` replaces the engine's answer
+    /// (`req.engine`), `None` keeps it.
+    fn requirements(&self, h: &dyn RequirementView, req: &Requirement) -> Option<bool> {
+        let _ = (h, req);
+        None
+    }
+    /// Whether a player's item message may run (asked before the
+    /// engine's checks): `false` refuses it (result 0, nothing moves, as
+    /// a failed requirement); the hook may tell the client through `h`.
+    fn may_move(&self, h: &mut dyn MoveView, mv: &ItemMove<'_>) -> bool {
+        let _ = (h, mv);
+        true
     }
 }
 

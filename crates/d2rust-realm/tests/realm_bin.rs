@@ -50,10 +50,16 @@ fn check_opens_the_folders_and_logs() {
 fn missing_game_data_fails() {
     let dir = temp_dir("nodata");
     let cfg = dir.join("d2rust-realm.cfg");
-    std::fs::write(&cfg, "game_data = missing\n").unwrap();
+    // Its own (empty) base folder: a base this machine made is not used.
+    std::fs::write(&cfg, "game_data = missing\nbase_data = base\n").unwrap();
     let out = check(&cfg);
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("doesn't exist"));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("doesn't exist"), "{err}");
+    assert!(
+        err.contains("server-ctl import-d2"),
+        "the one step that fixes it: {err}"
+    );
 }
 
 #[test]

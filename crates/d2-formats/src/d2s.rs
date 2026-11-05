@@ -890,12 +890,20 @@ pub struct D2s {
 
 /// The game tables the reader and writer need.
 pub trait SaveTables {
+    /// Separate mod codec: sixteen-bit stat ids, with 65535 as terminator.
+    fn wide_stats(&self) -> bool {
+        false
+    }
     /// The `itemstatcost` save columns of a stat; `None` when the id is not
     /// below the table's row count.
     fn stat_save(&self, id: u16) -> Option<StatSave>;
     /// The byte length of the item entry at the start of `buf` (the item's
     /// record plus its socketed children), or why it does not decode.
     fn item_entry_len(&self, buf: &[u8]) -> Result<usize, String>;
+    /// Validates a wide mod item with the declared custom stat ids.
+    fn wide_item_entry_len(&self, _buf: &[u8], _custom: &[u16]) -> Result<usize, String> {
+        Err("wide mod items unsupported by these tables".into())
+    }
     /// Whether the loader restores this hireling: present and its row
     /// found. Default: present.
     fn hireling_restored(&self, h: &Hireling) -> bool {
@@ -1012,13 +1020,16 @@ pub fn write_stats(entries: &[StatEntry], t: &dyn SaveTables) -> Vec<u8> {
         if col.bits == 0 {
             continue;
         }
-        w.put(9, u32::from(e.id));
+        w.put(if t.wide_stats() { 16 } else { 9 }, u32::from(e.id));
         if col.param != 0 {
             w.put(u32::from(col.param), u32::from(e.layer));
         }
         w.put(u32::from(col.bits), clamp_stat(e.value, col));
     }
-    w.put(9, STATS_END);
+    w.put(
+        if t.wide_stats() { 16 } else { 9 },
+        if t.wide_stats() { 65535 } else { STATS_END },
+    );
     out.extend_from_slice(&w.buf);
     out
 }
@@ -1339,8 +1350,9 @@ fn read_stats_bits(r: &mut Reader<'_>, t: &dyn SaveTables) -> Result<Stats, D2sE
     let mut b = Bits::new(&r.buf[start..]);
     let mut out = Vec::new();
     loop {
-        let id = b.read(9);
-        if id > 0x1FE {
+        let width = if t.wide_stats() { 16 } else { 9 };
+        let id = b.read(width);
+        if id == if t.wide_stats() { 65535 } else { STATS_END } {
             break;
         }
         // Without a terminator the game would read on forever; D2RUST
@@ -1351,7 +1363,13 @@ fn read_stats_bits(r: &mut Reader<'_>, t: &dyn SaveTables) -> Result<Stats, D2sE
         let id = id as u16;
         let col = match t.stat_save(id) {
             Some(c) if c.bits != 0 => c,
-            _ => return Err(fail(18, "stat not saved", start + (b.pos - 9) / 8)),
+            _ => {
+                return Err(fail(
+                    18,
+                    "stat not saved",
+                    start + (b.pos - width as usize) / 8,
+                ))
+            }
         };
         let layer = if col.param != 0 {
             let p = u32::from(col.param);

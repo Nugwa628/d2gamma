@@ -15,6 +15,10 @@ mod game_automap;
 mod game_backdrop_bake;
 #[path = "../game_front_end_credits.rs"]
 mod game_front_end_credits;
+#[path = "../game_front_end_intro_shots.rs"]
+mod game_front_end_intro_shots;
+#[path = "../game_front_end_mods_shots.rs"]
+mod game_front_end_mods_shots;
 #[path = "../game_front_end_online_shots.rs"]
 mod game_front_end_online_shots;
 #[path = "../game_front_end_shots.rs"]

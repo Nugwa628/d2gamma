@@ -602,6 +602,43 @@ fn delivery_asserts() {
     assert_eq!(inbox.push(&[0; 0x205]), Err(QueueError::BadSize(0x205)));
 }
 
+/// A state's stack count (wide state op 3) travels the mod wire: queued for
+/// the client, split off the buffer by its size rule and put on the game
+/// list. D2RUST's own wire has no such message and refuses it.
+#[test]
+fn a_stack_count_reaches_the_client_on_the_mod_wire_only() {
+    use d2_proto::envelope::Wire;
+    let msg = d2_proto::wide_state::stacks(0, 0x1234, 380, 3);
+    assert_eq!(msg.len(), d2_proto::wide_state::STACKS_SIZE);
+    let mut buffers = ClientBuffers::new();
+    buffers.add_client(0);
+    buffers.queue(0, &msg).unwrap();
+    buffers.queue(0, &msg).unwrap();
+    let buf = buffers.pop(0).unwrap();
+    assert_eq!(buf.len(), 2 * msg.len());
+    let mut inbox = Inbox::default();
+    assert_eq!(
+        inbox.deliver_on(Wire::Mod, &crate::adapters::ProtoSizes, &buf),
+        Ok(0)
+    );
+    assert_eq!(inbox.receive(), [msg.clone(), msg.clone()]);
+    let seen = d2_proto::wide_state::decode(&msg).unwrap();
+    assert_eq!(
+        (
+            seen.guid,
+            seen.state,
+            d2_proto::wide_state::stack_count(&seen)
+        ),
+        (0x1234, 380, Some(3))
+    );
+    let mut own = Inbox::default();
+    assert_eq!(
+        own.push_on(Wire::Original, &msg),
+        Err(QueueError::BadId(0xB7))
+    );
+    assert!(own.game.is_empty());
+}
+
 /// Regression: S→C 0xB6 ViewReady is in the generated table and reaches the
 /// system list through the buffer and local delivery (it was rejected as an
 /// id past the old hand-written 0xB5 ceiling).

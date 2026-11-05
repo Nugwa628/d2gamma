@@ -1,0 +1,3 @@
+# Owner policy: copy to the converted native folder, then review and add ids.
+# Empty by default. This grants permission; mods/addons.toml enables them.
+approved = []

@@ -1,5 +1,5 @@
 //! [`SkillPets`] on the skill view: the summon, pet, revive and path
-//! seams a mod game's skill bodies get, on the steps D2RUST's own summon
+//! seams a mod game's skill bodies get, on the steps D2Gamma's own summon
 //! and revive bodies run ([`crate::skills::use_::bodies`]) and the pet
 //! lists of [`crate::wiring::action::ActionHooks::pet_lists`].
 
@@ -7,10 +7,58 @@ use super::skill_use::UseView;
 use super::UseRest;
 use crate::rules::{SkillPets, Summon};
 use crate::skills::use_::bodies::{self, b3_lvl30, BodyEffect, BodyWorld, PathOp};
+use crate::skills::use_::UseWorld;
 use crate::units::UnitId;
 use crate::wiring::action::Pending;
 
 impl<X: Pending + UseRest> SkillPets for UseView<'_, X> {
+    fn pet_timer(&mut self, pet: UnitId, kind: u8, delay: i32) {
+        let due = bodies::after(self, delay);
+        self.schedule(pet, kind, due, 0, 0);
+    }
+    fn shadow_stats(
+        &mut self,
+        pet: UnitId,
+        level: i32,
+        percent: i32,
+        stats: &[crate::rules::StateStat],
+        umod: Option<u8>,
+    ) {
+        super::skill_host_shadow::stats(self, pet, level, percent, stats, umod);
+    }
+    fn equip_pet(&mut self, owner: UnitId, pet: UnitId, skill: i32, level: i32, item_level: i32) {
+        let item_level = item_level.max(1).min(self.cv.v.h.tables.skills.level_cap);
+        self.effect(BodyEffect::Equipment {
+            owner,
+            m: pet,
+            skill,
+            lvl: level,
+            ilvl: item_level,
+        });
+    }
+    fn pet_umod(&mut self, pet: UnitId, umod: u8, arg: i32) {
+        self.effect(BodyEffect::Umod {
+            m: pet,
+            umod: i32::from(umod),
+            arg,
+        });
+    }
+    fn summon_resistance(&mut self, owner: UnitId, pet: UnitId) {
+        bodies::summon_resist(self, owner, pet);
+    }
+    fn announce_pet(&mut self, owner: UnitId, pet: UnitId) {
+        self.effect(BodyEffect::AllyInfo { u: owner, m: pet });
+    }
+    fn place_sentry(
+        &mut self,
+        caster: UnitId,
+        setup: &crate::rules::SentrySetup,
+    ) -> Option<UnitId> {
+        super::skill_host_sentry::place(self, caster, setup)
+    }
+    fn join_owner_targets(&mut self, owner: UnitId, pet: UnitId) {
+        bodies::node_insert_owner(self, pet, owner);
+    }
     fn summon(&mut self, req: Summon<UnitId>) -> Option<UnitId> {
         bodies::spawn(self, req)
     }
@@ -102,5 +150,48 @@ impl<X: Pending + UseRest> SkillPets for UseView<'_, X> {
         self.path_op(u, PathOp::Velocity(velocity));
         self.path_op(u, PathOp::Compute);
         true
+    }
+
+    fn set_path_masks(
+        &mut self,
+        u: UnitId,
+        move_mask: Option<u16>,
+        foot_mask: Option<u16>,
+    ) -> bool {
+        if !self.has_path(u) {
+            return false;
+        }
+        if let Some(m) = move_mask {
+            self.path_op(u, PathOp::MoveMask(u32::from(m)));
+        }
+        if let Some(m) = foot_mask {
+            self.path_op(u, PathOp::FootprintMask(u32::from(m)));
+        }
+        true
+    }
+
+    fn leap_land(&mut self, u: UnitId, skill: i32) -> bool {
+        let Some(e) = UseWorld::find_entry(self, u, skill) else {
+            return false;
+        };
+        let t = self.cv.v.h.tables.clone();
+        bodies::leap_land(self, &t.combat, u, &e) != 0
+    }
+
+    fn leap_next_target(&mut self, u: UnitId, skill: i32) -> bool {
+        let Some(e) = UseWorld::find_entry(self, u, skill) else {
+            return false;
+        };
+        let t = self.cv.v.h.tables.clone();
+        bodies::leap_pick(self, &t.skills, &t.combat, u, Some(&e)).is_some()
+    }
+
+    fn leap_strike(&mut self, u: UnitId, skill: i32, level: i32) -> bool {
+        let t = self.cv.v.h.tables.clone();
+        bodies::leap_strike(self, &t.skills, &t.combat, u, skill, level) != 0
+    }
+
+    fn anim_from(&mut self, u: UnitId, frame: i32) {
+        BodyWorld::anim_from(self, u, frame);
     }
 }

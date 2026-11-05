@@ -1,0 +1,41 @@
+version = 1
+
+# monstats aip1..aip5 of the archers (Normal): 75, 15, 50, 5, 6.
+# The body works on its *second target* (the nearest enemy it sees), and closes in by hops (walk in radius): both are in
+# the vocabulary now (`at = "second"`, `second_distance_below`, `hop_to`).
+[[ai]]
+index = 37
+name = "SkeletonBow (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "shoot"
+
+# A second target inside 20: shoot it with aip1 = 75%, else 20% a short circle, else stand aip2 = 15 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+at = "second"
+when = [{ kind = "second_distance_below", value = 20 }, { kind = "random", percent = 75 }]
+
+[[ai.state.action]]
+kind = "move_around"
+steps = 3
+when = [{ kind = "second_distance_below", value = 20 }, { kind = "random", percent = 20 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6
+when = [{ kind = "second_distance_below", value = 20 }]
+
+# Nothing in range: aip3 = 50% a hop toward the target of at most aip4 = 5 sub-tiles, keeping aip5 = 6 from it,
+# else stand 20 frames.
+[[ai.state.action]]
+kind = "hop_to"
+steps = 5
+keep = 6
+when = [{ kind = "random", percent = 50 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.8

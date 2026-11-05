@@ -236,6 +236,17 @@ pub enum DrawItem {
         rect: crate::ui::geom::Rect,
         style: crate::ui::float::Style,
     },
+    /// A picture that is not game art (a mod's own, `rgb` three bytes a pixel,
+    /// rows top to bottom, `w` x `h`) with its top-left at `at`, drawn in the
+    /// palette's nearest colours. `key` names the picture: the same key is the
+    /// same pixels (the list of D2Gamma Mods).
+    Picture {
+        key: u64,
+        w: u16,
+        h: u16,
+        rgb: std::sync::Arc<Vec<u8>>,
+        at: Point,
+    },
     /// The pop-up layer's dimming of the whole frame (`DrawBoxAlpha(0, 0, W, H,
     /// 0, 0x7F)` once a pop-up set the modal control): black through the alpha blend table of
     /// draw mode `mode` (1), every pixel but the last column and row.
@@ -318,6 +329,9 @@ pub struct FrontEnd {
     settings: SettingsSlot,
     /// Options asked for the settings menu and the host has not read it.
     settings_requested: bool,
+    /// The first entry opens the main menu, not the trademark screen (a
+    /// mod's intro says so: [`crate::mod_look::Intro::skip`]).
+    skip_intro: bool,
 }
 
 impl FrontEnd {
@@ -345,7 +359,14 @@ impl FrontEnd {
             flushes: 0,
             settings: SettingsSlot::default(),
             settings_requested: false,
+            skip_intro: false,
         }
+    }
+
+    /// Leaves the trademark screen out of the first entry.
+    pub fn with_skipped_intro(mut self, skip: bool) -> Self {
+        self.skip_intro = skip;
+        self
     }
 
     pub fn canvas(&self) -> canvas::FrontCanvas {
@@ -451,7 +472,11 @@ impl FrontEnd {
             return;
         }
         self.flush_input();
-        self.enter(TRADEMARK);
+        self.enter(if self.skip_intro {
+            MAIN_MENU
+        } else {
+            TRADEMARK
+        });
     }
 
     /// Remove every pending input unprocessed (C5 r4).

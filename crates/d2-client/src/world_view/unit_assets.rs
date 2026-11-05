@@ -44,7 +44,7 @@ use d2_formats::cof::{Cof, CofLayer};
 
 use crate::assets::path::{CanonicalPath, FileSource};
 use crate::bridge::predict::{cell_centre, facing};
-use crate::bridge::world::{ClientWorld, KindData, UnitKey, PLAYER};
+use crate::bridge::world::{ClientWorld, KindData, UnitKey, OBJECT, PLAYER};
 use crate::bridge::ClientUnit;
 use crate::frames::{FramePart, FrameSet, FrameSetKey};
 use crate::rules::unit_composite::{
@@ -491,6 +491,13 @@ fn base_mode_token(looks: &UnitLooks, kind: CompositeKind, mode: u8) -> Code {
         .get(usize::from(mode))
         .copied()
         .unwrap_or(EMPTY)
+}
+
+impl UnitLooks {
+    /// Whether `unit` is an object whose `Draw` is 0 ([`Self::object_no_draw`]).
+    pub fn draws_no_body(&self, unit: &ClientUnit) -> bool {
+        unit.key.unit_type == OBJECT && self.object_no_draw.contains(&unit.class)
+    }
 }
 
 /// The COF name of a model unit, `None` for a unit without a
@@ -1195,8 +1202,14 @@ impl UnitArtLoader {
                         art.cofs.insert(path.clone(), cof);
                     }
                     Err(e) => {
-                        bevy::log::warn!(target: "d2_asset_fallback", asset = %name.full(), "{e}");
-                        log.push(format!("unit art: {}: {e}", name.full()));
+                        // An object whose `Draw` is 0 never draws a body, so
+                        // art that is in no archive is expected there.
+                        if self.looks.draws_no_body(unit) {
+                            bevy::log::debug!(asset = %name.full(), "{e}");
+                        } else {
+                            bevy::log::warn!(target: "d2_asset_fallback", asset = %name.full(), "{e}");
+                            log.push(format!("unit art: {}: {e}", name.full()));
+                        }
                         art.missing_cofs.insert(path);
                         continue;
                     }
@@ -1600,7 +1613,6 @@ mod cel_offset_tests {
     //! Synthetic fixtures only: an invented object token, COF and DC6.
     use super::*;
     use crate::assets::path::MemorySource;
-    use crate::bridge::world::OBJECT;
     use crate::world_view::ViewAssets;
     use d2_formats::palette::{Palette, Rgb};
 
@@ -1723,5 +1735,46 @@ mod cel_offset_tests {
         assert_eq!(f(&missing, 1), None);
         assert_eq!(f(&found, 1), Some((-14, -91)));
         assert_eq!(art.read().unwrap().missing_cofs.len(), 1);
+    }
+
+    /// An object whose `Draw` is 0 and whose COF is in no archive is expected
+    /// to have no art: nothing in the log, the file is remembered as missing
+    /// and not asked for again.
+    #[test]
+    fn a_no_draw_object_without_a_cof_is_not_logged() {
+        let mut looks = UnitLooks {
+            object_modes: vec![code(b"QN")],
+            components: vec![code(b"QH"), code(b"QT")],
+            ..Default::default()
+        };
+        looks.objects.insert(343, code(b"QM"));
+        looks.objects.insert(344, code(b"QP"));
+        looks.object_no_draw.insert(343);
+        let looks = Arc::new(looks);
+        let art = SharedUnitArt::default();
+        let loader = UnitArtLoader {
+            source: Arc::new(MemorySource::default()),
+            looks: looks.clone(),
+            art: art.clone(),
+        };
+        let mut world = ClientWorld::default();
+        for (guid, class) in [(8, 343), (9, 344)] {
+            let mut u = ClientUnit::new(UnitKey {
+                unit_type: OBJECT,
+                guid,
+            });
+            u.class = class;
+            u.position = Some((10, 10));
+            world.units.insert(u.key, u);
+        }
+        let mut assets = ViewAssets::new(Palette {
+            colors: [Rgb::default(); 256],
+        });
+        let log = loader.ensure(&world, &mut assets);
+        // Only the object that draws a body is reported.
+        assert_eq!(log.len(), 1, "{log:?}");
+        assert!(log[0].contains("QPQNhth"), "{log:?}");
+        assert_eq!(art.read().unwrap().missing_cofs.len(), 2);
+        assert!(loader.ensure(&world, &mut assets).is_empty());
     }
 }

@@ -1,0 +1,32 @@
+version = 1
+
+# monstats aip1..aip3 of the swarm1 row (Normal): 60, 20, 50. The body is shared with Goatman (it walks straight at the target).
+# (swarm2 to swarm4 have the same numbers; swarm5 differs only in speed.)
+[[ai]]
+index = 19
+name = "Swarm (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "hunt"
+
+# In reach: aip3 = 50% swing.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 50 }]
+
+# In reach and not swinging: stand aip2 = 20 frames.
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.8
+when = [{ kind = "in_melee" }]
+
+# Out of reach: aip1 = 60% walk toward the target, else stand aip2 = 20 frames.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 60 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.8

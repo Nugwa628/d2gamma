@@ -34,12 +34,18 @@ pub mod npc_seams;
 pub mod packets;
 pub mod perf;
 pub mod rest;
+pub mod scripts;
 pub mod seams;
 pub mod skill_rest;
 pub mod stash_items;
 pub mod transport;
+pub mod ui_actions;
 pub mod weapons;
 pub mod world_data;
 
 #[cfg(test)]
 mod tests;
+
+pub mod visual_events;
+
+pub mod mod_network;

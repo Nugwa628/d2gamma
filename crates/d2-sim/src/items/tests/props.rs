@@ -376,6 +376,13 @@ fn gem_filler_and_runeword() {
     it.quality = q::NORMAL;
     it.stats.set_base(stat::NUMSOCKETS, 0, 2);
     assert_eq!(runeword_match(&t, &it, &[r1, r2]), Some(1));
+    t.rules = crate::rules::global::GlobalRules::default().into_ruleset();
+    assert_eq!(runeword_match(&t, &it, &[r1, r2]), Some(1));
+    t.rules = crate::rules::global::GlobalRules::from_toml("runeword_max_runes = 1")
+        .unwrap()
+        .into_ruleset();
+    assert_eq!(runeword_match(&t, &it, &[r1, r2]), None);
+    t.rules = crate::rules::Ruleset::Original;
     assert_eq!(runeword_match(&t, &it, &[r2, r1]), None);
     assert_eq!(runeword_match(&t, &it, &[r1]), None);
     // I = the filler (a rune), O = the socketed item's stats.

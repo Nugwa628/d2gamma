@@ -61,6 +61,12 @@ pub const ALIGNMENT_CALLBACKS: [u32; 4] = {
 /// [`super::SkillEvent::ListRemoved`].
 pub const MOD_STATE_REMOVED: u32 = 0x4D4F_4401;
 
+/// Timed data buffs dispatch their cleanup through the skill view. Existing
+/// table buffs retain their current callback and timer behaviour.
+pub const MOD_TIMED_BUFF_REMOVED: u32 = 0x4D4F_4402;
+/// A data form expiry also restores its skill-entry mode.
+pub const MOD_FORM_REMOVED: u32 = 0x4D4F_4403;
+
 impl<X: Pending> StatHost for ActionHooks<X> {
     fn mod_stat_callback(
         &mut self,
@@ -95,6 +101,14 @@ impl<X: Pending> StatHost for ActionHooks<X> {
         list: ListId,
         callback: RemoveCallback,
     ) {
+        if let Ok(state) = u16::try_from(state) {
+            self.queue_script_event(crate::rules::scripts::Event {
+                kind: crate::rules::scripts::EventKind::BuffEnd,
+                unit,
+                other: None,
+                id: i32::from(state),
+            });
+        }
         use crate::skills::use_::bodies::callback::{
             BLADE_FURY, CHARGE, COLD, DEFAULT, FREEZE_END, INFERNO, JUSTHIT,
         };
@@ -111,7 +125,10 @@ impl<X: Pending> StatHost for ActionHooks<X> {
                 | INFERNO
                 | BLADE_FURY
         ) || ALIGNMENT_CALLBACKS.contains(&callback.0)
-            || callback.0 == MOD_STATE_REMOVED
+            || matches!(
+                callback.0,
+                MOD_STATE_REMOVED | MOD_TIMED_BUFF_REMOVED | MOD_FORM_REMOVED
+            )
         {
             self.removed_lists.push((unit, state, callback.0, list));
         }
@@ -351,7 +368,14 @@ impl<X: Pending> ActionHooks<X> {
             .x
             .attack_weapon(unit)
             .map(|w| self.x.item_type_class(w));
-        crate::units::anim_rate::frame_bonus(t as u8, c, m, dual, tc)
+        crate::units::anim_rate::frame_bonus_with(
+            t as u8,
+            c,
+            m,
+            dual,
+            tc,
+            &self.rules.global_rules().animation,
+        )
     }
 
     /// Whether the unit can dual-wield: a player of class 4 or 6, a monster
@@ -427,7 +451,7 @@ impl<X: Pending> ActionHooks<X> {
         record: &d2_formats::animdata::AnimRecord,
         frame_count: i32,
     ) -> Option<(i16, Option<i32>)> {
-        use crate::units::anim_rate::{anim_rate, mode_row, Rate, RateInput};
+        use crate::units::anim_rate::{anim_rate_with, mode_row, Rate, RateInput};
         let (r_ty, r_flags2, r_mode) = {
             let r = sim.units.get(unit)?;
             (r.ty, r.flags2, r.mode)
@@ -508,10 +532,25 @@ impl<X: Pending> ActionHooks<X> {
             player_mode_18: r_ty == UnitType::Player && r_mode == 18,
             were_speed,
         };
-        match anim_rate(&input) {
+        match anim_rate_with(&input, &self.rules.global_rules().animation) {
             Ok(Rate::Set {
                 speed, seq_speed, ..
-            }) => Some((speed as i16, seq_speed)),
+            }) => {
+                let speed = if matches!(
+                    (r_ty, r_mode),
+                    (UnitType::Player, 4) | (UnitType::Monster, 3)
+                ) {
+                    self.rules
+                        .global_rules()
+                        .unit(r_ty)
+                        .hit_recovery
+                        .timing()
+                        .speed(speed, self.rules.global_rules().animation.speed_cap)
+                } else {
+                    speed
+                };
+                Some((speed as i16, seq_speed))
+            }
             _ => None,
         }
     }
@@ -575,6 +614,14 @@ pub fn anim_record(r: &d2_formats::animdata::AnimRecord) -> AnimRecord {
 }
 
 impl<X: Pending> UnitHooks for ActionHooks<X> {
+    fn classic_animation(&self) -> bool {
+        self.rules.global_rules().animation.classic_25hz
+    }
+
+    fn before_expiry(&mut self, sim: &mut Sim<'_>, unit: UnitId, frame: i32) {
+        self.decay_stacks(sim, unit, frame);
+    }
+
     /// Timer event 11: the pet
     /// refresh sends the hirelings' ally info (S→C 0x7F)
     /// to the owner's client, throttled:
@@ -673,7 +720,12 @@ impl<X: Pending> UnitHooks for ActionHooks<X> {
             X::skill_stat_refresh(self, sim, u, stat, layer);
         }
         for (u, state, cb, list) in std::mem::take(&mut self.removed_lists) {
-            if ALIGNMENT_CALLBACKS.contains(&cb) || cb == MOD_STATE_REMOVED {
+            if ALIGNMENT_CALLBACKS.contains(&cb)
+                || matches!(
+                    cb,
+                    MOD_STATE_REMOVED | MOD_TIMED_BUFF_REMOVED | MOD_FORM_REMOVED
+                )
+            {
                 let ev = super::SkillEvent::ListRemoved {
                     unit: u,
                     state,
@@ -687,6 +739,19 @@ impl<X: Pending> UnitHooks for ActionHooks<X> {
                 self.freeze_end(sim, u, state);
                 continue;
             }
+            // A state the mod's triggers watch ran out: the default
+            // callback below, then the mod is told (unless the mod itself
+            // removed it).
+            let quiet = self.quiet_lists.iter().position(|&q| q == list);
+            if let Some(i) = quiet {
+                self.quiet_lists.swap_remove(i);
+            }
+            let tell_mod = cb == DEFAULT
+                && quiet.is_none()
+                && i32::try_from(state)
+                    .ok()
+                    .and_then(|s| self.rules.state_rules()?.get(s))
+                    .is_some_and(|d| d.watched);
             let t = sim.stats.toggle_state(u, state, false);
             // "State off" is the toggle with the update-queue insert, so
             // the client pass sends S→C 0xA9. Recorded: the
@@ -739,6 +804,15 @@ impl<X: Pending> UnitHooks for ActionHooks<X> {
                 if let Some(r) = sim.units.get_mut(u) {
                     r.flags |= FLAG_40;
                 }
+            }
+            if tell_mod {
+                let ev = super::SkillEvent::ListRemoved {
+                    unit: u,
+                    state,
+                    cb: MOD_STATE_REMOVED,
+                    list,
+                };
+                X::skill_event(self, sim, ev);
             }
         }
         let _ = unit;
@@ -804,12 +878,14 @@ impl<X: Pending> UnitHooks for ActionHooks<X> {
         if rec.ty == UnitType::Monster {
             let used = self.used_skill_of(unit)?;
             let class = usize::try_from(rec.class).ok()?;
-            let frames = self.monster_sequences.as_ref()?.lookup(class, used.skill)?;
+            let seqs = self.monster_sequences.as_ref()?;
+            let frames = seqs.lookup(class, used.skill)?;
             return Some(Sequence {
                 frame_count: (frames.len() as i32) * 256,
                 speed: 256,
                 pos: 0,
                 events: frames.iter().map(|f| f.event).collect(),
+                event_before: seqs.event_before(class, used.skill),
                 drawn: frames.iter().map(|f| f.frame).collect(),
             });
         }
@@ -829,6 +905,7 @@ impl<X: Pending> UnitHooks for ActionHooks<X> {
             speed: 256,
             pos: 0,
             events: frames.iter().map(|f| f.event).collect(),
+            event_before: Some(crate::skills::sequences::PLAYER_EVENT_BEFORE),
             drawn: frames.iter().map(|f| f.frame).collect(),
         })
     }
@@ -1181,6 +1258,11 @@ impl<X: Pending> UnitHooks for ActionHooks<X> {
         );
     }
 
+    /// Event 14, the mod tick callback, through [`Pending::skill_event`].
+    fn mod_tick(&mut self, sim: &mut Sim<'_>, unit: UnitId, a1: u32, _a2: u32) {
+        X::skill_event(self, sim, SkillEvent::ModTick { unit, job: a1 });
+    }
+
     /// Event 8, the periodic skills, through [`Pending::skill_event`].
     fn periodic_skills(&mut self, sim: &mut Sim<'_>, unit: UnitId, a1: u32, a2: u32) {
         X::skill_event(
@@ -1313,6 +1395,12 @@ impl<X: Pending> LifecycleHooks for ActionHooks<X> {
     /// footprint stamped there (box of size 1, mask 0x200). Freed by
     /// [`Self::ground_item_lifted`].
     fn ground_item_placed(&mut self, item: UnitId, room: crate::units::RoomId, x: i32, y: i32) {
+        self.queue_script_event(crate::rules::scripts::Event {
+            kind: crate::rules::scripts::EventKind::Drop,
+            unit: item,
+            other: None,
+            id: 0,
+        });
         let Some(p) = self.paths.as_mut() else {
             return;
         };
@@ -1726,6 +1814,18 @@ impl<X: Pending> View<'_, X> {
     /// bit of the unit's flag-ex.
     pub fn set_state(&mut self, u: UnitId, s: u16, on: bool) {
         let t = self.stats.toggle_state(u, u32::from(s), on);
+        if t.changed && self.h.scripts.is_some() {
+            self.h.queue_script_event(crate::rules::scripts::Event {
+                kind: if on {
+                    crate::rules::scripts::EventKind::StateStart
+                } else {
+                    crate::rules::scripts::EventKind::StateEnd
+                },
+                unit: u,
+                other: None,
+                id: i32::from(s),
+            });
+        }
         if let (Some(d), Some(r)) = (t.disguise, self.units.get_mut(u)) {
             if d {
                 r.flags2 |= flags2::DISGUISE;
@@ -2211,17 +2311,20 @@ impl<X: Pending> ActionHooks<X> {
     // TODO: (T, C, M) are the unit's own; the
     // disguise substitution is not applied here.
     pub(crate) fn movement_rate(&self, sim: &Sim<'_>, unit: UnitId) -> Option<i16> {
-        use crate::path::walk::velocity::{velocity_percent, VelocityFacts, STAT_VELOCITYPERCENT};
+        use crate::path::walk::velocity::{
+            velocity_percent_with, VelocityFacts, STAT_VELOCITYPERCENT,
+        };
         let paths = self.paths.as_ref()?;
         let (ty, class, mode) = self.draw_identity(sim, unit)?;
         let knockback = matches!((ty, mode), (UnitType::Player, 19) | (UnitType::Monster, 13));
+        let rates = &self.rules.global_rules().animation;
         let w = |h: &Self| -> i32 {
             match ty {
                 UnitType::Player => {
                     if mode == 3 {
-                        101
+                        rates.player_run_speed
                     } else {
-                        213
+                        rates.player_walk_speed
                     }
                 }
                 _ if mode == 15 => h.monster_run_speed(class as usize) as i32,
@@ -2232,7 +2335,15 @@ impl<X: Pending> ActionHooks<X> {
             return None;
         }
         if knockback {
-            return Some(w(self).clamp(0, SPEED_MAX as i32) as i16);
+            let actual_ty = sim.units.get(unit)?.ty;
+            return Some(
+                self.rules
+                    .global_rules()
+                    .unit(actual_ty)
+                    .knockback
+                    .speed(w(self).clamp(0, rates.speed_cap), rates.speed_cap)
+                    as i16,
+            );
         }
         if !self.path_has(unit) {
             return None;
@@ -2256,9 +2367,9 @@ impl<X: Pending> ActionHooks<X> {
             item_fastermove: sim.stats.unit_total(unit, scale_stat as u16, 0),
             velocitypercent: sim.stats.unit_total(unit, STAT_VELOCITYPERCENT, 0),
         };
-        let p = velocity_percent(&paths.tables, &facts, mode)?;
+        let p = velocity_percent_with(&paths.tables, &facts, mode, rates)?;
         let v = w(self).wrapping_mul(p) / 100;
-        Some(if v <= 0 { 0 } else { v.min(SPEED_MAX as i32) } as i16)
+        Some(if v <= 0 { 0 } else { v.min(rates.speed_cap) } as i16)
     }
 
     /// The tables of the monster speeds ([`MonsterSpeeds`]).

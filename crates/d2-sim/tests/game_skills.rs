@@ -73,6 +73,7 @@ fn tables() -> &'static SkillTables {
         level_cap: LEVEL_CAP_114D,
         stat_count: game_common::table("itemstatcost", d2_data::tables::Itemstatcost::SIZE).count
             as i32,
+        data_rules: d2_data::bin::DataRules::Original,
     })
 }
 

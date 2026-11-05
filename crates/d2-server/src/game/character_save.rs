@@ -104,6 +104,8 @@ pub struct Live {
     /// `None`: the game's rules have no save hooks, and the save keeps
     /// the sections it was loaded with.
     pub mod_sections: Option<Vec<ModSection>>,
+    /// Independent progress of the configured mod difficulties.
+    pub difficulty_progress: Option<Vec<d2_formats::d2m::progress::Progress>>,
     /// The quest flag records per difficulty (`QuestFlags::copy_out`).
     pub quests: Option<[[u8; 96]; 3]>,
     /// Items, skill levels and waypoints (q-save-full).
@@ -132,6 +134,7 @@ pub struct Live {
 pub fn read_live(sim: &mut Sim, player: UnitId) -> Live {
     // A mod game's sections first, before the engine reads the player.
     let mod_sections = sim.events.action.mod_save_sections(&mut sim.game, player);
+    let difficulty_progress = super::difficulty_progress::capture(sim, player);
     let (mut stats, mut stat_params) = sim
         .events
         .action
@@ -143,12 +146,12 @@ pub fn read_live(sim: &mut Sim, player: UnitId) -> Live {
         stats.clear();
         stat_params.clear();
     }
-    let npcs = sim
-        .world
-        .rest
-        .quests
-        .get(&player)
-        .map(|q| (q.first_talk, [0, 1, 2].map(|d| q.intro_bits(d))));
+    let npcs = sim.world.rest.quests.get(&player).map(|q| {
+        (
+            std::array::from_fn(|d| q.first_talk.get(d).copied().unwrap_or_default()),
+            [0, 1, 2].map(|d| q.intro_bits(d)),
+        )
+    });
     let quests = sim.world.rest.quests.get(&player).map(|q| {
         let mut out = [[0u8; 96]; 3];
         for (rec, f) in out.iter_mut().zip(&q.flags) {
@@ -192,6 +195,7 @@ pub fn read_live(sim: &mut Sim, player: UnitId) -> Live {
         stats,
         stat_params,
         mod_sections,
+        difficulty_progress,
         quests,
         extra,
         gaps,
@@ -324,6 +328,11 @@ pub fn apply_live(base: &D2s, live: &Live, now: u32) -> D2s {
                 entries.sort_by_key(|e| (e.id, e.layer));
                 body.stats = Stats::Bits(entries);
             }
+        }
+    }
+    if let Some(records) = &live.difficulty_progress {
+        if let Some(body) = save.body.as_mut() {
+            d2_formats::d2m::progress::write(body, records).expect("bounded configured progress");
         }
     }
     save.header.save_time = now;

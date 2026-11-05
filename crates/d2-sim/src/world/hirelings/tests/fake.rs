@@ -43,6 +43,8 @@ pub struct Fake {
     pub skill_count: u32,
     /// `skill_pet_max` answer.
     pub pet_max: Option<i32>,
+    /// The game's rules (default `Original`; a mod's in `mod_merc`).
+    pub rules: crate::rules::Ruleset,
 }
 
 impl Fake {
@@ -102,6 +104,9 @@ impl HirelingWorld for Fake {
     }
     fn expansion(&self) -> bool {
         self.expansion
+    }
+    fn rules(&self) -> &crate::rules::Ruleset {
+        &self.rules
     }
     fn players(&self) -> Vec<UnitId> {
         self.players.clone()

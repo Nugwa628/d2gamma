@@ -132,7 +132,9 @@ fn read_grid(t: &mut Tab, width: u32, height: u32) -> Result<Vec<u32>, TextError
     if rows.len() != height as usize {
         return Err(t.err(format!("{} rows, expected {height}", rows.len())));
     }
-    let mut cells = Vec::with_capacity(width as usize * height as usize);
+    // Grow only from the supplied cells: a malformed size must not reserve
+    // gigabytes before we can report the first short row.
+    let mut cells = Vec::new();
     for (y, row) in rows.iter().enumerate() {
         let before = cells.len();
         if width > 0 {

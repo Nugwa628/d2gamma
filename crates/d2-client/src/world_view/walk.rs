@@ -78,7 +78,10 @@ impl PreviewWalk {
             Some((self.predict.clone(), self.seen_ticks))
         };
         self.model_mode = [world.local().map(|p| p.mode), self.model_mode[0]];
-        let ticked = world.server_ticks != self.seen_ticks;
+        // A frame can pump several server ticks: the prediction steps once
+        // for each ([`Predict::frame_ticks`]).
+        let ticks = world.server_ticks.saturating_sub(self.seen_ticks);
+        let ticked = ticks != 0;
         self.seen_ticks = world.server_ticks;
         let walks = self.tap.take();
         let walks_sent = walks.len();
@@ -86,7 +89,7 @@ impl PreviewWalk {
             self.predict.waypoint_sent();
         }
         match self.speeds {
-            Some(speeds) => self.predict.frame(world, walks, ticked, speeds),
+            Some(speeds) => self.predict.frame_ticks(world, walks, ticks, speeds),
             // No speeds: snaps only (no step).
             None => self.predict.observe(world),
         }

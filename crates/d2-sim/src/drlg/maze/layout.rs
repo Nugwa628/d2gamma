@@ -445,7 +445,9 @@ pub(super) fn ice(gen: &mut Gen<'_>) -> Result<(), MazeError> {
     stamps(gen, kinds)
 }
 
-/// Special cells of the lair levels (62, 63, 64).
+/// Special cells of the lair levels: level 64 gets the tight spot, the
+/// treasure and the way back; every other level of the lair type (62, 63
+/// and any a mod adds) the way on and the way back.
 pub(super) fn lair(gen: &mut Gen<'_>) -> Result<(), MazeError> {
     let mut r = gen.level_step() & 3;
     match gen.level_id {
@@ -455,11 +457,10 @@ pub(super) fn lair(gen: &mut Gen<'_>) -> Result<(), MazeError> {
             gen.stamp_next("lair_treasure", &mut r)?;
             gen.stamp_next("lair_prev", &mut r)
         }
-        62 | 63 => {
+        _ => {
             gen.stamp_next("lair_next", &mut r)?;
             gen.stamp_next("lair_prev", &mut r)
         }
-        _ => Ok(()),
     }
 }
 

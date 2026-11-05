@@ -18,6 +18,7 @@ use d2_net::msg::ErrorCode;
 use d2_net::wire::{Refused, Welcome};
 use d2_net::{Packet, ResumeToken, Transport};
 use d2_proto::dev::DevCommand;
+use d2_proto::envelope::Wire;
 use d2_server::adapters::session_flow::SessionFlow;
 use d2_server::adapters::ProtoSizes;
 use d2_server::dev::{DevCatalog, DevServer};
@@ -75,6 +76,17 @@ pub(super) struct Parts {
     pub item_ids: Option<IdBlock>,
     /// Where the game's journal goes; `None`: not recorded.
     pub journal: Option<Arc<JournalSetup>>,
+}
+
+/// The wire a game's host speaks: a mod game's rules speak the mod wire,
+/// so its envelopes carry the mod game's own messages (MS13) online as in
+/// single player; D2Gamma's own games keep the original wire.
+pub(super) fn wire_for(rules: &d2_sim::rules::Ruleset) -> Wire {
+    if rules.is_original() {
+        Wire::Original
+    } else {
+        Wire::Mod
+    }
 }
 
 /// A running game. Lives on its game thread only.
@@ -140,6 +152,7 @@ impl Instance {
         // The game's difficulty comes from its builder's character; the
         // players' characters come from the seats (the loader below).
         let character = d2_server::game::Character::New.with_difficulty(spec.difficulty);
+        let wire = wire_for(&rules.rules);
         let builder = GameBuilder::new(data.clone())
             .seed(seed)
             .character(character)
@@ -203,6 +216,7 @@ impl Instance {
             settled: settled_tx,
         }));
         let mut host = Host::new(sim, ProtoSizes, ServerSession, SystemClock::default());
+        host.set_wire(wire);
         let journal = journal.map(|(rec, tap)| {
             host.set_packet_observer(Some(Box::new(tap)));
             rec

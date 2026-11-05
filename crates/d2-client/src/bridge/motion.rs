@@ -32,6 +32,16 @@
 //! - any other request (stop 0x6D, attack, hit, death) or a placement by
 //!   a message ends the track.
 //!
+//! Another player (not the local one, whose own walk is the prediction,
+//! [`super::predict`]) gets the same track from its S→C 0x0F / 0x10 walk
+//! (codes 0x01 / 0x17 to a point, 0x00 / 0x18 to a unit) at its class's
+//! `charstats` speeds ([`player_step`]); the server's stop (0x0D code 7)
+//! sets it neutral on the server's cell. A realm's client has nothing
+//! else that moves other players: without the track they walked in place.
+//!
+//! The tracks step once per server tick, however many ticks a frame
+//! pumps (D2Gamma's own).
+//!
 //! A straight line instead of the client path, no collision; the server
 //! stays the authority (its next placement or stop wins). This matches
 //! three Fallen walking to a Necromancer around a Bone Wall (141 moving
@@ -48,7 +58,11 @@ use d2_sim::rng::Seed;
 use d2_sim::tick::TickRate;
 use d2_sim::units::{UnitId, UnitType};
 
-use super::world::{ClientWorld, ModeRequest, MonsterClass, UnitKey, MONSTER};
+use super::world::{ClientWorld, ModeRequest, MonsterClass, UnitKey, MONSTER, PLAYER};
+
+/// The most server ticks one frame steps the tracks: the most
+/// `Bridge::display_frame` recovers in one display frame.
+const MAX_TICKS_PER_FRAME: u64 = 16;
 
 /// One monster as the server's velocity computation reads it: class,
 /// mode, the stat-67 total the message carried and the class's
@@ -138,6 +152,18 @@ pub fn monster_step(monsters: &[Option<MonsterClass>], class: u32, mode: u32, pe
     (i64::from(v) * 0x400) >> 6
 }
 
+/// The 16.16 distance of one base-rate tick of a player of `class` in
+/// `mode` (run 3, else walk) at the creation stats: the class's
+/// `charstats` speeds, as the local player's prediction steps
+/// ([`super::predict::Speeds::step`]). 0 without a row.
+pub fn player_step(class_velocities: &[[u8; 2]], class: u32, mode: u32) -> i64 {
+    class_velocities
+        .get(class as usize)
+        .map_or(0, |&[walk, run]| {
+            super::predict::Speeds { walk, run }.step(mode == 3)
+        })
+}
+
 /// The monster mode request code of a stop (neutral's row of the mode table).
 const STOP_CODE: u8 = MODE_ROWS[mode::NU as usize].code_to_point;
 
@@ -168,13 +194,16 @@ struct Track {
     requests: u32,
 }
 
-/// The tracks of the walking monsters (module doc).
+/// The tracks of the walking monsters and other players (module doc).
 #[derive(Clone, Debug, Default)]
 pub struct MonsterMotion {
     tracks: BTreeMap<UnitKey, Track>,
     seen_ticks: u64,
     /// The monsters whose stop walk reached its point in the last step.
     arrived: Vec<UnitKey>,
+    /// The players' `charstats` `WalkVelocity` / `RunVelocity` by class
+    /// ([`super::world::ClientTables::class_velocities`]).
+    class_velocities: Vec<[u8; 2]>,
 }
 
 /// The goal of a monster's move request: the to-point / to-unit codes of
@@ -219,6 +248,14 @@ fn target_cell(world: &ClientWorld, key: UnitKey) -> Option<(u16, u16)> {
 }
 
 impl MonsterMotion {
+    /// The players' walk / run velocities by class, read by the tracks of
+    /// the other players.
+    pub fn set_class_velocities(&mut self, v: &[[u8; 2]]) {
+        if self.class_velocities != v {
+            self.class_velocities = v.to_vec();
+        }
+    }
+
     /// The number of monsters with a track.
     pub fn walking(&self) -> usize {
         self.tracks.len()
@@ -235,22 +272,44 @@ impl MonsterMotion {
         monsters: &[Option<MonsterClass>],
     ) -> Vec<UnitKey> {
         self.arrived.clear();
-        let ticked = world.server_ticks != self.seen_ticks;
+        // A frame can pump several server ticks: the tracks step once for
+        // each, as the server's monsters do (one step for all of them
+        // leaves a realm's NPCs behind their server positions).
+        let ticks = world
+            .server_ticks
+            .saturating_sub(self.seen_ticks)
+            .min(MAX_TICKS_PER_FRAME);
         self.seen_ticks = world.server_ticks;
         self.refresh(world, monsters);
-        if ticked {
-            self.step(world);
+        // A track made this frame waits for the next one: its request came
+        // with one of this frame's ticks, the server's path moves from the
+        // tick after it.
+        let now = world.share_frame();
+        for back in (0..ticks).rev() {
+            self.step(world, now.wrapping_sub(back as i32));
         }
         for t in self.tracks.values_mut() {
             t.fresh = false;
         }
-        std::mem::take(&mut self.arrived)
+        // A monster that arrived on one tick of the frame is there on the
+        // later ones too: each is ended once.
+        let mut arrived = std::mem::take(&mut self.arrived);
+        arrived.sort_unstable();
+        arrived.dedup();
+        arrived
     }
 
     fn refresh(&mut self, world: &ClientWorld, monsters: &[Option<MonsterClass>]) {
         let mut next = BTreeMap::new();
         for (key, u) in &world.units {
-            if key.unit_type != MONSTER || !matches!(u.mode, mode::WL | mode::RN) {
+            let walking = match key.unit_type {
+                MONSTER => matches!(u.mode, mode::WL | mode::RN),
+                // Another player in walk, run or town walk (the local
+                // player walks its own prediction).
+                PLAYER => world.local_player != Some(*key) && matches!(u.mode, 2 | 3 | 6),
+                _ => false,
+            };
+            if !walking {
                 continue;
             }
             let (Some(r), Some(cell)) = (u.last_mode_request, u.position) else {
@@ -259,7 +318,16 @@ impl MonsterMotion {
             let Some(goal) = goal_of(&r) else {
                 continue;
             };
-            let step = monster_step(monsters, u.class, u.mode, r.record[4]);
+            let step = if key.unit_type == PLAYER {
+                // A player stops only by the server's stop (0x0D), never by
+                // a stop request's walk.
+                if r.code == STOP_CODE {
+                    continue;
+                }
+                player_step(&self.class_velocities, u.class, u.mode)
+            } else {
+                monster_step(monsters, u.class, u.mode, r.record[4])
+            };
             let old = self.tracks.get(key);
             let keep = old
                 .filter(|t| t.request == r && t.cell == cell && t.requests == u.mode_requests)
@@ -286,10 +354,11 @@ impl MonsterMotion {
         self.tracks = next;
     }
 
-    fn step(&mut self, world: &mut ClientWorld) {
+    /// One server tick of game-frame phase `frame`.
+    fn step(&mut self, world: &mut ClientWorld, frame: i32) {
         let (rate, tick) = (
             world.tick_rate,
-            world.share_frame().rem_euclid(world.tick_rate.hz() as i32) as u64,
+            frame.rem_euclid(world.tick_rate.hz() as i32) as u64,
         );
         let mut arrived = Vec::new();
         for (key, t) in self.tracks.iter_mut() {
@@ -387,7 +456,7 @@ fn recache_room(world: &mut ClientWorld, key: UnitKey, cell: (u16, u16)) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bridge::world::{ClientUnit, MonsterSetup, PLAYER};
+    use crate::bridge::world::{ClientUnit, MonsterSetup};
 
     /// `monstats` rows: class 0 with `Velocity` 16 (path velocity 0x1000
     /// at 100 %: one sub-tile a tick).
@@ -476,6 +545,49 @@ mod tests {
             w.units[&UnitKey::new(MONSTER, 5)].position,
             Some((110, 100))
         );
+    }
+
+    #[test]
+    fn a_frame_of_several_ticks_steps_the_track_once_for_each() {
+        let mut w = ClientWorld::default();
+        monster(&mut w, 5, (100, 100), mode::WL, request(1, 110, 100, 100));
+        let mut m = MonsterMotion::default();
+        // The request's frame: no step.
+        m.frame(&mut w, &classes());
+        w.server_ticks += 3;
+        m.frame(&mut w, &classes());
+        assert_eq!(
+            w.units[&UnitKey::new(MONSTER, 5)].position,
+            Some((103, 100))
+        );
+    }
+
+    #[test]
+    fn another_player_walks_its_track_at_its_class_speed() {
+        let mut w = ClientWorld::default();
+        let local = UnitKey::new(PLAYER, 9);
+        w.local_player = Some(local);
+        for k in [UnitKey::new(PLAYER, 1), local] {
+            let mut u = ClientUnit::new(k);
+            u.position = Some((100, 100));
+            u.mode = 2;
+            u.last_mode_request = Some(request(0x01, 110, 100, 0));
+            w.units.insert(k, u);
+        }
+        let mut m = MonsterMotion::default();
+        // Class 0 walks at `WalkVelocity` 6: 0x6000 a base-rate tick.
+        m.set_class_velocities(&[[6, 9]]);
+        m.frame(&mut w, &[]);
+        // The local player walks its own prediction: no track.
+        assert_eq!(m.walking(), 1);
+        tick(&mut m, &mut w);
+        let other = &w.units[&UnitKey::new(PLAYER, 1)];
+        assert_eq!(other.precise, Some((0x64_8000 + 0x6000, 0x64_8000)));
+        assert_eq!(w.units[&local].precise, None);
+        for _ in 0..40 {
+            tick(&mut m, &mut w);
+        }
+        assert_eq!(w.units[&UnitKey::new(PLAYER, 1)].position, Some((110, 100)));
     }
 
     #[test]

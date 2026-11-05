@@ -296,7 +296,7 @@ pub fn start_movement<C: PathWorld + WalkUnits + ?Sized>(
         };
     } else if m == mode::KNOCKBACK {
         path.set_path_type(t, ty == UnitType::Player, path_types::KNOCKBACK_SERVER)?;
-        path.dist_budget = 5;
+        path.dist_budget = c.global_rules().unit(ty).control.knockback_distance;
     }
     // Step 3.
     let n = compute(t, c, path, unit, false)?;

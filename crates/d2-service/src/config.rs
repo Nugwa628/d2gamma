@@ -60,8 +60,8 @@ pub enum ConfigError {
         /// Why.
         reason: String,
     },
-    /// `game_data` is missing.
-    #[error("`game_data` is required: the server reads the rules from the game folder")]
+    /// Neither `game_data` nor `diablo2` is set.
+    #[error("`diablo2` (your Diablo II) or `game_data` is required: the server reads the rules from the game data")]
     NoGameData,
     /// Another required key is missing.
     #[error("`{key}` is required: {why}")]
@@ -148,6 +148,24 @@ impl Entry<'_> {
     pub fn path(&self, base: &Path) -> PathBuf {
         base.join(self.value)
     }
+
+    /// [`Entry::path`], with a leading `~/` taken from the user's home
+    /// folder (`HOME`, else `USERPROFILE`) when there is one.
+    pub fn home_path(&self, base: &Path) -> PathBuf {
+        let home = ["HOME", "USERPROFILE"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .find(|h| !h.is_empty());
+        match (
+            self.value
+                .strip_prefix("~/")
+                .or_else(|| self.value.strip_prefix("~\\")),
+            home,
+        ) {
+            (Some(rest), Some(h)) => PathBuf::from(h).join(rest),
+            _ => self.path(base),
+        }
+    }
 }
 
 /// The `key = value` lines of `text`, in order, without blank lines and
@@ -184,6 +202,24 @@ pub fn set_once<T>(slot: &mut Option<T>, v: T, entry: &Entry<'_>) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_home_path_starts_from_the_home_folder() {
+        let e = |value| Entry {
+            line: 1,
+            key: "diablo2",
+            value,
+        };
+        let base = Path::new("/srv/node");
+        assert_eq!(e("d2").home_path(base), base.join("d2"));
+        assert_eq!(e("/opt/d2").home_path(base), Path::new("/opt/d2"));
+        if let Some(h) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
+            assert_eq!(
+                e("~/d2rust-server/diablo2").home_path(base),
+                PathBuf::from(h).join("d2rust-server/diablo2")
+            );
+        }
+    }
 
     #[test]
     fn entries_skip_blanks_and_comments_and_number_the_lines() {

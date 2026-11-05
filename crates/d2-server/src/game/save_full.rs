@@ -60,7 +60,7 @@ pub fn read_extra(sim: &mut Sim, player: UnitId) -> Extra {
         )
     });
     let waypoints = h.waypoints.get(&player).and_then(|w| {
-        let mut w = *w;
+        let mut w = w.clone();
         let mut out = [[0u8; 16]; 3];
         for (o, r) in out.iter_mut().zip(w.0.iter_mut()) {
             *o = r.out_copy().ok()?;

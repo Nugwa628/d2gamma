@@ -98,7 +98,7 @@ fn travel_never_sets_town_bits() {
     let d = data();
     // Lut Gholein (level 40, index 9) unknown: refused, nothing set.
     let mut f = fake();
-    let before = f.records[&P];
+    let before = f.records[&P].clone();
     let mut arr = ArrivalList::default();
     assert_eq!(
         d.take_or_close(&mut f, &mut arr, P, &msg49(0x0b, 40)),
@@ -109,7 +109,7 @@ fn travel_never_sets_town_bits() {
     // A successful travel changes no record either.
     let mut f = fake();
     f.records.get_mut(&P).unwrap().0[0].set(1).unwrap();
-    let before = f.records[&P];
+    let before = f.records[&P].clone();
     f.land = Some((Some(ROOM_DEST), 300, 400, 3));
     f.spawn = Some(ROOM_DEST);
     assert_eq!(d.take_or_close(&mut f, &mut arr, P, &msg49(0x0b, 3)), Ok(0));

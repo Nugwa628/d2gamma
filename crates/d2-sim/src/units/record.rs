@@ -68,6 +68,10 @@ pub struct Sequence {
     pub pos: i32,
     /// Event byte per frame index.
     pub events: Vec<u8>,
+    /// The event byte of the record just before the frame list: what an
+    /// event read at index −1 returns (an animation variant that starts
+    /// at frame 0 reads it). `None`: that record is not known.
+    pub event_before: Option<u8>,
     /// Drawn frame per frame index (record +3): the frame setup
     /// Stores it ·256 in +0x44. Empty: +0x44 is left alone.
     pub drawn: Vec<u8>,

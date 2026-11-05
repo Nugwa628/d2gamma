@@ -120,6 +120,7 @@ pub(super) fn calc1_tables(n: u8) -> Arc<d2_sim::skills::SkillTables> {
         miss_code: Vec::new(),
         level_cap: 99,
         stat_count: 359,
+        data_rules: d2_data::bin::DataRules::Original,
     })
 }
 
@@ -173,6 +174,7 @@ pub(super) fn calc12_tables(n: u8, n2: u8) -> Arc<d2_sim::skills::SkillTables> {
         miss_code: Vec::new(),
         level_cap: 99,
         stat_count: 359,
+        data_rules: d2_data::bin::DataRules::Original,
     })
 }
 

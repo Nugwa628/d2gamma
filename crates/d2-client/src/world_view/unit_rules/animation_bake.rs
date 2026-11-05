@@ -20,8 +20,10 @@ use crate::app::palette::ActPalettes;
 use crate::assets::path::{CanonicalPath, FileSource};
 use crate::rules::unit_composite::{code, Code, CompositeKind, FileFormat};
 use crate::world_view::unit_assets::UnitLooks;
+use d2_data::bin::DataRules;
 use d2_formats::mpq::ArchiveSet;
 use d2_formats::palette::Palette;
+use d2_native::layers::LayerFiles;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -286,8 +288,9 @@ fn walk_stats(dir: &Path, out: &mut Vec<(String, u64, u64)>) {
 
 /// The stamp of the source data: archive names, sizes and modification
 /// times; for a native folder its `manifest.toml` and every mod layer file's
-/// size and time. Cheap to compute; changed data makes a finished bake rerun
-/// (packs whose pictures did not change are kept).
+/// size and time (a data pack layer: the hash of the pack's index, which
+/// covers every file). Cheap to compute; changed data makes a finished bake
+/// rerun (packs whose pictures did not change are kept).
 pub fn data_stamp(data: &BakeData) -> Result<String, String> {
     let mut h = Sha256::new();
     match data {
@@ -298,12 +301,17 @@ pub fn data_stamp(data: &BakeData) -> Result<String, String> {
             let source = d2_native::source::NativeSource::open_with(dir, Some(mods))
                 .map_err(|e| e.to_string())?;
             for layer in source.layers.layers.iter().skip(1) {
-                let mut files = Vec::new();
-                walk_stats(&layer.dir, &mut files);
-                files.sort();
                 h.update(format!("layer {}\n", layer.name).as_bytes());
-                for (name, len, modified) in files {
-                    h.update(format!("{name}\t{len}\t{modified}\n").as_bytes());
+                match &layer.files {
+                    LayerFiles::Dir(files_dir) => {
+                        let mut files = Vec::new();
+                        walk_stats(files_dir, &mut files);
+                        files.sort();
+                        for (name, len, modified) in files {
+                            h.update(format!("{name}\t{len}\t{modified}\n").as_bytes());
+                        }
+                    }
+                    LayerFiles::Pack(pack) => h.update(pack.index_sha256()),
                 }
             }
         }
@@ -347,6 +355,11 @@ pub struct BakeOptions {
     /// Earlier bake folders (a mod's base game): a pack of the same identity
     /// there is copied, not generated again.
     pub reuse: Vec<PathBuf>,
+    /// The data rules the game's tables compile under when a native folder
+    /// opens (`--data-rules original|mod`): a mod game whose table patches
+    /// only load under the mod rules (`DataRules::Mod`: rows past a fixed
+    /// count, level type numbers) names them. The bake reads no table.
+    pub rules: DataRules,
 }
 
 fn parse_args(args: &[String]) -> Result<BakeOptions, String> {
@@ -358,23 +371,15 @@ fn parse_args(args: &[String]) -> Result<BakeOptions, String> {
     let mut jobs = None;
     let mut plan = false;
     let mut limit = None;
+    let mut rules = DataRules::Original;
     let mut args = args.iter();
     while let Some(flag) = args.next() {
         let mut value = || args.next().ok_or(format!("missing value for {flag}"));
         match flag.as_str() {
             "--game-dir" => game_dir = Some(PathBuf::from(value()?)),
             "--native" => native = Some(PathBuf::from(value()?)),
-            "--mod" => {
-                let name = value()?;
-                if name.is_empty()
-                    || !name
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-                {
-                    return Err("--mod needs a single mod folder name".into());
-                }
-                mods.push(name.clone());
-            }
+            // A mod folder name or a data pack (`docs/mods/data-pack.md`).
+            "--mod" => mods.push(d2_native::layers::cli_entry(value()?)?),
             "--reuse" => reuse.push(PathBuf::from(value()?)),
             "--out" => out = Some(PathBuf::from(value()?)),
             "--jobs" => {
@@ -394,6 +399,15 @@ fn parse_args(args: &[String]) -> Result<BakeOptions, String> {
                 )
             }
             "--plan" => plan = true,
+            "--data-rules" => {
+                rules = match value()?.as_str() {
+                    "original" => DataRules::Original,
+                    "mod" => DataRules::Mod,
+                    other => {
+                        return Err(format!("--data-rules {other}: original or mod"));
+                    }
+                }
+            }
             _ => return Err(format!("unknown bake-anims option {flag}")),
         }
     }
@@ -425,6 +439,7 @@ fn parse_args(args: &[String]) -> Result<BakeOptions, String> {
         plan,
         limit,
         reuse,
+        rules,
     })
 }
 
@@ -475,7 +490,12 @@ pub fn bake(o: &BakeOptions) -> Result<BakeSummary, String> {
     let start = Instant::now();
     let stamp = data_stamp(&o.data)?;
     let mod_id = match &o.data {
-        BakeData::Native { mods, .. } if !mods.is_empty() => Some(mods.join("+")),
+        BakeData::Native { mods, .. } if !mods.is_empty() => Some(
+            mods.iter()
+                .map(|m| d2_native::layers::mod_name(m))
+                .collect::<Vec<_>>()
+                .join("+"),
+        ),
         _ => None,
     };
     let index_path = o.out.join(INDEX);
@@ -502,7 +522,7 @@ pub fn bake(o: &BakeOptions) -> Result<BakeSummary, String> {
             }
         }
     }
-    let (source, names) = open_data(&o.data)?;
+    let (source, names) = open_data(&o.data, o.rules)?;
     let looks = UnitLooks::live(source.as_ref())?;
     let deny = AnimationDeny::data();
     let mut items = work_items(names.iter().map(String::as_str), &looks, &deny);
@@ -619,8 +639,12 @@ pub fn bake(o: &BakeOptions) -> Result<BakeSummary, String> {
     Ok(summary)
 }
 
-/// The source files and the unit component file names of `data`.
-fn open_data(data: &BakeData) -> Result<(Arc<dyn FileSource>, Vec<String>), String> {
+/// The source files and the unit component file names of `data`; a native
+/// folder's tables compile under `rules`.
+fn open_data(
+    data: &BakeData,
+    rules: DataRules,
+) -> Result<(Arc<dyn FileSource>, Vec<String>), String> {
     match data {
         BakeData::Archives(dir) => {
             let set =
@@ -635,26 +659,37 @@ fn open_data(data: &BakeData) -> Result<(Arc<dyn FileSource>, Vec<String>), Stri
             Ok((set, names.into_values().collect()))
         }
         BakeData::Native { dir, mods } => {
-            let files = crate::assets::game_files::GameFiles::native_with(dir, Some(mods))?;
+            let files = crate::assets::game_files::GameFiles::native_under(dir, Some(mods), rules)?;
             let source = d2_native::source::NativeSource::open_with(dir, Some(mods))
                 .map_err(|e| e.to_string())?;
-            // A sprite's native file is `<path>.toml` in the layer that owns it.
-            let mut names = std::collections::BTreeSet::new();
-            for layer in &source.layers.layers {
-                for root in ["data/global/chars", "data/global/monsters"] {
-                    let mut found = Vec::new();
-                    walk_stats(&layer.dir.join(root), &mut found);
-                    for (rel, _, _) in found {
-                        let lower = rel.to_ascii_lowercase();
-                        if lower.ends_with(".dcc.toml") || lower.ends_with(".dc6.toml") {
-                            names.insert(format!("{root}/{}", &rel[..rel.len() - 5]));
-                        }
-                    }
-                }
-            }
-            Ok((files.source(), names.into_iter().collect()))
+            Ok((files.source(), unit_sprite_names(&source.layers)?))
         }
     }
+}
+
+/// The unit sprite files of every layer of `stack` (folder or data pack),
+/// sorted: a sprite's native file is `<path>.toml` in the layer that owns it.
+fn unit_sprite_names(stack: &d2_native::layers::LayerStack) -> Result<Vec<String>, String> {
+    let mut names = std::collections::BTreeSet::new();
+    for layer in &stack.layers {
+        for root in ["data/global/chars", "data/global/monsters"] {
+            let found = match &layer.files {
+                LayerFiles::Dir(files_dir) => {
+                    let mut found = Vec::new();
+                    walk_stats(&files_dir.join(root), &mut found);
+                    found.into_iter().map(|(rel, _, _)| rel).collect()
+                }
+                LayerFiles::Pack(_) => layer.files_under(root).map_err(|e| e.to_string())?,
+            };
+            for rel in found {
+                let lower = rel.to_ascii_lowercase();
+                if lower.ends_with(".dcc.toml") || lower.ends_with(".dc6.toml") {
+                    names.insert(format!("{root}/{}", &rel[..rel.len() - 5]));
+                }
+            }
+        }
+    }
+    Ok(names.into_iter().collect())
 }
 
 /// Generates one component file's pack, or keeps the existing pack when its
@@ -809,6 +844,19 @@ mod tests {
     }
 
     #[test]
+    fn a_mod_game_names_its_data_rules() {
+        let args = |a: &[&str]| parse_args(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        let base = args(&["--native", "n", "--mod", "m", "--out", "o"]).unwrap();
+        assert_eq!(base.rules, DataRules::Original);
+        let modded = args(&["--native", "n", "--mod", "m", "--data-rules", "mod"]);
+        assert_eq!(modded.unwrap().rules, DataRules::Mod);
+        let original = args(&["--game-dir", "g", "--data-rules", "original", "--out", "o"]);
+        assert_eq!(original.unwrap().rules, DataRules::Original);
+        let e = args(&["--native", "n", "--data-rules", "loose"]).unwrap_err();
+        assert!(e.contains("original or mod"), "{e}");
+    }
+
+    #[test]
     fn component_files_parse_into_folded_keys() {
         let names = [
             r"data\global\CHARS\BA\HD\BAHDLITA1HTH.DCC",
@@ -893,6 +941,80 @@ mod tests {
         assert_eq!(&key.token, b"ba  ");
         assert_eq!(&key.component_token, b"hd  ");
         assert_eq!(entry.format(), FileFormat::Dcc);
+    }
+
+    #[test]
+    fn a_data_pack_layer_bakes_the_same_sprites_as_its_folder() {
+        let tmp = std::env::temp_dir().join(format!("bake-pack-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let put = |rel: &str, bytes: &[u8]| {
+            let p = tmp.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, bytes).unwrap();
+        };
+        let toml = "name = \"m\"\nversion = \"1\"\nnative_format_version = 1\n";
+        for root in ["folder", "packed"] {
+            put(
+                &format!("{root}/base/data/global/chars/ba/hd/bahdlita1hth.dcc.toml"),
+                b"x",
+            );
+            put(
+                &format!("{root}/base/data/global/chars/ba/hd/bahdlita1hth.dcc.png"),
+                b"x",
+            );
+        }
+        put("folder/mods/m/mod.toml", toml.as_bytes());
+        for f in [
+            "data/global/monsters/zm/tr/zmtrlitwl1hs.dcc",
+            "data/global/chars/ba/hd/bahdlitnuhth.dc6",
+        ] {
+            put(&format!("folder/mods/m/files/{f}.toml"), b"x");
+            put(&format!("folder/mods/m/files/{f}.png"), b"x");
+        }
+        put(
+            "folder/mods/m/files/data/global/monsters/zm/cof/zmnuhth.cof.toml",
+            b"x",
+        );
+        let pack = tmp.join("ship/m.d2pack");
+        std::fs::create_dir_all(pack.parent().unwrap()).unwrap();
+        d2_native::pack::build(&tmp.join("folder/mods/m"), &pack, 1).unwrap();
+
+        let folder =
+            d2_native::layers::LayerStack::with_mods(&tmp.join("folder"), &["m".into()]).unwrap();
+        let entry = d2_native::layers::cli_entry(pack.to_str().unwrap()).unwrap();
+        let packed =
+            d2_native::layers::LayerStack::with_mods(&tmp.join("packed"), &[entry]).unwrap();
+        let names = unit_sprite_names(&packed).unwrap();
+        assert_eq!(names, unit_sprite_names(&folder).unwrap());
+        assert_eq!(
+            names,
+            [
+                "data/global/chars/ba/hd/bahdlita1hth.dcc",
+                "data/global/chars/ba/hd/bahdlitnuhth.dc6",
+                "data/global/monsters/zm/tr/zmtrlitwl1hs.dcc",
+            ]
+        );
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn mod_values_name_a_folder_or_a_data_pack() {
+        let args = |m: &str| {
+            parse_args(&["--native".into(), "n".into(), "--mod".into(), m.into()]).map(|o| match o
+                .data
+            {
+                BakeData::Native { mods, .. } => mods,
+                BakeData::Archives(_) => unreachable!(),
+            })
+        };
+        assert_eq!(args("sample").unwrap(), ["sample"]);
+        assert_eq!(args("sample.d2pack").unwrap(), ["sample.d2pack"]);
+        let full = args("ship/sample.d2pack").unwrap();
+        assert!(Path::new(&full[0]).is_absolute(), "{full:?}");
+        assert!(full[0].ends_with("sample.d2pack"), "{full:?}");
+        for bad in ["../x", "a/b", ""] {
+            assert!(args(bad).unwrap_err().contains("data pack"), "{bad}");
+        }
     }
 
     #[test]

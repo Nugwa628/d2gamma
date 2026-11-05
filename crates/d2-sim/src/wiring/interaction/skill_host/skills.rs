@@ -3,8 +3,9 @@
 use crate::combat::CombatWorld;
 use crate::rules::HostSkills;
 use crate::skills::levels::{self, highest_entry};
+use crate::skills::use_::bodies::effects::PathOp;
 use crate::skills::use_::bodies::{self, BodyWorld};
-use crate::skills::use_::UseWorld;
+use crate::skills::use_::{do_core, UseWorld};
 use crate::skills::{SkillEntry, SkillUnits};
 use crate::units::UnitId;
 use crate::wiring::action::Pending;
@@ -24,6 +25,27 @@ impl<X: Pending + UseRest> HostSkills for UseView<'_, X> {
     fn skill_level(&self, u: UnitId, skill: i32) -> i32 {
         let e = highest_entry(&SkillUnits::skill_list(self, u), skill);
         levels::skill_level(self, &self.cv.v.h.tables.skills, Some(u), e.as_ref(), true)
+    }
+    /// The do core of an item's skill (no mana, no ownership), aimed at the
+    /// target unit or at the caster; the caster's own target and unit flag
+    /// 0x40 are restored after. Unlike an item's skill-on-event this has no
+    /// `itemeffect` gate: any skills row can be cast, and the client is not
+    /// sent a cast message (the effects reach it as the units they make).
+    fn cast_skill(&mut self, u: UnitId, skill: i32, lvl: i32, target: Option<UnitId>) -> bool {
+        let t = self.cv.v.h.tables.clone();
+        let saved_unit = UseWorld::target(self, u);
+        let saved_point = BodyWorld::path_target_point(self, u);
+        let saved_40 = UseWorld::unit_flags(self, u) & 0x40;
+        BodyWorld::path_op(self, u, PathOp::TargetUnit(Some(target.unwrap_or(u))));
+        let res = do_core(self, &t.skills, u, skill, lvl, false, true, false);
+        let op = match saved_unit {
+            Some(t) => PathOp::TargetUnit(Some(t)),
+            None => PathOp::TargetPoint(saved_point.0, saved_point.1),
+        };
+        BodyWorld::path_op(self, u, op);
+        let f = UseWorld::unit_flags(self, u);
+        UseWorld::set_unit_flags(self, u, (f & !0x40) | saved_40);
+        res != 0
     }
     fn used_skill(&self, u: UnitId) -> Option<SkillEntry> {
         SkillUnits::used_skill(self, u)
@@ -51,6 +73,10 @@ impl<X: Pending + UseRest> HostSkills for UseView<'_, X> {
     fn eval_skill_calc(&mut self, u: UnitId, calc: u32, skill: i32, lvl: i32) -> i32 {
         let t = self.cv.v.h.tables.clone();
         levels::eval_skill(self, &t.skills, Some(u), calc, skill, lvl)
+    }
+    fn eval_formula(&mut self, u: UnitId, code: &[u8], skill: i32, lvl: i32) -> i32 {
+        let t = self.cv.v.h.tables.clone();
+        levels::eval_desc(self, &t.skills, code, Some(u), 0, skill, lvl)
     }
     fn prog_count(&mut self, u: UnitId, skill: i32, lvl: i32) -> i32 {
         let t = self.cv.v.h.tables.clone();

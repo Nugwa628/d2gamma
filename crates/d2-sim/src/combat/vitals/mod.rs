@@ -26,30 +26,30 @@ use d2_data::tables::{decode_all, Charstats, Experience};
 
 /// Stat ids of the vitals (rows of the `itemstatcost` table).
 pub mod stat {
+    /// Attack rate (animation speed of attacks).
+    pub use crate::stats::ids::ATTACKRATE;
+    /// Experience.
+    pub use crate::stats::ids::EXPERIENCE;
+    /// The experience at the previous level threshold shown in the UI (`lastexp`).
+    pub use crate::stats::ids::LASTEXP;
+    /// Unspent skill points.
+    pub use crate::stats::ids::NEWSKILLS;
+    /// The experience needed for the next level (`nextexp`).
+    pub use crate::stats::ids::NEXTEXP;
+    /// Animation rate of other modes.
+    pub use crate::stats::ids::OTHER_ANIMRATE;
+    /// Unspent stat points.
+    pub use crate::stats::ids::STATPTS;
+    /// Block chance.
+    pub use crate::stats::ids::TOBLOCK;
+    /// Attack rating.
+    pub use crate::stats::ids::TOHIT;
+    /// Velocity percent (movement speed).
+    pub use crate::stats::ids::VELOCITYPERCENT;
     pub use crate::stats::stat::{
         DEXTERITY, ENERGY, HITPOINTS, LEVEL, MANA, MAXHP, MAXMANA, MAXSTAMINA, STAMINA, STRENGTH,
         VITALITY,
     };
-    /// Unspent stat points.
-    pub const STATPTS: u16 = 4;
-    /// Unspent skill points.
-    pub const NEWSKILLS: u16 = 5;
-    /// Experience.
-    pub const EXPERIENCE: u16 = 13;
-    /// Attack rating.
-    pub const TOHIT: u16 = 19;
-    /// Block chance.
-    pub const TOBLOCK: u16 = 20;
-    /// The experience at the previous level threshold shown in the UI (`lastexp`).
-    pub const LASTEXP: u16 = 29;
-    /// The experience needed for the next level (`nextexp`).
-    pub const NEXTEXP: u16 = 30;
-    /// Velocity percent (movement speed).
-    pub const VELOCITYPERCENT: u16 = 67;
-    /// Attack rate (animation speed of attacks).
-    pub const ATTACKRATE: u16 = 68;
-    /// Animation rate of other modes.
-    pub const OTHER_ANIMRATE: u16 = 69;
 }
 
 /// The stat reads, writes and notifications the vitals need (a seam).
@@ -168,9 +168,11 @@ impl VitalsTables {
     /// game's [`crate::rules::FormulaHooks::exp_threshold`] first, else
     /// the table's.
     pub fn threshold_in(&self, r: &Ruleset, class: i32, level: u32) -> u32 {
-        r.formulas()
+        let threshold = r
+            .formulas()
             .and_then(|f| f.exp_threshold(class, level))
-            .unwrap_or_else(|| self.threshold(class, level))
+            .unwrap_or_else(|| self.threshold(class, level));
+        crate::rules::global::percent(threshold, r.global_rules().experience_curve_percent)
     }
 
     /// [`VitalsTables::threshold_in`], `None` instead of a panic when the
@@ -178,17 +180,25 @@ impl VitalsTables {
     /// for it (a level past the table).
     pub fn try_threshold_in(&self, r: &Ruleset, class: i32, level: u32) -> Option<u32> {
         if let Some(t) = r.formulas().and_then(|f| f.exp_threshold(class, level)) {
-            return Some(t);
+            return Some(crate::rules::global::percent(
+                t,
+                r.global_rules().experience_curve_percent,
+            ));
         }
         let row = (level as usize).checked_add(1)?;
-        (row < self.experience.len()).then(|| self.exp(class, row))
+        (row < self.experience.len()).then(|| {
+            crate::rules::global::percent(
+                self.exp(class, row),
+                r.global_rules().experience_curve_percent,
+            )
+        })
     }
 
     /// The level `exp` reaches under rules `r` (as
     /// [`VitalsTables::level_from_exp`], with the mod game's table length
     /// and thresholds).
     pub fn level_from_exp_in(&self, r: &Ruleset, class: i32, exp: u32) -> u32 {
-        if r.formulas().is_none() {
+        if r.formulas().is_none() && r.global_rules().experience_curve_percent == 100 {
             return self.level_from_exp(class, exp);
         }
         let max = self.max_level_in(r, class);

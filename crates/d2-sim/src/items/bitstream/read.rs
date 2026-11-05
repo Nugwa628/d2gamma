@@ -169,8 +169,8 @@ fn read_list(
     let mut out = Vec::new();
     let mut last = None;
     loop {
-        let s = r.read(9)?;
-        if s == TERMINATOR {
+        let s = r.read(if t.wide_stats() { 16 } else { 9 })?;
+        if s == if t.wide_stats() { 0xFFFF } else { TERMINATOR } {
             return Ok(out);
         }
         let s = s as u16;
@@ -242,7 +242,14 @@ fn read_location(r: &mut BitReader<'_>, it: &mut StreamItem) -> Result<(), ReadE
 /// except 0x80000 and the alt-code bit, which the decoder drops;
 /// `compact` and `alt` come from the header.
 pub fn read_save_record(r: &mut BitReader<'_>, t: &ItemTables) -> Result<ReadItem, ReadError> {
-    let isc: &dyn IscTable = &t.isc;
+    read_record_with_stats(r, t, t)
+}
+
+fn read_record_with_stats(
+    r: &mut BitReader<'_>,
+    t: &ItemTables,
+    isc: &dyn IscTable,
+) -> Result<ReadItem, ReadError> {
     let m = r.read(16)?;
     if m != SAVE_MARKER {
         return Err(ReadError::BadMarker(m));
@@ -467,8 +474,17 @@ pub fn read_save_record(r: &mut BitReader<'_>, t: &ItemTables) -> Result<ReadIte
 /// `filled` count, 0 for compact and alt-code records:),
 /// each an entry of its own.
 pub fn read_save_entry(buf: &[u8], t: &ItemTables) -> Result<ReadEntry, ReadError> {
+    read_entry_with_stats(buf, t, t)
+}
+
+/// Reads a save entry with explicit stat codec facts and the same item type tables.
+pub fn read_entry_with_stats(
+    buf: &[u8],
+    t: &ItemTables,
+    isc: &dyn IscTable,
+) -> Result<ReadEntry, ReadError> {
     let mut r = BitReader::new(buf);
-    let item = read_save_record(&mut r, t)?;
+    let item = read_record_with_stats(&mut r, t, isc)?;
     let used = r.pos();
     let len = used.div_ceil(8);
     // A failed record stopped inside its data (legacy layout, first
@@ -491,7 +507,7 @@ pub fn read_save_entry(buf: &[u8], t: &ItemTables) -> Result<ReadEntry, ReadErro
     };
     for _ in 0..n {
         let rest = buf.get(entry.len..).unwrap_or_default();
-        let child = read_save_entry(rest, t).map_err(|e| match e {
+        let child = read_entry_with_stats(rest, t, isc).map_err(|e| match e {
             ReadError::Short(b) => ReadError::Short(b + entry.len * 8),
             ReadError::Padding(b) => ReadError::Padding(b + entry.len * 8),
             e => e,

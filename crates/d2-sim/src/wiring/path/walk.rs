@@ -743,6 +743,9 @@ impl<X: Pending> PathWorld for PathCtx<'_, X> {
 }
 
 impl<X: Pending> WalkUnits for PathCtx<'_, X> {
+    fn global_rules(&self) -> &crate::rules::global::GlobalRules {
+        self.v.h.rules.global_rules()
+    }
     fn frame(&self) -> i32 {
         self.game.frame
     }

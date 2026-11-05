@@ -48,7 +48,7 @@ pub const MAX_NODE_ID: usize = 15;
 /// A game server's address in a [`JoinNode`] (`host:port`).
 pub const MAX_NODE_ADDR: usize = 64;
 /// A join ticket in a [`JoinNode`]: at most 255 bytes (a signed ticket is
-/// at most 190).
+/// at most 214).
 pub const MAX_TICKET: usize = 255;
 /// A game's description: 0-40 bytes, the creator's.
 pub const MAX_DESCRIPTION: usize = 40;
@@ -73,6 +73,7 @@ pub mod reach {
 /// `Debug` never prints the ticket.
 #[derive(Clone, PartialEq, Eq)]
 pub struct JoinNode {
+    pub mod_identity: Option<crate::mod_identity::ModIdentity>,
     pub game_id: u32,
     /// The game server's id.
     pub node: String,
@@ -101,6 +102,7 @@ impl JoinNode {
             .u8(self.reach)
             .bytes8(&self.ticket)
             .u8(self.difficulty);
+        crate::mod_identity::ModIdentity::write_tail(self.mod_identity.as_ref(), w);
     }
 
     fn decode(r: &mut Reader) -> Result<Self, NetError> {
@@ -113,6 +115,7 @@ impl JoinNode {
             reach: r.u8()?,
             ticket: r.bytes8(MAX_TICKET)?,
             difficulty: r.u8()?,
+            mod_identity: crate::mod_identity::ModIdentity::read_tail(r)?,
         };
         if j.node.is_empty()
             || j.reach > reach::PUNCH
@@ -142,6 +145,7 @@ impl std::fmt::Debug for JoinNode {
 /// One open game as the list shows it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GameInfo {
+    pub mod_identity: Option<crate::mod_identity::ModIdentity>,
     pub game_id: u32,
     pub name: String,
     /// 0 Normal, 1 Nightmare, 2 Hell.
@@ -197,6 +201,7 @@ impl GameInfo {
             .u8(self.level_min)
             .u8(self.level_max)
             .u64(self.created_ms);
+        crate::mod_identity::ModIdentity::write_tail(self.mod_identity.as_ref(), w);
     }
 
     fn decode(r: &mut Reader) -> Result<Self, NetError> {
@@ -218,6 +223,7 @@ impl GameInfo {
             level_min: r.u8()?,
             level_max: r.u8()?,
             created_ms: r.u64()?,
+            mod_identity: crate::mod_identity::ModIdentity::read_tail(r)?,
         };
         if g.difficulty >= DIFFICULTIES || !level_range_ok(g.level_min, g.level_max) {
             return Err(NetError::Malformed);

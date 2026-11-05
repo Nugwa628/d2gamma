@@ -75,6 +75,13 @@ pub enum Stmt {
         /// The table name token.
         name: Tok,
     },
+    /// `remove <selector>` / `disable <selector>` retains a disabled id slot.
+    Remove {
+        /// Keyword token.
+        kw: Tok,
+        /// Row selector.
+        sel: Sel,
+    },
     /// `set`: changes one cell, expecting an old value.
     Set {
         /// The keyword token.
@@ -147,6 +154,7 @@ impl Stmt {
     pub fn kw(&self) -> &Tok {
         match self {
             Stmt::Table { kw, .. }
+            | Stmt::Remove { kw, .. }
             | Stmt::Set { kw, .. }
             | Stmt::Check { kw, .. }
             | Stmt::Add { kw, .. }
@@ -382,6 +390,7 @@ fn statement(toks: &[Tok], eol: usize) -> Result<Stmt, PErr> {
             }
             Stmt::Table { kw, name }
         }
+        b"remove" | b"disable" => Stmt::Remove { kw, sel: c.sel()? },
         b"set" => {
             let sel = c.sel()?;
             let column = c.need()?;
@@ -554,9 +563,11 @@ pub fn parse_layer(path: &str, data: &[u8], pos: usize) -> (Layer, Vec<Finding>)
             }
         };
         let kw = &toks[0];
-        if !["table", "set", "check", "add", "addcol", "stradd", "strset"]
-            .iter()
-            .any(|w| kw.is(w))
+        if ![
+            "table", "set", "check", "add", "addcol", "stradd", "strset", "remove", "disable",
+        ]
+        .iter()
+        .any(|w| kw.is(w))
         {
             push(Code::P04, n, kw.col);
             continue;

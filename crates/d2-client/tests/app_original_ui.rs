@@ -9,8 +9,8 @@
 //!   opens, the root draws its art, the right border and the control
 //!   panel, the panel files are read once into the frame store, and the
 //!   UI's open mode is the feed's;
-//! - the sound layer runs one sound tick per server tick and the core
-//!   presents the sound tick.
+//! - the sound layer runs one sound tick per server tick (the game's first
+//!   has none) and the core presents the last one.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -148,15 +148,16 @@ fn hotkey_opens_the_inventory_in_the_apps_frame() {
     let state = app.world().resource::<WorldViewState>();
     let last = state.last.unwrap();
     // Inventory art 4 + gold button 1 + close 1, right border 5, control
-    // panel 6 (no local player: no HUD overlay), the cursor cel last
-    // (`protate`, 8 frames loaded).
-    assert_eq!((last.items, last.ui_unhandled), (18, 1));
+    // panel 6 (no local player: no HUD overlay). The cursor cel the UI
+    // draws last (`protate`, its 8 frames loaded) leaves the frame: the
+    // real mouse shows it as the window's hardware cursor (`hw_cursor`).
+    assert_eq!((last.items, last.ui_unhandled), (17, 1));
     assert_eq!(state.assets.frames.len(), 8 + 12 + 10 + 6 + 2 + 8);
     let world = app.world().resource::<BridgeResource>().0.world();
     assert_eq!(state.feed.open_mode(world).unwrap().get(), 1);
 
-    // Toggle again: closed, mode 0; only the control panel and the cursor
-    // are drawn.
+    // Toggle again: closed, mode 0; only the control panel is drawn (the
+    // cursor is the hardware cursor).
     app.world_mut()
         .non_send_mut::<WorldViewUi>()
         .queue
@@ -165,16 +166,21 @@ fn hotkey_opens_the_inventory_in_the_apps_frame() {
     ms.fetch_add(40, Ordering::SeqCst);
     app.update();
     let state = app.world().resource::<WorldViewState>();
-    assert_eq!(state.last.unwrap().items, 7);
+    assert_eq!(state.last.unwrap().items, 6);
     let world = app.world().resource::<BridgeResource>().0.world();
     assert_eq!(state.feed.open_mode(world).unwrap().get(), 0);
 
-    // The sound layer ran one sound tick per server tick; the core
-    // presented the sound tick; the UI made no sound.
+    // The sound layer ran one sound tick per server tick but the game's
+    // first, which has none: the driver's counter (the next sound tick)
+    // is one behind the server's ticks. The core presented the last sound
+    // tick that ran; the UI made no sound.
     let audio = app.world().resource::<GameAudio>();
     let ticks = world.server_ticks as u32;
-    assert_eq!(audio.driver.as_ref().unwrap().lock().unwrap().tick(), ticks);
-    assert_eq!(audio.stats.presented, ticks);
+    assert_eq!(
+        audio.driver.as_ref().unwrap().lock().unwrap().tick() + 1,
+        ticks
+    );
+    assert_eq!(audio.stats.presented + 2, ticks);
     assert!(app.world().resource::<UiSounds>().0.is_empty());
 }
 

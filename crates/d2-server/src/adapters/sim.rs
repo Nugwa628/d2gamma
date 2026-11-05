@@ -105,6 +105,10 @@ impl TickHooks for Unspecified {}
 /// are mapped by [`SimGame::join`]. Timer events go to `events`; the
 /// game's world, item and skill systems are the host `world`.
 pub struct SimGame<D = Unspecified, W = NoWorld> {
+    /// Server-only script state, absent for D2Gamma and script-free mods.
+    pub mod_network: crate::mod_network::Network,
+    pub scripts: Option<std::sync::Arc<crate::scripts::ScriptHost>>,
+    pub script_tick: Option<fn(&mut Game, &mut D)>,
     /// The `d2-sim` game.
     pub game: Game,
     /// The timer-event dispatch.
@@ -211,6 +215,9 @@ impl<D: EventDispatch, W> SimGame<D, W> {
     /// `handlers::world::WiredWorld`, built from the game's tables).
     pub fn with_world(game: Game, events: D, world: W) -> Self {
         Self {
+            mod_network: Default::default(),
+            scripts: None,
+            script_tick: None,
             game,
             events,
             clients: BTreeMap::new(),
@@ -316,6 +323,9 @@ impl<D: EventDispatch, W> SimGame<D, W> {
             .clients
             .remove(&client)
             .ok_or(AdapterError::NotJoined(client))?;
+        if let Some(player) = self.game.lists.client(id).and_then(|c| c.player) {
+            self.mod_network.forget(player);
+        }
         self.transport_ids.remove(&id);
         self.hotkeys.remove(&client);
         self.game.lists.remove_client(id)?;
@@ -446,6 +456,9 @@ impl<D: ActionEvents, W: super::session::GolemWorld> SimGame<D, W> {
         let Some(id) = self.sim_client(client) else {
             return;
         };
+        if let Some(p) = self.player_unit(client) {
+            self.mod_network.restart(p);
+        }
         let game = &mut self.game;
         self.events
             .action()
@@ -547,6 +560,38 @@ impl<D: EventDispatch, W: WorldHost<D>> Intents for SimGame<D, W> {
         let Some(player) = self.player_unit(client) else {
             return false;
         };
+        if !self
+            .mod_network
+            .incoming(player, self.game.frame, self.game.tick_rate.hz(), payload)
+        {
+            return true;
+        }
+        if d2_proto::mod_ui::read_net_identity(payload, false).is_some() {
+            if let Some(reply) =
+                self.mod_network
+                    .hello(player, self.game.frame, self.game.tick_rate.hz(), payload)
+            {
+                if let Ok(bytes) = envelope::encode(Direction::ToClient, &reply) {
+                    if out.queue(client, &bytes).is_ok() {
+                        self.mod_network.queued(player, &bytes);
+                    }
+                }
+            }
+            return true;
+        }
+        if !self.mod_network.ready(player) {
+            return true;
+        }
+        if d2_proto::mod_ui::claims(payload) {
+            let network = &mut self.mod_network;
+            let scripts = self.scripts.as_deref();
+            let frame = self.game.frame;
+            self.world
+                .mod_message(&mut self.game, &mut self.events, &mut |h| {
+                    network.dispatch(payload, player, frame, h, scripts);
+                });
+            return true;
+        }
         let rules = rules.clone();
         let clients = self
             .game
@@ -579,6 +624,24 @@ impl<D: EventDispatch, W: WorldHost<D>> Intents for SimGame<D, W> {
             rules.message(&mut self.game, player, payload, &mut outbox);
         }
         true
+    }
+
+    fn mod_kicks(&mut self) -> Vec<(ClientId, String)> {
+        if !matches!(self.rules, Ruleset::Mod(_)) {
+            return Vec::new();
+        }
+        let mut result = Vec::new();
+        for client in self.client_list() {
+            if let Some(player) = self.player_unit(client) {
+                if let Some(reason) =
+                    self.mod_network
+                        .take_kick(player, self.game.frame, self.game.tick_rate.hz())
+                {
+                    result.push((client, reason));
+                }
+            }
+        }
+        result
     }
 
     /// The host world's object host tick ([`WorldHost::host_tick`]).
@@ -801,7 +864,21 @@ impl<D: EventDispatch + TickHooks, W: WorldHost<D>> Tick for SimGame<D, W> {
             .run_tick_from_client_pass(&mut self.game, &mut self.events);
         // The client pass raised the save it is due for; it ran above.
         self.game.character_save_due = false;
+        // The mod's item pass comes just before its periodic hook, which
+        // reads what the pass counted.
+        if let Some(hooks) = self.rules.events() {
+            let period = i32::try_from(hooks.period()).unwrap_or(0);
+            if period != 0 && d2_sim::tick::is_due(self.game.frame, self.game.ticks(period)) {
+                self.world
+                    .mod_items(&mut self.game, &mut self.events, |items| {
+                        hooks.item_pass(items);
+                    });
+            }
+        }
         self.world.after_tick(&mut self.game, &mut self.events);
+        if let Some(run) = self.script_tick {
+            run(&mut self.game, &mut self.events);
+        }
         let _span = crate::perf::span("host.emission");
         // The staged positions follow the path records, so the point
         // parser sees where the walking player is.
@@ -871,6 +948,25 @@ impl<D: EventDispatch + TickHooks, W: WorldHost<D>> Tick for SimGame<D, W> {
     /// The client vitals sync (`SimGame::vitals_sync`) of the flush.
     fn flush_sync(&mut self, out: &mut dyn MessageSink) {
         self.vitals_sync(out);
+        if matches!(self.rules, Ruleset::Mod(_)) && !self.mod_network.definition.empty() {
+            for client in self.client_list() {
+                let Some(player) = self.player_unit(client) else {
+                    continue;
+                };
+                let (frame, hz) = (self.game.frame, self.game.tick_rate.hz());
+                let network = &mut self.mod_network;
+                let mut messages = Vec::new();
+                self.world
+                    .mod_message(&mut self.game, &mut self.events, &mut |h| {
+                        messages = network.values(player, frame, hz, h);
+                    });
+                for bytes in messages {
+                    if out.queue(client, &bytes).is_ok() {
+                        self.mod_network.queued(player, &bytes);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -878,6 +974,13 @@ impl<D: EventDispatch, W: WorldHost<D>> SimGame<D, W> {
     /// One message the sim sent: a queue-walk mark becomes the real
     /// messages at its place, anything else is queued to the unit's client.
     pub(crate) fn send_or_mark(&mut self, out: &mut dyn MessageSink, unit: UnitId, bytes: Vec<u8>) {
+        if let Some((name, value)) =
+            envelope::payload(Direction::ToClient, &bytes).and_then(d2_proto::mod_ui::read_variable)
+        {
+            if self.client_of(unit).is_some() {
+                self.mod_network.observe_variable(unit, name, value);
+            }
+        }
         // A ground-item mark of the queue walk: the item's 0x9C here.
         if bytes.len() == 5 && bytes[0] == d2_sim::wiring::action::GROUND_ITEM_MARK {
             let guid = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);

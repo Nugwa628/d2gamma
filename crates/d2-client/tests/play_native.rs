@@ -23,6 +23,7 @@ use test_fixtures::synth::synthetic;
 const SHEET: &str = r"data\global\ui\panel\n4test.dc6";
 const COF: &str = r"data\global\monsters\zz\cof\zztrhth.cof";
 const COLORMAP: &str = r"data\global\items\Palette\grey.dat";
+const COLOR_TXT: &str = r"data\local\Color.txt";
 const PALSHIFT: &str = r"data\global\monsters\zz\cof\palshift.dat";
 const SOUND: &str = r"data\global\sfx\cursor\n4test.wav";
 
@@ -157,6 +158,8 @@ fn play_data_on_native_equals_play_data_on_the_archives() {
     // An item colour map: 21 rows of 256 indices.
     let colormap: Vec<u8> = (0..21 * 256).map(|i| (i * 7 % 256) as u8).collect();
     data.files.push((COLORMAP.into(), colormap.clone()));
+    // The green-blood switch file: on.
+    data.files.push((COLOR_TXT.into(), b"1".to_vec()));
     // A class's palette shifts and the shared ones: maps of 256 indices.
     let palshift: Vec<u8> = (0..8 * 256).map(|i| (i * 5 % 256) as u8).collect();
     data.files.push((PALSHIFT.into(), palshift.clone()));
@@ -231,6 +234,9 @@ fn play_data_on_native_equals_play_data_on_the_archives() {
     // Colour maps are copied verbatim: the raw read is the input bytes.
     assert_eq!(mpq.archives.read_file(COLORMAP), Some(Ok(colormap.clone())));
     assert_eq!(nat.archives.read_file(COLORMAP), Some(Ok(colormap)));
+    // So is the green-blood switch file: native reads it, not as absent.
+    assert_eq!(mpq.archives.read_file(COLOR_TXT), Some(Ok(b"1".to_vec())));
+    assert_eq!(nat.archives.read_file(COLOR_TXT), Some(Ok(b"1".to_vec())));
     // So are the monster palette shifts, which the client reads raw.
     for (path, bytes) in [(PALSHIFT, palshift), (RAND_TRANSFORMS, rand)] {
         assert_eq!(mpq.archives.read_file(path), Some(Ok(bytes.clone())));

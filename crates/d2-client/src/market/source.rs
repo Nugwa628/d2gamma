@@ -1017,6 +1017,23 @@ pub enum MarketEvent {
     Done(MarketDone),
 }
 
+impl MarketEvent {
+    /// The number of the request it answers; 0 for a push.
+    pub fn req(&self) -> Req {
+        match self {
+            MarketEvent::State { req, .. }
+            | MarketEvent::Results { req, .. }
+            | MarketEvent::Listing { req, .. }
+            | MarketEvent::Offers { req, .. }
+            | MarketEvent::Deliveries { req, .. }
+            | MarketEvent::Shop { req, .. }
+            | MarketEvent::Prices { req, .. } => *req,
+            MarketEvent::Notice(_) => 0,
+            MarketEvent::Done(d) => d.req,
+        }
+    }
+}
+
 /// The market as the window reaches it. `send` numbers and sends an ask;
 /// `poll` gives what arrived since, in order. Neither blocks.
 pub trait MarketSource: Send + Sync {

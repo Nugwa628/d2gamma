@@ -184,19 +184,25 @@ fn cmp_color(value: i32, base: i32) -> u16 {
     }
 }
 
+/// A resistance's stat less the penalty (at least −100) and its cap,
+/// min(75 + max-resist stat, 95).
+pub(crate) fn resist_terms(view: &dyn CharacterView, stat: u16, max_stat: u16) -> (i32, i32) {
+    let cap = (75 + view.stat(max_stat)).min(95);
+    ((view.stat(stat) - view.resist_penalty()).max(-100), cap)
+}
+
 /// Shown resist = stat − penalty, clamped to [−100, cap], cap =
 /// min(75 + max-resist stat, 95). Colour in this order:
 /// 3 when a raising effect is active, then 1
 /// when a lowering one is (lowering wins); then at the cap, colour 4
 /// unless it is 3; below it, a shown value < 0 is 1 (also over 3).
-fn resist_value(view: &dyn CharacterView, stat: u16, max_stat: u16) -> (i32, u16) {
-    let cap = (75 + view.stat(max_stat)).min(95);
+pub(crate) fn resist_value(view: &dyn CharacterView, stat: u16, max_stat: u16) -> (i32, u16) {
+    let (v, cap) = resist_terms(view, stat, max_stat);
     let mut color = match view.resist_effect(stat) {
         ResistEffect::Raised => 3,
         ResistEffect::Lowered => 1,
         ResistEffect::None => 0,
     };
-    let v = (view.stat(stat) - view.resist_penalty()).max(-100);
     let shown = if v >= cap {
         if color != 3 {
             color = 4;

@@ -1,0 +1,53 @@
+version = 1
+
+# monstats aip3 and aip4 of the snow yeti rows (classes 447 to 449; Normal): 90, 40 (aip1 and aip2 are not used).
+# (The brute rows have 75/100, 80/85, 85/75, 90/60, 100/45.)
+[[ai]]
+index = 7
+name = "Brute (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "rampage"
+
+# In reach: aip3 = 90% swing, of which aip4 = 40% swing 1 and the rest swing 2.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 36 }]
+
+[[ai.state.action]]
+kind = "attack"
+attack = 2
+when = [{ kind = "in_melee" }, { kind = "random", percent = 84 }]
+
+# The 10 percent left: aip3 = 90% circle, else stand 15 frames.
+[[ai.state.action]]
+kind = "move_around"
+steps = 4
+when = [{ kind = "in_melee" }, { kind = "random", percent = 90 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6
+when = [{ kind = "in_melee" }]
+
+# Out of reach: walk, faster the more hurt it is (the body's speed is 100 minus its life percent, between 40 and 100;
+# four steps of that here, the actions of a state being at most eight).
+[[ai.state.action]]
+kind = "move_to"
+speed = 60
+when = [{ kind = "life_below", percent = 45 }]
+
+[[ai.state.action]]
+kind = "move_to"
+speed = 40
+when = [{ kind = "life_below", percent = 65 }]
+
+[[ai.state.action]]
+kind = "move_to"
+speed = 20
+when = [{ kind = "life_below", percent = 85 }]
+
+[[ai.state.action]]
+kind = "move_to"

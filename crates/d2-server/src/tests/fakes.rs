@@ -252,6 +252,7 @@ pub struct FakePlayer {
 /// handler calls and ticks.
 #[derive(Default)]
 pub struct FakeGame {
+    pub mod_kicks: Vec<(ClientId, String)>,
     /// Current frame; each tick adds one.
     pub frame: i32,
     /// Players by client: `None` entry is a client without a player unit.
@@ -309,6 +310,9 @@ impl FakeGame {
 }
 
 impl Intents for FakeGame {
+    fn mod_kicks(&mut self) -> Vec<(ClientId, String)> {
+        std::mem::take(&mut self.mod_kicks)
+    }
     fn player(&self, client: ClientId) -> PlayerLookup {
         match self.players.get(&client) {
             None => PlayerLookup::NotInGame,

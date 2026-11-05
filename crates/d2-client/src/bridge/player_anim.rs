@@ -486,8 +486,8 @@ pub fn step(w: &mut ClientWorld, inputs: &ModelInputs, key: UnitKey) -> Result<(
     }
     let has_skill = u.skills.as_ref().is_some_and(|l| l.current.is_some());
     let kind = MOVE_KIND.get(u.mode as usize).copied().unwrap_or(0);
-    // A do that cannot model its branch (Charge's search pick, Leap Attack's
-    // landing face) reports the gap but must not stall the animation: the
+    // A do that cannot model its branch (Leap Attack's landing face)
+    // reports the gap but must not stall the animation: the
     // frame advance and the mode end still run, and the error is reported
     // after them so the client returns to neutral.
     let mut do_error = None;
@@ -552,6 +552,34 @@ pub fn step(w: &mut ClientWorld, inputs: &ModelInputs, key: UnitKey) -> Result<(
     Ok(())
 }
 
+/// Whether unit `key` is casting and has passed its uninterruptible point
+/// (`cast` in `rules.toml`): the authoritative side's answer on the same animation
+/// fractions ([`d2_sim::skills::cast_point`]), so the client never counts on a cast
+/// the server may still cancel, and never lets one go that the server holds.
+pub fn cast_committed(w: &ClientWorld, key: UnitKey) -> bool {
+    use d2_sim::skills::cast_point::{committed, is_skill_mode};
+    let rules = &w.rules.0.global_rules().cast;
+    if rules.is_off() {
+        return false;
+    }
+    let Some(u) = w.units.get(&key) else {
+        return false;
+    };
+    let ty = match key.unit_type {
+        super::world::PLAYER => d2_sim::units::UnitType::Player,
+        super::world::MONSTER => d2_sim::units::UnitType::Monster,
+        _ => return false,
+    };
+    let Some(skill) = u
+        .skills
+        .as_ref()
+        .and_then(|l| l.entries.get(l.current?))
+        .map(|e| i32::from(e.skill))
+    else {
+        return false;
+    };
+    is_skill_mode(ty, u.mode) && committed(rules, skill, u.frame, u.frame_count)
+}
 /// The used skill entry's flags.
 fn entry_flags(w: &ClientWorld, key: UnitKey) -> Option<u32> {
     let l = w.units.get(&key)?.skills.as_ref()?;
@@ -618,6 +646,68 @@ mod tests {
         // Neutral is not an ending mode: nothing more.
         step(&mut w, &inputs, key).unwrap();
         assert_eq!(w.units[&key].mode, 1);
+    }
+
+    // The uninterruptible cast point: the client's model of the local player's
+    // cast flips to "cannot be cancelled" on the same frame the server's
+    // `cast_point::committed` does, for the same animation.
+    #[test]
+    fn the_client_and_the_server_agree_on_the_cast_point() {
+        use crate::bridge::skills::{SkillEntry, SkillList};
+        use d2_sim::rules::global::GlobalRules;
+        use d2_sim::skills::cast_point;
+        const TELEPORT: u16 = 54;
+        let rules = |text: &str| {
+            crate::bridge::passive::RulesRef(GlobalRules::from_toml(text).unwrap().into_ruleset())
+        };
+        for (text, point) in [
+            ("[cast]\nuninterruptible_after_percent = 50\n", Some(50)),
+            (
+                "[cast]\nuninterruptible_after_percent = 90\n[[cast.skill]]\nid = 54\nuninterruptible_after_percent = 30\n",
+                Some(30),
+            ),
+            ("[[cast.skill]]\nid = 7\nuninterruptible_after_percent = 0\n", None),
+            ("", None),
+        ] {
+            let (mut w, key) = world();
+            w.rules = rules(text);
+            let inputs = ModelInputs {
+                player_anims: Some(Arc::new(Ten)),
+                ..ModelInputs::default()
+            };
+            w.units.get_mut(&key).unwrap().skills = Some(SkillList {
+                entries: vec![SkillEntry {
+                    skill: TELEPORT,
+                    ..SkillEntry::default()
+                }],
+                current: Some(0),
+                ..SkillList::default()
+            });
+            mode_set(&mut w, &inputs, key, 10);
+            let server = w.rules.0.global_rules().cast.clone();
+            let mut flipped = None;
+            for n in 0..=8 {
+                let u = &w.units[&key];
+                let (frame, count) = (u.frame, u.frame_count);
+                assert_eq!(count, 2560);
+                let theirs = cast_point::committed(&server, i32::from(TELEPORT), frame, count);
+                assert_eq!(cast_committed(&w, key), theirs, "{text:?} update {n}");
+                if theirs && flipped.is_none() {
+                    flipped = Some(frame);
+                }
+                step(&mut w, &inputs, key).unwrap();
+            }
+            // The flip is on the first animation frame that has reached the point.
+            let want = point.map(|p| {
+                let at = cast_point::frame_at(2560, p);
+                (at + 255) / 256 * 256
+            });
+            assert_eq!(flipped, want, "{text:?}");
+        }
+        // Neutral, or another skill's cast: never committed.
+        let (mut w, key) = world();
+        w.rules = rules("[cast]\nuninterruptible_after_percent = 0\n");
+        assert!(!cast_committed(&w, key));
     }
 
     // DT and DD: anim kind 2 holds the last frame at speed 0, end kind 0
@@ -699,6 +789,7 @@ mod tests {
                 miss_code: Vec::new(),
                 level_cap: 99,
                 stat_count: 359,
+                data_rules: d2_data::bin::DataRules::Original,
             })),
             ..ModelInputs::default()
         };
@@ -767,20 +858,15 @@ mod tests {
         assert_eq!((u.frame_count, seq.length), (13 << 8, 13 << 8));
     }
 
-    /// A mode-18 do that reports an unmodelled branch (Charge's search pick)
-    /// must not stall the sequence: the frame advance and the neutral end
-    /// still run, and only then is the error reported.
+    /// A mode-18 do that reports an error (Mind Blast without the skills
+    /// tables) must not stall the sequence: the frame advance and the
+    /// neutral end still run, and only then is the error reported.
     #[test]
     fn a_mode_18_do_error_still_advances_and_ends_the_sequence() {
         use crate::bridge::skills::{SkillEntry, SkillList, NATIVE};
-        const CHARGE: u16 = 43;
+        const MIND_BLAST: u16 = 43;
         let (mut w, key) = world();
         w.units.get_mut(&key).unwrap().position = Some((100, 100));
-        let near = UnitKey::new(MONSTER, 9);
-        let mut monster = ClientUnit::new(near);
-        monster.position = Some((101, 100));
-        monster.mode = 1;
-        w.units.insert(near, monster);
         let u = w.units.get_mut(&key).unwrap();
         u.mode = 18;
         u.speed = Some(256);
@@ -789,19 +875,18 @@ mod tests {
         u.path_live = Some(false);
         u.skills = Some(SkillList {
             entries: vec![SkillEntry {
-                skill: CHARGE,
+                skill: MIND_BLAST,
                 base: 1,
                 owner: NATIVE,
-                flags: 3,
-                param: 6,
                 ..SkillEntry::default()
             }],
             current: Some(0),
             ..SkillList::default()
         });
         let mut inputs = ModelInputs::default();
-        let mut rows = vec![crate::bridge::world::SkillRow::default(); usize::from(CHARGE) + 1];
-        rows[usize::from(CHARGE)].cltdofunc = 37;
+        let mut rows = vec![crate::bridge::world::SkillRow::default(); usize::from(MIND_BLAST) + 1];
+        rows[usize::from(MIND_BLAST)].cltdofunc = 8;
+        rows[usize::from(MIND_BLAST)].cltmissile_abc = [1, 1, 0];
         inputs.tables.skills = rows;
         assert!(step(&mut w, &inputs, key).is_err());
         assert_eq!(w.units[&key].mode, 1, "the sequence returned to neutral");

@@ -162,7 +162,7 @@ pub fn with_realm_id(s: &mut Sim, bytes: &[u8], id: u32) -> Result<Vec<u8>, Stri
             return Err("not an item with an ID of its own".into());
         }
         it.unit28 = id;
-        write_save(it, &d.econ.tables.isc)
+        write_save(it, d.econ.tables)
             .map(|(b, _)| b)
             .map_err(|e| format!("not written: {e:?}"))
     })

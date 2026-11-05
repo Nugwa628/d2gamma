@@ -103,6 +103,7 @@ fn colour_call(
 pub fn state_bit_off(w: &mut ClientWorld, key: UnitKey, state: u16) {
     if let Some(u) = w.units.get_mut(&key) {
         u.states.remove(&state);
+        u.state_stacks.remove(&state);
     }
 }
 
@@ -131,6 +132,7 @@ pub fn state_off(
     let lock_clear = row.is_some_and(|r| r.remfunc == 12);
     let was = u.states.remove(&state);
     u.state_lists.remove(&state);
+    u.state_stacks.remove(&state);
     if lock_clear {
         w.skill_lock = 0;
     }

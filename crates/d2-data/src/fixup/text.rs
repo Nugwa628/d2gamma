@@ -15,8 +15,9 @@ const PATH_BUFFER: usize = 64;
 
 /// Wide text of `key`, as UCS-2 units: empty key → empty; hit
 /// (patch → expansion → base) → the text; miss → key + the suffix minus
-/// its last character. A byte ≥ 0x80 is an error.
-pub fn wide_text(strings: &StringTables, table: &str, key: &[u8]) -> Result<Vec<u16>, FixupError> {
+/// its last character. Every byte widens to the unit of the same value, so a
+/// mod's text may hold any byte (D2Gamma's own tables hold only ASCII).
+pub fn wide_text(strings: &StringTables, _table: &str, key: &[u8]) -> Result<Vec<u16>, FixupError> {
     if key.is_empty() {
         return Ok(Vec::new());
     }
@@ -33,15 +34,6 @@ pub fn wide_text(strings: &StringTables, table: &str, key: &[u8]) -> Result<Vec<
             s
         }
     };
-    if let Some(b) = bytes.iter().find(|&&b| b >= 0x80) {
-        return Err(err(
-            table,
-            format!(
-                "text of {:?} has byte {b:#04x} (fixups.md open question 1)",
-                String::from_utf8_lossy(key)
-            ),
-        ));
-    }
     Ok(bytes.into_iter().map(u16::from).collect())
 }
 

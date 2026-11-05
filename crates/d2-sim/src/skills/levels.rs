@@ -8,6 +8,7 @@ use super::{SkillEntry, SkillTables, SkillUnits};
 use crate::combat::pct;
 use crate::rules::{CalcUnit, Ruleset};
 use crate::units::UnitType;
+use d2_data::bin::DataRules;
 use d2_data::calc::Family;
 use d2_data::tables::Skills;
 
@@ -100,7 +101,8 @@ pub fn skill_level_of(
 /// `entry` (whose +0x2C level bonus it adds).
 ///
 /// Panics when a class skill of the player's class has no skilldesc
-/// record: the game's own rules fault there.
+/// record: the game's own rules fault there. Under [`DataRules::Mod`]
+/// such a skill has no skill tab and gets no tab bonus.
 pub fn bonus_level<W: SkillUnits>(w: &W, t: &SkillTables, u: W::Unit, entry: &SkillEntry) -> i32 {
     let player = (w.unit_type(u) == UnitType::Player).then(|| w.class_id(u));
     bonus_level_of(
@@ -135,10 +137,13 @@ pub fn bonus_level_of(
     if let Some(class) = player {
         if class == charclass {
             b = b.wrapping_add(stat(ADDCLASSSKILLS, class as u16));
-            let desc = t
-                .skilldesc_of(rec)
-                .expect("class skill without a skilldesc record (levels.md Edge case 4)");
-            let page = i32::from(desc.skillpage as i8);
+            let page = match t.skilldesc_of(rec) {
+                Some(desc) => i32::from(desc.skillpage as i8),
+                // A mod's class skill may have no description: it has
+                // no skill tab, so no tab bonus.
+                None if t.data_rules == DataRules::Mod => 0,
+                None => panic!("class skill without a skilldesc record (levels.md Edge case 4)"),
+            };
             if page != 0 {
                 let tab = page.wrapping_add(8 * class).wrapping_sub(1);
                 b = b.wrapping_add(stat(ADDSKILL_TAB, tab as u16));
@@ -321,6 +326,9 @@ impl<W: SkillUnits> CalcContext for SkillCtx<'_, W> {
     fn unit(&mut self) -> Option<&mut dyn CalcUnit> {
         self.unit?;
         Some(self)
+    }
+    fn skill(&self) -> Option<(i32, i32)> {
+        Some((self.skill, self.lvl))
     }
 }
 
@@ -1602,6 +1610,24 @@ pub fn check_skill_point<W: LearnUnits>(
     SkillPointCheck::Ok
 }
 
+/// The points the next level of `skill` costs `u`: 1 without a `skpoints`
+/// formula, else the formula at the skill's level now (bonuses included).
+/// `None` for an id without a row.
+pub fn skill_point_cost<W: SkillUnits>(
+    w: &mut W,
+    t: &SkillTables,
+    u: W::Unit,
+    skill: i32,
+) -> Option<i32> {
+    let rec = t.skill(skill)?;
+    if rec.skpoints == NO_CALC {
+        return Some(1);
+    }
+    let e = native_entry(&w.skill_list(u), skill);
+    let l = e.map_or(0, |e| skill_level(w, t, Some(u), Some(&e), true));
+    Some(eval_skill(w, t, Some(u), rec.skpoints, skill, l))
+}
+
 /// Spend a point if `newskills(5)` (base
 /// getter) covers the cost. Returns whether a level was added.
 pub fn spend_skill_point<W: LearnUnits>(
@@ -1610,15 +1636,8 @@ pub fn spend_skill_point<W: LearnUnits>(
     u: W::Unit,
     skill: i32,
 ) -> bool {
-    let Some(rec) = t.skill(skill) else {
+    let Some(cost) = skill_point_cost(w, t, u, skill) else {
         return false;
-    };
-    let cost = if rec.skpoints == NO_CALC {
-        1
-    } else {
-        let e = native_entry(&w.skill_list(u), skill);
-        let l = e.map_or(0, |e| skill_level(w, t, Some(u), Some(&e), true));
-        eval_skill(w, t, Some(u), rec.skpoints, skill, l)
     };
     if w.base_stat(u, 5, 0) < cost {
         return false;

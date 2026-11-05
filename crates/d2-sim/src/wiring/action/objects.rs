@@ -2148,7 +2148,7 @@ impl<X: Pending> MiscWorld for ObjectView<'_, X> {
         if let Some(p) = self.v.h.x.object_level_spawn(self.game, level) {
             return Some(p);
         }
-        let act = crate::drlg::act_of_level(level);
+        let act = self.v.h.rules.act_of_level(level);
         crate::wiring::path::place::level_spawn(&mut self.v, self.game, act, level, 0)
     }
     fn quest_level_change(&mut self, player: UnitId, from: u32, to: u32) {

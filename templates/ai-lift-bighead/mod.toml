@@ -1,0 +1,7 @@
+id = "ai-lift-bighead"
+name = "AI 4 Bighead, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "Bighead as a graph: AI 4 (Bighead)."
+api = 1
+kind = "full"

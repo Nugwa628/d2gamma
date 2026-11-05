@@ -302,7 +302,7 @@ impl DrlgWorld {
         gap: i32,
     ) -> Result<Vec<(ClientId, RoomSwitch)>, WiringError> {
         let mut changes = Vec::new();
-        for act in 0..5 {
+        for act in 0..self.dungeon.acts.len() as u8 {
             if self.dungeon.acts[usize::from(act)].is_none() {
                 continue;
             }

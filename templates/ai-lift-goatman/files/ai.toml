@@ -1,0 +1,32 @@
+version = 1
+
+# monstats aip1..aip3 of the goatman rows (Normal): 75, 10, 80.
+# The body is one short function (it is shared with Skeleton, Wraith and Swarm, each with its own twist).
+[[ai]]
+index = 12
+name = "Goatman (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "hunt"
+
+# In reach: aip3 = 80% swing.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 80 }]
+
+# In reach and not swinging: stand aip2 = 10 frames.
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4
+when = [{ kind = "in_melee" }]
+
+# Out of reach: aip1 = 75% walk toward the target, else stand aip2 = 10 frames.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 75 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4

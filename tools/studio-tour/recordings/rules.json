@@ -1,0 +1,11 @@
+{
+  "steps": [
+    {"do": "click", "text": "Rules - rules.toml"},
+    {"do": "scroll_to", "text": "crowd_control", "point": [1030, 650], "delta": [0, -180]},
+    {"do": "click", "text": "crowd_control"},
+    {"do": "fill", "text": "crowd_control", "value": "\"declared\"", "offset": [160, 0]},
+    {"do": "key", "key": "Enter"},
+    {"do": "click", "text": "Save"},
+    {"do": "capture", "name": "30-declared-rules"}
+  ]
+}

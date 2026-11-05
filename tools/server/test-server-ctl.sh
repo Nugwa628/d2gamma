@@ -1,7 +1,8 @@
 #!/bin/bash
 # test-server-ctl.sh: checks server-ctl's install, switch, rollback, restart-on-crash, stop and
 # backup paths against a fake server binary, its upgrades (signed releases, the countdown, the
-# cancel), a second realm on the same box, a game server's fetch, swap on exit 75 and rollback, and the `nodes` table, in a temporary
+# cancel), a second realm on the same box, a game server's fetch, swap on exit 75 and rollback, a mod
+# game's game server with its own program and release channel, and the `nodes` table, in a temporary
 # folder with cron mode and a crontab stub. Linux only.
 #
 #   bash tools/server/test-server-ctl.sh        exit 0 = every check passed
@@ -323,6 +324,49 @@ if command -v ssh-keygen >/dev/null; then
     nctl units "$T/nunits" >/dev/null
     check "the game server unit swaps before a start and restarts on exit 75" 'grep -qx "ExecStartPre=$N/server-ctl pre-start" $T/nunits/d2rust-node.service && grep -qx "RestartForceExitStatus=75" $T/nunits/d2rust-node.service && grep -qx "ExecStartPost=$N/server-ctl trial-check" $T/nunits/d2rust-node.service'
     nctl stop
+
+    # A mod game's game server: its own program (tiny-node) and its own release channel (releases
+    # tiny-node-V of package tiny-node), with D2Gamma's channel and packages beside it untouched.
+    MREL=$T/mod-release
+    mrel() {
+        local ver=$1 name=tiny-node-$1 d
+        d=$T/mpkg/$name
+        rm -rf "$d"
+        mkdir -p "$d/bin" "$MREL/tiny-node-$ver"
+        sed "s/echo \"d2rust-node $ver\"/echo \"tiny-node $ver\"/" "$(fake_node "$ver" 1)" >"$d/bin/tiny-node"
+        chmod 755 "$d/bin/tiny-node"
+        cp "$d/bin/tiny-node" "$T/tiny-node-$ver"
+        echo "$ver" >"$d/VERSION"
+        echo 2.36 >"$d/GLIBC"
+        tar -C "$T/mpkg" -czf "$MREL/tiny-node-$ver/$name-linux-x86_64.tar.gz" "$name"
+        (cd "$MREL/tiny-node-$ver" && sha256sum "$name-linux-x86_64.tar.gz" >SHA256SUMS.linux &&
+            rm -f SHA256SUMS.linux.sig && ssh-keygen -q -Y sign -f "$T/relkey" -n d2rust-release SHA256SUMS.linux 2>/dev/null)
+    }
+    M=$T/modnode
+    mctl() { env -u D2RUST_RELEASE_BASE D2RUST_SERVER_HOME='' "$M/server-ctl" "$@"; }
+    D2RUST_SERVER_HOME=$M bash "$HERE/server-ctl" setup --node --program "Bad Name" >"$T/out" 2>&1
+    check "setup --node refuses a program name of other characters" '[ $? != 0 ] && grep -q "program name" $T/out && [ ! -d $M ]'
+    D2RUST_SERVER_HOME=$M bash "$HERE/server-ctl" setup --node --program tiny-node --release "file://$MREL" \
+        --release-tag tiny-node- --release-package tiny-node >"$T/out" 2>&1
+    check "setup --node --program makes a mod game server folder" '[ "$(cat $M/program)" = tiny-node ] && [ -f $M/tiny-node.cfg ] && [ ! -f $M/d2rust-node.cfg ] && grep -qx "update_command  = server-ctl" $M/tiny-node.cfg'
+    check "with its release channel" '[ "$(cat $M/channel)" = "$(printf "base=file://$MREL\ntag=tiny-node-\npackage=tiny-node")" ]'
+    mrel 4.0.0.0
+    mctl install "$T/tiny-node-4.0.0.0" >"$T/out" 2>&1
+    check "install of the mod's game server succeeds" '[ $? = 0 ] && grep -q "running: tiny-node 4.0.0.0" $T/out && [ "$(basename $(readlink $M/current))" = tiny-node-4.0.0.0 ]'
+    cp "$D2RUST_SERVER_HOME/release-signers" "$M/"
+    mrel 4.1.0.0
+    mctl fetch 4.1.0.0 >"$T/out" 2>&1
+    check "fetch stages the mod's release from its own channel" '[ $? = 0 ] && [ -x $M/downloads/4.1.0.0/tiny-node-4.1.0.0/bin/tiny-node ] && [ "$(basename $(readlink $M/current))" = tiny-node-4.0.0.0 ]'
+    echo 4.1.0.0 >"$M/run/swap"
+    touch "$M/exit75"
+    for i in $(seq 75); do grep -q '"4.1.0.0"' "$M/logs/status.json" 2>/dev/null && [ ! -f "$M/run/trial" ] && break; sleep 0.2; done
+    check "exit 75 swaps the mod's game server to its staged version" '[ "$(basename $(readlink $M/current))" = tiny-node-4.1.0.0 ] && grep -q "\"4.1.0.0\"" $M/logs/status.json && [ ! -d $M/downloads/4.1.0.0 ]'
+    mctl fetch 3.5.0.0 >"$T/out" 2>&1
+    check "it never takes a D2Gamma release" '[ $? != 0 ] && grep -q "downloading" $T/out'
+    mctl units "$T/munits" >/dev/null
+    check "its unit is named after its program and runs its config" '[ -f $T/munits/tiny-node.service ] && grep -qx "ExecStart=$M/current --config $M/tiny-node.cfg" $T/munits/tiny-node.service'
+    mctl stop
+    check "D2Gamma's game server folder has no channel" '[ ! -e $N/channel ]'
 else
     bad "upgrade checks need ssh-keygen (openssh-client)"
 fi
@@ -379,6 +423,21 @@ rctl --realm mymod setup --node --port 6213 >"$T/out" 2>&1
 check "a realm's game server has a folder, unit and game of its own" '[ "$(cat $RB/home/d2rust-server-mymod-node/realm)" = mymod ] && [ "$(cat $RB/home/d2rust-server-mymod-node/program)" = d2rust-node ] && grep -qx "game = mymod" $RB/home/d2rust-server-mymod-node/d2rust-node.cfg && grep -qx "listen = 0.0.0.0:6213" $RB/home/d2rust-server-mymod-node/d2rust-node.cfg'
 env -u D2RUST_SERVER_HOME HOME="$RB/home" "$RB/home/d2rust-server-mymod-node/server-ctl" units "$RB/nunits" >/dev/null 2>&1
 check "named d2rust-node-mymod.service" '[ -f $RB/nunits/d2rust-node-mymod.service ]'
+
+# A mod game's realm runs in the d2rust-realm slot and logs under its own name.
+LH=$T/loghome
+mkdir -p "$LH/logs"
+printf '#!/bin/sh
+echo "mymod-realm 1.0.0.0"
+' >"$LH/bin-mymod"
+chmod 755 "$LH/bin-mymod"
+ln -s "$LH/bin-mymod" "$LH/current"
+echo "console line" >"$LH/logs/console.log"
+check "logs falls back to the console without the program's own log" 'D2RUST_SERVER_HOME=$LH bash "$HERE/server-ctl" logs 5 | grep -q "console line"'
+echo "program line" >"$LH/logs/mymod-realm.log"
+check "logs finds the log of the program the installed binary names" 'D2RUST_SERVER_HOME=$LH bash "$HERE/server-ctl" logs 5 | grep -q "program line"'
+echo "slot line" >"$LH/logs/d2rust-realm.log"
+check "and the slot's own log still comes first" 'D2RUST_SERVER_HOME=$LH bash "$HERE/server-ctl" logs 5 | grep -q "slot line"'
 
 "$CTL" stop
 rm -rf "$T"

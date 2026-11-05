@@ -565,11 +565,17 @@ fn each_fixup(seed: u64, max: usize) {
 /// The patch base: every patchable table's text from [`txt_in`] (tame).
 fn patch_base(g: &mut Gen) -> Option<d2_data::patch::PatchData> {
     use d2_data::patch::{rules, PatchData};
+    let mut runtime_sound = schema().table("sounds").unwrap().clone();
+    runtime_sound.name = "soundenviron".into();
+    runtime_sound.txt_name = "soundenviron.txt".into();
+    runtime_sound.fields = d2_data::sounds::soundenviron_fields();
+    runtime_sound.record_size = d2_data::sounds::SOUNDENV_RECORD_SIZE;
     let mut read = |file: &str| {
         let def = schema()
             .called()
             .find(|d| d.txt_name == file)
-            .expect("called txt");
+            .or_else(|| (file == runtime_sound.txt_name).then_some(&runtime_sound))
+            .expect("patchable txt");
         let n = 1 + g.below(3);
         Ok(Some(("prop.mpq".to_owned(), txt_in(def, g, n, true))))
     };

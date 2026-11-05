@@ -113,8 +113,9 @@ pub fn live() -> Arc<single_player::LiveData> {
 }
 
 /// The client tables `play::add_live_client` gives the bridge on the
-/// user's files: skills, class skills, skill tables, unit rows, item
-/// tables, object rows (for tests that wire the app by hand).
+/// user's files: skills, class skills, skill tables, unit rows (with the
+/// monsters' AnimData frame counts and speeds), item tables, object rows
+/// (for tests that wire the app by hand).
 pub fn live_tables(app: &mut bevy::prelude::App) {
     let mut b = app
         .world_mut()
@@ -130,7 +131,9 @@ pub fn live_bridge_tables<L: ServerLink>(b: &mut d2_client::bridge::Bridge<L>) {
     b.set_skill_rows(single_player::client_skill_rows(a).unwrap());
     b.set_class_skills(single_player::client_class_skills(a).unwrap());
     b.set_skill_tables(Arc::new(single_player::client_skill_tables(a).unwrap()));
-    b.set_unit_rows(single_player::client_unit_rows(a).unwrap());
+    let mut units = single_player::client_unit_rows(a).unwrap();
+    single_player::client_monster_anims(a, &mut units).unwrap();
+    b.set_unit_rows(units);
     b.set_item_tables(Arc::new(d2_client::app::items::TableDecoder(Arc::new(
         d.tables.item_tables().unwrap(),
     ))));
@@ -280,6 +283,46 @@ pub fn npc_menu_len(app: &bevy::prelude::App) -> usize {
         .npc_menu()
         .filter(|m| !m.talking)
         .map_or(0, |m| m.rows.len())
+}
+
+/// Waits up to `frames` frames (each one `step`) for the NPC menu box:
+/// its selectable row count, 0 when it never came up. A greeting (the
+/// 0x28 dialog text the menu opens after) is advanced with Space, one
+/// line every ten frames, as a player skips it; a greeting left alone
+/// scrolls for about a minute.
+pub fn until_npc_menu(
+    app: &mut bevy::prelude::App,
+    frames: usize,
+    mut step: impl FnMut(&mut bevy::prelude::App),
+) -> usize {
+    use d2_client::controls::Action;
+    use d2_client::ui::{ActionId, UiEvent};
+    use d2_client::world_view::WorldViewUi;
+    let mut since = 0;
+    for _ in 0..frames {
+        let n = npc_menu_len(app);
+        if n > 0 {
+            return n;
+        }
+        since += 1;
+        let greeting = app
+            .world()
+            .non_send::<WorldViewUi>()
+            .original
+            .as_ref()
+            .is_some_and(|o| o.npc_dialog_lines().is_some());
+        if since >= 10 && greeting {
+            let space = UiEvent::Action(ActionId(Action::ClearScreen.index() as u16));
+            app.world_mut()
+                .non_send_mut::<WorldViewUi>()
+                .queue
+                .0
+                .push(space);
+            since = 0;
+        }
+        step(app);
+    }
+    npc_menu_len(app)
 }
 
 /// The centre of the talk topic box's cancel.

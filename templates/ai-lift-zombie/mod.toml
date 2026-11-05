@@ -1,0 +1,7 @@
+id = "ai-lift-zombie"
+name = "AI 3 Zombie, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "Zombie as a graph: AI 3 (Zombie)."
+api = 1
+kind = "full"

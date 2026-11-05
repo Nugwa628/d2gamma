@@ -18,7 +18,8 @@ Status: **in progress** (2026-10-17; table checked against main 2026-10-26: ever
 **Each mod is its own game.** A total conversion (Median XL, Project Diablo 2, …) ships as its own files and is
 launched directly. It is its own binary, built from a workspace that depends on the D2Gamma crates plus the mod's
 own crates (the D2RUST-MXL repo is the first one). The mod binary installs its overrides when it builds or starts a
-game. **The D2Gamma exe never loads or selects a mod:** it always runs D2Gamma's own rules.
+game. **The D2Gamma exe never selects a mod by itself:** it runs D2Gamma's own rules unless the player starts a
+mod-kit mod with `--mod` (data-only mods from the mod kit, owner 2026-10-28; see the MS16 note below).
 
 D2Gamma is the engine and a remaster of Diablo 2: about 99% exact, with some key systems modernized on purpose, and
 it still plays as Diablo 2. Large creative changes belong in mod games, and a mod game may override anything, up to
@@ -189,6 +190,12 @@ bodies, the builder and an example of a mod game using it, the core combat formu
   D2Gamma exe's tests show the same layers and frame hashes as before with no `mods/` folder present.
 - **Risks:** players who used `mods/order.toml` lose it in the D2Gamma exe; that is the intended change (owner,
   2026-10-17). The release notes say so.
+- **Waived 2026-10-28 (owner), for mod-kit mods only:** the rule "the exe never loads a mod" no longer holds for
+  data-only mods made with the mod kit (`d2-modkit`). `D2Gamma-Game --mod <id>` / `--mod-dir <folder>` stacks the
+  mod and the mods it builds on over `base/`, takes the mod's name as the window title and gives it its own
+  user folder (`Documents\D2Gamma\mods\<id>`). Without `--mod` nothing changes: `base/` alone, the same frame
+  hashes, no reading of `mods/order.toml`. Mod games with their own binary stay as described here. Guide:
+  `docs/mods/mod-kit-loading.md`.
 - **As built:** workspace member `examples/mod-game` (`mod-game-example`, `publish = false`): `ExampleRules` adds
   one skill "do" body past D2Gamma's table (MS1 seam), `Options` reads `--native DIR --layer NAME… --saves DIR` or
   `--game-dir`, and the game starts through `GameBuilder` and runs headless on a stepped clock. The exe's
@@ -378,6 +385,16 @@ MS7d item generation, MS7e stat callbacks. They share `d2_sim::items::provider::
   IntRange and LinkMiss diagnostics are reported as C04 (a note, the patch still applies) instead of C02, and so
   are StrMiss (a missing string key, read as no string) and CbMiss (a name a compile callback doesn't know, such as a
   mod game's own cube output, read as none; the mod's rules read such names from its own data).
+- MS10f base columns a mod fills, and the level `Id` byte. Under `Mod` (`patch::rules_for(DataRules::Mod)` sets
+  `TableRules::adopt`) `addcol` may name a field of one of the table's lists that the base text has no column for
+  (a level's `mon11`..`mon25`, `nmon11`.., `umon11`..; an affix's `etype4`/`etype5`): the column joins the
+  header, is bound by the compiler (`PatchTable::adopted`, not an extension column), and the record field takes
+  the cells, so the area's monster list in population and the exclusion types in the affix rolls read what the
+  layer wrote. An empty cell reads as the missing column did; under `Original` the name is still A16. Under `Mod`
+  a level's `Id` cell past 255 is stored modulo 256 (what the original compiler writes) instead of clamped; no
+  engine code reads the `Id` byte of a levels record (a level is its row), so nothing behaves differently.
+  Tests: `test-fixtures/tests/mod_columns.rs`, `patch::tests::addcol_adopts_fields_the_base_text_lacks`,
+  `compile::tests::mod_rules_wrap_the_level_id_byte`.
 - MS10e data-layer limits for mod tables. Patch layers take lines up to 65,536 bytes and tokens up to 32,768
   (`MAX_LINE`, `MAX_TOKEN`), so long strings fit. Element 0 of `string.tbl` can be changed by `strset`
   (`StringTables::lookup` tells id 0 from "no string"). Under `Mod` the `experience` table may have more than 101
@@ -416,6 +433,7 @@ Per-game and per-player mod state lives in the mod game's own `ModRules` object 
   `false` keeps the player where it is) and `may_join` (after the character loads; `Some(code)` refuses the join
   with that load result code). `player_left` runs before the player is removed, `pet_created` once a summon is on its
   owner's pet list, `hireling_ready` at the end of the tick a hireling was hired, revived or restored.
+  `pet_summoned` runs after a skill function made a pet, with the skill and its level.
 
 ### MS12: dropped
 

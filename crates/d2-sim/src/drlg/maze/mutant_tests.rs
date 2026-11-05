@@ -545,6 +545,8 @@ fn special_stamps_by_level() {
         ),
         (62, 18, "lair_", &["lair_next", "lair_prev"]),
         (63, 18, "lair_", &["lair_next", "lair_prev"]),
+        // Any other level of the lair type takes the 62 / 63 branch.
+        (120, 18, "lair_", &["lair_next", "lair_prev"]),
         (
             64,
             18,

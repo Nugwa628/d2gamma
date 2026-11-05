@@ -7,6 +7,7 @@
 //! draws come from the attacker's or defender's own seed, in the order the functions
 //! below make them.
 
+use super::cc;
 use super::hit::result;
 use super::{formulas, pct, scale, CombatEntry, CombatTables, CombatWorld, RoomKind};
 use crate::skills::{weapon_mastery, SkillTables};
@@ -95,60 +96,62 @@ pub struct DamageRecord {
     pub conv_pct: i32,
     /// Overlay applied to the defender after a melee hit.
     pub overlay: i32,
+    /// The crowd control the hit's source declared (see [`super::cc`]).
+    pub declared: super::cc::Declared,
 }
 
 // Stats.
-const STR: u16 = 0;
-const DEX: u16 = 2;
-const LIFE: u16 = 6;
-const MAXHP: u16 = 7;
-const MANA: u16 = 8;
-const MAXMANA: u16 = 9;
-const STAMINA: u16 = 10;
-const LEVEL: u16 = 12;
-const MAXDAMAGE_PERCENT: u16 = 17;
-const MINDAMAGE_PERCENT: u16 = 18;
-const MINDAMAGE: u16 = 21;
-const MAXDAMAGE: u16 = 22;
-const SECONDARY_MINDAMAGE: u16 = 23;
-const SECONDARY_MAXDAMAGE: u16 = 24;
-const DAMAGEPERCENT: u16 = 25;
-const ARMORCLASS: u16 = 31;
-const NORMAL_DR: u16 = 34;
-const MAGIC_DR: u16 = 35;
-const DAMAGERESIST: u16 = 36;
-const COLDLENGTH: u16 = 56;
-const POISONMINDAM: u16 = 57;
-const POISONMAXDAM: u16 = 58;
-const POISONLENGTH: u16 = 59;
-const LIFEDRAINMINDAM: u16 = 60;
-const LIFEDRAINMAXDAM: u16 = 61;
-const MANADRAINMINDAM: u16 = 62;
-const MANADRAINMAXDAM: u16 = 63;
-const STAMDRAINMINDAM: u16 = 64;
-const STAMDRAINMAXDAM: u16 = 65;
-const STUNLENGTH: u16 = 66;
-const VELOCITYPERCENT: u16 = 67;
-const ATTACKRATE: u16 = 68;
-const OTHER_ANIMRATE: u16 = 69;
-const HPREGEN: u16 = 74;
-const MONSTER_PLAYERCOUNT: u16 = 100;
-const POISON_OVERRIDE_LENGTH: u16 = 101;
-const BYPASS_UNDEAD: u16 = 103;
-const BYPASS_DEMONS: u16 = 104;
-const BYPASS_BEASTS: u16 = 106;
-const NORMALDAMAGE: u16 = 111;
-const HALFFREEZE: u16 = 118;
-const DAMAGETARGETAC: u16 = 120;
-const DEMONDAMAGE_PERCENT: u16 = 121;
-const UNDEADDAMAGE_PERCENT: u16 = 122;
-const DEADLYSTRIKE: u16 = 141;
-const CANNOTBEFROZEN: u16 = 153;
-const DAMAGE_VS_MONTYPE: u16 = 180;
-const FIRELENGTH: u16 = 315;
-const POISON_COUNT: u16 = 326;
-const PASSIVE_POIS_MASTERY: u16 = 332;
-const PASSIVE_CRITICAL_STRIKE: u16 = 337;
+use crate::stats::ids::ARMORCLASS;
+use crate::stats::ids::ATTACKRATE;
+use crate::stats::ids::BURNINGLENGTH as FIRELENGTH;
+use crate::stats::ids::CANNOTBEFROZEN;
+use crate::stats::ids::COLDLENGTH;
+use crate::stats::ids::DAMAGEPERCENT;
+use crate::stats::ids::DAMAGERESIST;
+use crate::stats::ids::DAMAGE_VS_MONTYPE;
+use crate::stats::ids::DEADLY_STRIKE as DEADLYSTRIKE;
+use crate::stats::ids::DEMONDAMAGE_PERCENT;
+use crate::stats::ids::DEXTERITY as DEX;
+use crate::stats::ids::FRACTIONAL_TARGET_AC as BYPASS_DEMONS;
+use crate::stats::ids::HALFFREEZE;
+use crate::stats::ids::HITPOINTS as LIFE;
+use crate::stats::ids::HPREGEN;
+use crate::stats::ids::IGNORE_TARGET_AC as BYPASS_UNDEAD;
+use crate::stats::ids::IGNORE_TARGET_DEFENSE as BYPASS_BEASTS;
+use crate::stats::ids::ITEM_DAMAGETARGETAC as DAMAGETARGETAC;
+use crate::stats::ids::LEVEL;
+use crate::stats::ids::LIFEDRAINMAXDAM;
+use crate::stats::ids::LIFEDRAINMINDAM;
+use crate::stats::ids::MAGIC_DR;
+use crate::stats::ids::MANA;
+use crate::stats::ids::MANADRAINMAXDAM;
+use crate::stats::ids::MANADRAINMINDAM;
+use crate::stats::ids::MAXDAMAGE;
+use crate::stats::ids::MAXDAMAGE_PERCENT;
+use crate::stats::ids::MAXHP;
+use crate::stats::ids::MAXMANA;
+use crate::stats::ids::MINDAMAGE;
+use crate::stats::ids::MINDAMAGE_PERCENT;
+use crate::stats::ids::MONSTER_PLAYERCOUNT;
+use crate::stats::ids::NORMALDAMAGE;
+use crate::stats::ids::NORMAL_DR;
+use crate::stats::ids::OTHER_ANIMRATE;
+use crate::stats::ids::PASSIVE_CRITICAL_STRIKE;
+use crate::stats::ids::POISONLENGTH;
+use crate::stats::ids::POISONMAXDAM;
+use crate::stats::ids::POISONMINDAM;
+use crate::stats::ids::POISON_COUNT;
+use crate::stats::ids::POISON_LENGTH_OVERRIDE as POISON_OVERRIDE_LENGTH;
+use crate::stats::ids::POISON_MASTERY as PASSIVE_POIS_MASTERY;
+use crate::stats::ids::SECONDARY_MAXDAMAGE;
+use crate::stats::ids::SECONDARY_MINDAMAGE;
+use crate::stats::ids::STAMDRAINMAXDAM;
+use crate::stats::ids::STAMDRAINMINDAM;
+use crate::stats::ids::STAMINA;
+use crate::stats::ids::STRENGTH as STR;
+use crate::stats::ids::STUNLENGTH;
+use crate::stats::ids::UNDEADDAMAGE_PERCENT;
+use crate::stats::ids::VELOCITYPERCENT;
 
 // States.
 const STATE_FREEZE: u16 = 1;
@@ -540,9 +543,10 @@ pub fn fill<W: CombatWorld>(
             .wrapping_add(scale(w.stat(a, COLDLENGTH, 0), s));
     }
     if rec.stun_len == 0 {
-        rec.stun_len = rec
-            .stun_len
-            .wrapping_add(scale(w.stat(a, STUNLENGTH, 0), s));
+        let item = scale(w.stat(a, STUNLENGTH, 0), s);
+        rec.stun_len = rec.stun_len.wrapping_add(item);
+        // The attacker's gear states this stun, so it counts as declared.
+        cc::declare_stun(rec, item);
     }
     // Burn: the amount is scaled by `s` and offset by a constant plus a draw of `roll(1)`;
     // the draw is always made.
@@ -655,6 +659,14 @@ pub fn start_combat<W: CombatWorld>(
             fill(w, st, ct, a, d, rec, false, srcdam);
         }
         totals(w, ct, Some(a), d, rec);
+        if w.unit_type(a) == UnitType::Monster {
+            let source = cc::CcSource::Monster {
+                class: w.class_id(a) as u32,
+                mode: w.mode(a) as u32,
+            };
+            let effects = w.rules().declared_cc(source);
+            cc::declare(w, a, rec, &effects);
+        }
         let mut t = rec
             .physical
             .wrapping_add(rec.fire)
@@ -929,8 +941,14 @@ fn resist_value<W: CombatWorld>(
         let (difficulty, expansion) = (w.difficulty(), w.expansion());
         let pen = w
             .rules()
-            .formulas()
-            .and_then(|f| f.resist_penalty(difficulty, expansion))
+            .global_rules()
+            .resistances
+            .penalty(difficulty, expansion)
+            .or_else(|| {
+                w.rules()
+                    .formulas()
+                    .and_then(|f| f.resist_penalty(difficulty, expansion))
+            })
             .unwrap_or_else(|| match (expansion, difficulty) {
                 (true, d) => ct.difficulty(d).map_or(0, |x| x.resistpenalty as i32),
                 (false, 1) => -20,
@@ -942,10 +960,16 @@ fn resist_value<W: CombatWorld>(
     if r > 0 {
         if !def_mon {
             let cap = formulas::ask_shared(w, a, Some(d), |f, h| f.resist_cap(h, row.resist))
-                .unwrap_or_else(|| match row.max {
-                    Some(m) => w.stat(d, m, 0).wrapping_add(75).min(95),
-                    None if row.resist == Some(DAMAGERESIST) => 50,
-                    None => 75,
+                .unwrap_or_else(|| {
+                    let caps = &w.rules().global_rules().resistances;
+                    match row.max {
+                        Some(m) => w
+                            .stat(d, m, 0)
+                            .wrapping_add(caps.elemental_cap)
+                            .min(caps.elemental_max_cap),
+                        None if row.resist == Some(DAMAGERESIST) => caps.physical_cap,
+                        None => caps.other_cap,
+                    }
                 });
             r = r.min(cap);
         }
@@ -1210,12 +1234,24 @@ pub fn leech<W: CombatWorld>(
 /// Stuns the defender for `n` frames. Unique monsters resist it 90% of the time, bosses and
 /// immobile monsters always; the length is capped at 250 frames (13 for a hireling).
 pub fn stun<W: CombatWorld>(w: &mut W, ct: &CombatTables, a: W::Unit, d: W::Unit, n: i32) {
+    let timing = w.rules().global_rules().unit(w.unit_type(d)).stun.clone();
+    if !timing.active() {
+        return;
+    }
     if n <= 0 {
         return;
     }
+    let numbers = w
+        .rules()
+        .global_rules()
+        .unit(w.unit_type(d))
+        .control
+        .clone();
     let mut n = n;
     if w.unit_type(d) == UnitType::Monster {
-        if w.monster_flag(d, MON_UNIQUE) && ((w.seed(a).step() % 100) as i32) < 90 {
+        if w.monster_flag(d, MON_UNIQUE)
+            && (w.seed(a).step() % 100) < numbers.unique_stun_resist_percent
+        {
             return;
         }
         if w.is_boss(d) {
@@ -1224,16 +1260,18 @@ pub fn stun<W: CombatWorld>(w: &mut W, ct: &CombatTables, a: W::Unit, d: W::Unit
         if ct.monstats(w.class_id(d)).is_some_and(|m| m.velocity == 0) {
             return;
         }
-        n = if w.is_hireling(d) && n >= 13 {
-            13
+        n = if w.is_hireling(d) && n >= numbers.hireling_stun_max_frames {
+            numbers.hireling_stun_max_frames
         } else {
-            n.min(250)
+            n.min(numbers.stun_max_frames)
         };
     } else {
-        n = n.min(250);
+        n = n.min(numbers.stun_max_frames);
     }
     // The length and its caps are base ticks (250 = 10 s, 13 ≈ 0.5 s).
-    let e = w.frame().wrapping_add(w.tick_rate().ticks(n));
+    let e = w
+        .frame()
+        .wrapping_add(w.tick_rate().ticks(timing.duration(n)));
     if w.state_list_expiry(d, STATE_STUNNED).is_some() {
         w.set_state_list_expiry(d, STATE_STUNNED, e);
         w.schedule_timer(d, TIMER_REMOVESTATE, e);
@@ -1309,6 +1347,21 @@ pub fn cold<W: CombatWorld>(w: &mut W, ct: &CombatTables, a: W::Unit, d: W::Unit
 /// the cold effect instead; other monsters freeze for `length` divided by the difficulty's
 /// freeze divisor and have their AI think rescheduled. Panics when that divisor is 0.
 pub fn freeze<W: CombatWorld>(w: &mut W, ct: &CombatTables, d: W::Unit, a: W::Unit, length: i32) {
+    let numbers = w
+        .rules()
+        .global_rules()
+        .unit(w.unit_type(d))
+        .control
+        .clone();
+    let length = numbers
+        .freeze_max_frames
+        .map_or(length, |cap| length.min(cap));
+    let length = w
+        .rules()
+        .global_rules()
+        .unit(w.unit_type(d))
+        .freeze
+        .duration(length);
     if length <= 0 {
         return;
     }
@@ -1326,10 +1379,14 @@ pub fn freeze<W: CombatWorld>(w: &mut W, ct: &CombatTables, d: W::Unit, a: W::Un
     if cold_effect(w, ct, d) >= 0 {
         return;
     }
-    let div = ct
-        .difficulty(w.difficulty())
-        .map_or(0, |x| x.monsterfreezedivisor as i32);
-    assert!(div != 0, "MonsterFreezeDivisor 0 (damage.md §5.7)");
+    let div = numbers.freeze_divisors.map_or_else(
+        || {
+            ct.difficulty(w.difficulty())
+                .map_or(0, |x| x.monsterfreezedivisor as i32)
+        },
+        |ds| ds[w.difficulty().min(2)],
+    );
+    assert!(div != 0, "freeze divisor must be nonzero");
     // The freeze lasts `length / div` base ticks.
     let length = w.tick_rate().ticks(length / div);
     let e = w.frame().wrapping_add(length);
@@ -1484,7 +1541,18 @@ pub fn apply<W: CombatWorld>(
         }
         w.set_stat(d, STAMINA, s);
     }
-    // Timed effects.
+    // Timed effects. A defender class that takes declared crowd control only
+    // keeps the stun and freeze its hit's source declared.
+    if cc::is_declared(w.rules().global_rules(), w.unit_type(d)) {
+        cc::strip_timed(rec);
+    }
+    // A defender in the mod's crowd-control immunity state keeps none.
+    if w.rules()
+        .cc_immune_state()
+        .is_some_and(|s| w.has_state(d, s))
+    {
+        cc::strip_all_timed(rec);
+    }
     stun(w, ct, a, d, rec.stun_len);
     cold(w, ct, a, d, rec.cold_len);
     freeze(w, ct, d, a, rec.freeze_len);
@@ -1627,21 +1695,45 @@ pub fn no_get_hit<W: CombatWorld>(
     rec: &DamageRecord,
     hitclass: u32,
 ) -> bool {
-    if w.has_state(u, STATE_FREEZE) {
+    let recovery = w
+        .rules()
+        .global_rules()
+        .unit(w.unit_type(u))
+        .hit_recovery
+        .clone();
+    if !recovery.timing().active() || w.has_state(u, STATE_FREEZE) {
         return true;
     }
-    if (rec.poison != 0 && rec.poison == rec.total) || rec.total < 256 {
+    // A hit whose source declared the interrupt does not depend on its size.
+    if rec.declared.interrupt {
+        return w.unit_type(u) == UnitType::Monster && !w.monster_has_mode(u, 3);
+    }
+    if (rec.poison != 0 && rec.poison == rec.total) || rec.total < recovery.minimum_damage {
         return true;
     }
-    let div = get_hit_divisor(hitclass_codes, hitclass);
+    if let Some(denominator) = recovery.threshold_denominator {
+        return rec.total < w.stat(u, MAXHP, 0) / denominator.clamp(1, i32::MAX as u32) as i32
+            || (w.unit_type(u) == UnitType::Monster && !w.monster_has_mode(u, 3));
+    }
+    let index = match get_hit_divisor(hitclass_codes, hitclass) {
+        8 => 0,
+        32 => 2,
+        64 => 3,
+        _ => 1,
+    };
+    let div = recovery.divisors[index];
     let m = w.stat(u, MAXHP, 0);
     if rec.total < m / div {
         return true;
     }
-    if rec.total < m / (div / 2) && w.seed(u).mask(2) == 0 {
+    if rec.total < m / (div / recovery.band_denominators[0])
+        && w.seed(u).mask(recovery.band_roll_sides[0]) == 0
+    {
         return true;
     }
-    if rec.total < m / (div / 4) && w.seed(u).mask(4) == 0 {
+    if rec.total < m / (div / recovery.band_denominators[1])
+        && w.seed(u).mask(recovery.band_roll_sides[1]) == 0
+    {
         return true;
     }
     w.unit_type(u) == UnitType::Monster && !w.monster_has_mode(u, 3)

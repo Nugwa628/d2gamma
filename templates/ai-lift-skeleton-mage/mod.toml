@@ -1,0 +1,7 @@
+id = "ai-lift-skeleton-mage"
+name = "AI 64 SkeletonMage, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "A skeleton mage as a graph: AI 64 (SkeletonMage)."
+api = 1
+kind = "full"

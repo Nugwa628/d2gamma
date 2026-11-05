@@ -1,7 +1,9 @@
 //! [`HostDamage`] on the skill use view.
 
+use crate::combat::cc::{self, CcEffect};
 use crate::combat::events::{self, EventTables};
 use crate::combat::hit::BlockResult;
+use crate::combat::CombatWorld;
 use crate::combat::DamageRecord;
 use crate::combat::{damage, hit};
 use crate::rules::{ElementAdded, HostDamage};
@@ -11,6 +13,10 @@ use crate::wiring::action::Pending;
 use crate::wiring::interaction::{UseRest, UseView};
 
 impl<X: Pending + UseRest> HostDamage for UseView<'_, X> {
+    fn queued_hit(&mut self, a: UnitId, d: UnitId) -> bool {
+        crate::skills::use_::bodies::helpers::pair_damage(self, a, d)
+            .is_some_and(|r| r.result & 1 != 0)
+    }
     fn hit_roll(&mut self, a: UnitId, d: UnitId, bonus: i32, missile: bool) -> bool {
         let t = self.cv.v.h.tables.clone();
         hit::hit_test(
@@ -102,6 +108,26 @@ impl<X: Pending + UseRest> HostDamage for UseView<'_, X> {
     fn apply_damage(&mut self, a: UnitId, d: UnitId, missile: bool, rec: &mut DamageRecord) {
         let t = self.cv.v.h.tables.clone();
         damage::apply(&mut self.cv, &t.combat, a, d, missile, rec);
+    }
+    fn declare_cc(&mut self, a: UnitId, rec: &mut DamageRecord, effects: &[CcEffect]) {
+        cc::declare(&mut self.cv, a, rec, effects);
+    }
+    fn react(&mut self, a: UnitId, d: UnitId, rec: &mut DamageRecord) {
+        CombatWorld::reaction(&mut self.cv, a, d, rec);
+    }
+    fn crowd_control(&mut self, a: UnitId, d: UnitId, effects: &[CcEffect]) {
+        let mut rec = DamageRecord {
+            result: hit::result::HIT | hit::result::NO_EVENTS,
+            hit_flags: damage::hitflag::ROLLED,
+            ..DamageRecord::default()
+        };
+        cc::declare(&mut self.cv, a, &mut rec, effects);
+        if !rec.declared.any() {
+            return;
+        }
+        let t = self.cv.v.h.tables.clone();
+        damage::apply(&mut self.cv, &t.combat, a, d, false, &mut rec);
+        CombatWorld::reaction(&mut self.cv, a, d, &mut rec);
     }
     fn unit_event(
         &mut self,

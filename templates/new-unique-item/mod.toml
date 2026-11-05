@@ -1,0 +1,7 @@
+id = "new-unique-item"
+name = "New Unique Item"
+version = "1.0.0"
+author = "Your name"
+description = "Adds one unique ring, Emberheart. A string and a table patch, no art."
+api = 1
+kind = "full"

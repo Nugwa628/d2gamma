@@ -206,6 +206,31 @@ fn champion_name(kind: &KindData, class_name: &[u16], strings: &dyn StringLookup
     out
 }
 
+/// A hireling's own name: the name id of its pet record (S→C 0x81
+/// u32@0x10, low 16 bits; the hire list's name id), a string id. The class
+/// `NameStr` of a hireling class names no one (a Rogue's resolves to the
+/// "an evil force" placeholder). `None` for any other monster, or before
+/// the 0x81 that carries the id.
+fn hireling_name<'a>(
+    world: &ClientWorld,
+    key: UnitKey,
+    strings: &'a dyn StringLookup,
+) -> Option<&'a [u16]> {
+    use crate::bridge::world::PET_HIRELING;
+    use crate::ui::panels::npc_menu::{MERC_NAME_ALT_ID, STR_MERC_NAME_ALT};
+    let r = world
+        .pets
+        .iter()
+        .find(|r| r.pet == key.guid && r.pet_type == PET_HIRELING)?;
+    let id = r.extra?[1] as u16;
+    let id = if id == MERC_NAME_ALT_ID {
+        STR_MERC_NAME_ALT
+    } else {
+        id
+    };
+    strings.get_id(id).filter(|s| !s.is_empty())
+}
+
 /// The label colour (module doc).
 pub fn label_color(class: u32, flags: u8, dead: bool) -> u16 {
     let mut c = 0;
@@ -270,10 +295,16 @@ impl MonsterLabels {
         if dead && crate::bridge::modes::in_town(world, key) {
             return out;
         }
-        let Some(class_name) = strings.get_id(row.name_str) else {
-            return out;
+        let name = match hireling_name(world, key, strings) {
+            Some(own) => own.to_vec(),
+            None => {
+                let Some(class_name) = strings.get_id(row.name_str) else {
+                    return out;
+                };
+                champion_name(&u.kind, class_name, strings)
+            }
         };
-        let name = &champion_name(&u.kind, class_name, strings);
+        let name = &name;
         let space = strings
             .get_id(STR_SPACE)
             .map_or_else(|| vec![0x20], <[u16]>::to_vec);
@@ -504,6 +535,7 @@ mod tests {
                         .collect::<Vec<_>>()
                         .into_boxed_slice(),
                 ),
+                3411 => leak("Paige"),
                 7 => Box::leak(
                     "Fallen"
                         .encode_utf16()
@@ -618,6 +650,36 @@ mod tests {
                 _ => None,
             })
             .expect("a text draw")
+    }
+
+    // A hired Rogue is labelled with her own name, the name id of her pet
+    // record's 0x81 values (a recorded hire: id 0x0D53), not the class
+    // `NameStr`; another player's pet record with that GUID's class name
+    // stays, and before the 0x81 the class name is shown.
+    #[test]
+    fn a_hireling_is_labelled_with_her_own_name() {
+        use crate::bridge::world::{PetRecord, PET_HIRELING};
+        let f = fonts();
+        let mut w = world(1, 128, 0);
+        let pet = |extra| PetRecord {
+            class: 271,
+            pet_type: PET_HIRELING,
+            pet: MON.guid,
+            owner: 1,
+            f1c: 100,
+            gone: false,
+            extra,
+        };
+        w.pets.push(pet(None));
+        let name = |w: &ClientWorld| {
+            String::from_utf16_lossy(&text(&draw(w, FreeScreen::default(), &f)).text)
+        };
+        assert_eq!(name(&w), "  Fallen  ", "no 0x81 yet: the class name");
+        w.pets[0] = pet(Some([0x51D9_3B08, 0x0D53, 0]));
+        assert_eq!(name(&w), "  Paige  ");
+        // A name id the strings do not hold falls back to the class name.
+        w.pets[0] = pet(Some([0x51D9_3B08, 0x0D54, 0]));
+        assert_eq!(name(&w), "  Fallen  ");
     }
 
     // (playtest B010)

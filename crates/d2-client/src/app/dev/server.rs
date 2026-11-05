@@ -10,8 +10,10 @@ use std::sync::{Arc, Mutex};
 
 use d2_proto::dev::{DevCommand, DevReply};
 use d2_sim::poke::{Coord, Directive, PokeOp};
+use d2_sim::rules::data_mod::AiRules;
 use d2_sim::units::ClientId;
 
+use super::ai_watch::{AiSeen, Watcher};
 use super::slots::DevStart;
 use crate::app::single_player::{local_player, Link, Sim};
 use crate::bridge::link::LOCAL_CLIENT;
@@ -25,6 +27,11 @@ pub use d2_server::dev::DevCatalog;
 pub struct DevQueue {
     pub commands: Vec<DevCommand>,
     pub replies: Vec<DevReply>,
+    /// The monster AI overlay is on (`aiview`): the server reads the
+    /// graphs' places every frame and leaves them in `ai`.
+    pub watch_ai: bool,
+    /// The monsters that run a graph, nearest first, as of the last frame.
+    pub ai: Vec<AiSeen>,
 }
 
 /// The overlay's end of the channel.
@@ -49,6 +56,9 @@ const START_WARP: u32 = 500;
 pub struct DevServer {
     core: Core,
     start: Option<(DevStart, StartStep)>,
+    /// The mod's behaviour graphs, for the names `aiview` shows.
+    graphs: AiRules,
+    watcher: Watcher,
 }
 
 impl DevServer {
@@ -56,7 +66,15 @@ impl DevServer {
         Self {
             core: Core::new(catalog),
             start: None,
+            graphs: AiRules::none(),
+            watcher: Watcher::default(),
         }
+    }
+
+    /// With the mod's behaviour graphs.
+    pub fn with_graphs(mut self, graphs: AiRules) -> Self {
+        self.graphs = graphs;
+        self
     }
 
     /// With a loaded slot's place and switches.
@@ -129,8 +147,8 @@ impl DevServer {
 
     /// The hook's body: the queued commands, then the upkeep.
     pub fn run_due<C: d2_server::seams::Clock>(&mut self, chan: &DevChannel, l: &mut Link<C>) {
-        let commands = match chan.lock() {
-            Ok(mut q) => std::mem::take(&mut q.commands),
+        let (commands, watch) = match chan.lock() {
+            Ok(mut q) => (std::mem::take(&mut q.commands), q.watch_ai),
             Err(_) => return,
         };
         let s = &mut l.host_mut().game;
@@ -140,9 +158,16 @@ impl DevServer {
         if let Some(p) = player {
             d2_server::dev::upkeep(s, p);
         }
-        if !replies.is_empty() {
+        let seen = match player.filter(|_| watch) {
+            Some(p) => Some(self.watcher.look(s, &self.graphs, p)),
+            None => None,
+        };
+        if !replies.is_empty() || seen.is_some() {
             if let Ok(mut q) = chan.lock() {
                 q.replies.extend(replies);
+                if let Some(seen) = seen.filter(|_| q.watch_ai) {
+                    q.ai = seen;
+                }
             }
         }
     }

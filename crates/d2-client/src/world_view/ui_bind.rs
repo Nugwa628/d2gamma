@@ -656,10 +656,12 @@ pub(super) fn ui_items<R: UiRules + ?Sized>(
             error: Box::new(error),
         };
         let (sprites, clip) = match d {
-            UiDraw::Image(r) => (
-                vec![rules.ui_image(r, assets).map_err(at)?],
-                clip_rect(r.clip),
-            ),
+            UiDraw::Image(r) => match rules.ui_image(r, assets) {
+                Ok(sprite) => (vec![sprite], clip_rect(r.clip)),
+                // Art that is not there skips this widget only.
+                Err(ViewError::ArtMissing(_)) => continue,
+                Err(e) => return Err(at(e)),
+            },
             UiDraw::Text(r) => (rules.ui_text(r, assets).map_err(at)?, clip_rect(r.clip)),
             // The GDI rectangle clamps to the surface, no other clip (§8 r2).
             UiDraw::Rect(r) => {
@@ -786,6 +788,7 @@ pub fn run_ui_with<L: ServerLink>(
         // (S→C 0x63 opens ui 0x14), mirrored before routing.
         if let Some(o) = original.as_deref_mut() {
             o.npc_menu_poll(world, root, strings);
+            o.refresh_mod_io();
             o.shop_poll(world, root);
             o.cube_poll(world, root)?;
             // The close hooks of the outputs delivered since the last pass.

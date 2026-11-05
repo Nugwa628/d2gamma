@@ -396,3 +396,40 @@ fn killed_run_resumes_to_the_same_bytes() {
         assert_eq!(snapshot(&out), whole, "stop after {stop}");
     }
 }
+
+/// A run limited to some archives opens only those, needs each of them,
+/// and writes the same root whether the install has the others or not.
+#[test]
+fn a_run_limited_to_some_archives_ignores_the_others() {
+    let dir = scratch("only");
+    install(&dir.join("game"));
+    let only: Vec<String> = d2_convert::convert::SERVER_ARCHIVES
+        .iter()
+        .map(|a| (*a).to_owned())
+        .collect();
+    let run = |install: &Path, out: &Path| {
+        let mut o = opts(install, out);
+        o.archives = Some(only.clone());
+        convert(&o, &[Box::new(Excel) as Box<dyn Kind>]).unwrap()
+    };
+    let s = run(&dir.join("game"), &dir.join("a"));
+    let m = s.manifest.unwrap();
+    let names: Vec<&str> = m.archives.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(names, ["d2data.mpq", "d2exp.mpq", "patch_d2.mpq"]);
+    // The same three archives alone: the same root.
+    fs::create_dir_all(dir.join("three")).unwrap();
+    for a in d2_convert::convert::SERVER_ARCHIVES {
+        fs::copy(dir.join("game").join(a), dir.join("three").join(a)).unwrap();
+    }
+    run(&dir.join("three"), &dir.join("b"));
+    assert_eq!(snapshot(&dir.join("a")), snapshot(&dir.join("b")));
+    // One of them missing: not an install.
+    fs::remove_file(dir.join("three/d2exp.mpq")).unwrap();
+    let mut o = opts(&dir.join("three"), &dir.join("c"));
+    o.archives = Some(only.clone());
+    let e = convert(&o, &[Box::new(Excel) as Box<dyn Kind>]).unwrap_err();
+    assert!(
+        matches!(e, ConvertError::NotAnInstall(ref t) if t.contains("d2exp.mpq")),
+        "{e}"
+    );
+}

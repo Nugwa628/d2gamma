@@ -116,6 +116,10 @@ pub fn parse(tsv: &str) -> Result<SeqTable, String> {
     Ok(t)
 }
 
+/// The event byte an event read at index −1 of a player sequence
+/// returns: the record just before each player frame list is all zero.
+pub const PLAYER_EVENT_BEFORE: u8 = 0;
+
 /// For a player: the frame list of sequence
 /// `seqnum` for COF weapon class `class`; `None` for `seqnum` 0, a slot
 /// past the table, a class past the 14 (the base game's fatal assertion
@@ -138,6 +142,10 @@ pub struct MonsterSequences {
     pub slots: Vec<[(i16, i16); 8]>,
     /// The frames of each `monseq` sequence, in row order.
     pub lists: Vec<Vec<SeqFrame>>,
+    /// Per sequence: the event byte of the row just before its first row
+    /// (what an event read at index −1 of its list returns); `None` for a
+    /// sequence whose first row is the table's first.
+    pub before: Vec<Option<u8>>,
 }
 
 impl MonsterSequences {
@@ -152,10 +160,15 @@ impl MonsterSequences {
             .map(|r| std::array::from_fn(|i| (i16_at(r, 368 + 2 * i), i16_at(r, 392 + 2 * i))))
             .collect();
         let mut lists: Vec<Vec<SeqFrame>> = Vec::new();
-        for m in monseq {
+        let mut before: Vec<Option<u8>> = Vec::new();
+        for (n, m) in monseq.iter().enumerate() {
             let k = usize::from(m.sequence);
             if lists.len() <= k {
                 lists.resize_with(k + 1, Vec::new);
+                before.resize(k + 1, None);
+            }
+            if lists[k].is_empty() {
+                before[k] = n.checked_sub(1).map(|p| monseq[p].event);
             }
             lists[k].push(SeqFrame {
                 mode: m.mode,
@@ -163,7 +176,11 @@ impl MonsterSequences {
                 event: m.event,
             });
         }
-        Self { slots, lists }
+        Self {
+            slots,
+            lists,
+            before,
+        }
     }
 
     /// For a monster of `class` using `skill`: the slot whose
@@ -174,6 +191,22 @@ impl MonsterSequences {
     // rows with the frame layout: +2 mode, +3 frame, +5 event); length
     // and count = their number.
     pub fn lookup(&self, class: usize, skill: i32) -> Option<&[SeqFrame]> {
+        let list = self.lists.get(self.sequence_of(class, skill)?)?;
+        (!list.is_empty()).then_some(list.as_slice())
+    }
+
+    /// For the list [`lookup`](Self::lookup) gives: the event byte of the
+    /// row just before it, which an event read at index −1 returns (the
+    /// lists are runs of the table's rows); `None` without a list or
+    /// when the list starts the table.
+    pub fn event_before(&self, class: usize, skill: i32) -> Option<u8> {
+        self.lookup(class, skill)?;
+        *self.before.get(self.sequence_of(class, skill)?)?
+    }
+
+    /// The sequence of `class`'s slot holding `skill`; none for
+    /// `DiabPrison`, a skill in no slot or a sequence ≤ 0.
+    fn sequence_of(&self, class: usize, skill: i32) -> Option<usize> {
         if skill == DIAB_PRISON {
             return None;
         }
@@ -183,11 +216,7 @@ impl MonsterSequences {
             .iter()
             .find(|&&(k, _)| i32::from(k) == skill)
             .map_or(0, |&(_, s)| s);
-        if s <= 0 {
-            return None;
-        }
-        let list = self.lists.get(usize::try_from(s).ok()?)?;
-        (!list.is_empty()).then_some(list.as_slice())
+        usize::try_from(s).ok().filter(|&s| s > 0)
     }
 }
 
@@ -251,6 +280,7 @@ mod tests {
                 (-1, -1),
             ]],
             lists: vec![vec![f(0, 0)], Vec::new(), vec![f(0, 0), f(1, 1)]],
+            before: vec![None, None, Some(0)],
         };
         assert_eq!(m.lookup(0, 306), Some(&[f(0, 0), f(1, 1)][..]));
         // No sequence on the slot (−1), sequence 0, DiabPrison, a skill
@@ -301,5 +331,10 @@ mod tests {
         assert_eq!(m.lists.len(), 2);
         let ev: Vec<u8> = m.lookup(1, 306).unwrap().iter().map(|f| f.event).collect();
         assert_eq!(ev, vec![0, 2]);
+        // The row before sequence 1's run is sequence 0's (event 0); the
+        // table's first row has none before it.
+        assert_eq!(m.before, vec![None, Some(0)]);
+        assert_eq!(m.event_before(1, 306), Some(0));
+        assert_eq!(m.event_before(1, 5), None);
     }
 }

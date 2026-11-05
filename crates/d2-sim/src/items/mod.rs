@@ -14,6 +14,7 @@ pub mod affixes;
 pub mod bitstream;
 pub mod create;
 pub mod inventory;
+pub mod item_rules;
 pub mod moves;
 pub mod props;
 pub mod props_legacy;
@@ -107,34 +108,34 @@ pub mod ty {
 
 /// Stat ids written or read here.
 pub mod stat {
-    pub const LEVEL: u16 = 12;
-    pub const GOLD: u16 = 14;
-    pub const ARMOR_PERCENT: u16 = 16;
-    pub const MAXDAMAGE_PERCENT: u16 = 17;
-    pub const MINDAMAGE_PERCENT: u16 = 18;
-    pub const TOBLOCK: u16 = 20;
-    pub const MINDAMAGE: u16 = 21;
-    pub const MAXDAMAGE: u16 = 22;
-    pub const SECONDARY_MINDAMAGE: u16 = 23;
-    pub const SECONDARY_MAXDAMAGE: u16 = 24;
-    pub const ARMORCLASS: u16 = 31;
-    pub const POISONMAXDAM: u16 = 58;
-    pub const VELOCITYPERCENT: u16 = 67;
-    pub const ATTACKRATE: u16 = 68;
-    pub const QUANTITY: u16 = 70;
-    pub const VALUE: u16 = 71;
-    pub const DURABILITY: u16 = 72;
-    pub const MAXDURABILITY: u16 = 73;
-    pub const ITEM_SINGLESKILL: u16 = 107;
-    pub const INDESTRUCTIBLE: u16 = 152;
-    pub const THROW_MINDAMAGE: u16 = 159;
-    pub const THROW_MAXDAMAGE: u16 = 160;
-    pub const NUMSOCKETS: u16 = 194;
-    pub const REPLENISH_DURABILITY: u16 = 252;
-    pub const REPLENISH_QUANTITY: u16 = 253;
-    pub const EXTRA_STACK: u16 = 254;
-    pub const POISON_COUNT: u16 = 326;
-    pub const QUESTITEMDIFFICULTY: u16 = 356;
+    pub use crate::stats::ids::ARMORCLASS;
+    pub use crate::stats::ids::ARMOR_PERCENT;
+    pub use crate::stats::ids::ATTACKRATE;
+    pub use crate::stats::ids::DURABILITY;
+    pub use crate::stats::ids::EXTRA_STACK;
+    pub use crate::stats::ids::GOLD;
+    pub use crate::stats::ids::INDESTRUCTIBLE;
+    pub use crate::stats::ids::ITEM_SINGLESKILL;
+    pub use crate::stats::ids::LEVEL;
+    pub use crate::stats::ids::MAXDAMAGE;
+    pub use crate::stats::ids::MAXDAMAGE_PERCENT;
+    pub use crate::stats::ids::MAXDURABILITY;
+    pub use crate::stats::ids::MINDAMAGE;
+    pub use crate::stats::ids::MINDAMAGE_PERCENT;
+    pub use crate::stats::ids::NUMSOCKETS;
+    pub use crate::stats::ids::POISONMAXDAM;
+    pub use crate::stats::ids::POISON_COUNT;
+    pub use crate::stats::ids::QUANTITY;
+    pub use crate::stats::ids::QUESTITEMDIFFICULTY;
+    pub use crate::stats::ids::REPLENISH_DURABILITY;
+    pub use crate::stats::ids::REPLENISH_QUANTITY;
+    pub use crate::stats::ids::SECONDARY_MAXDAMAGE;
+    pub use crate::stats::ids::SECONDARY_MINDAMAGE;
+    pub use crate::stats::ids::THROW_MAXDAMAGE;
+    pub use crate::stats::ids::THROW_MINDAMAGE;
+    pub use crate::stats::ids::TOBLOCK;
+    pub use crate::stats::ids::VALUE;
+    pub use crate::stats::ids::VELOCITYPERCENT;
 }
 
 /// Item format of generated items in an expansion game.

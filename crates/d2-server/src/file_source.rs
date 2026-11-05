@@ -170,6 +170,30 @@ fn check(folded: &str) -> Result<(), PathError> {
 
 /// Where asset bytes come from: the user's archive set, or a test fake.
 pub trait FileSource: Send + Sync + 'static {
+    /// Effective custom stat names. Plain sources contribute no registry.
+    fn custom_stat_names(&self) -> Result<std::collections::BTreeMap<String, u16>, String> {
+        Ok(Default::default())
+    }
+    /// Ordered mod identities; used only for a declared network contract.
+    fn mod_versions(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
+    /// The effective mod network contract; base sources contribute none.
+    fn net_document(&self) -> Result<Option<Vec<u8>>, String> {
+        Ok(None)
+    }
+    /// Effective mod panel documents. Base sources contribute no panels.
+    fn ui_documents(&self) -> Result<Vec<(String, Vec<u8>)>, String> {
+        Ok(Vec::new())
+    }
+    /// Server declarations exclude cosmetic overrides of panel documents.
+    fn server_ui_documents(&self) -> Result<Vec<(String, Vec<u8>)>, String> {
+        self.ui_documents()
+    }
+    /// Effective mod visual recipes. The base game contributes none.
+    fn effect_documents(&self) -> Result<Vec<(String, Vec<u8>)>, String> {
+        Ok(Vec::new())
+    }
     /// Reads `archive_name` (`\` separators). `None` if no archive holds
     /// it; `Some(Err(message))` if one does but reading failed.
     fn read_file(&self, archive_name: &str) -> Option<Result<Vec<u8>, String>>;
@@ -259,11 +283,95 @@ typed_reader!(
     read_pl2, Pl2, d2_formats::palette::Pl2
 );
 
-/// The converted native folder. Raw bytes exist only for the kinds whose native file is
-/// kept verbatim: excel `.txt` tables, the item colour maps and the monster palette shifts,
-/// and sounds: a native `.wav` is a canonical PCM WAV, read strictly and served as those
-/// bytes, which the sound code decodes as it does an archive's `.wav`.
+/// Effective mod-only UI documents, with later layers replacing paths.
+fn ui_documents(layers: &d2_native::layers::LayerStack) -> Result<Vec<(String, Vec<u8>)>, String> {
+    mod_documents(layers, "ui")
+}
+fn mod_documents(
+    layers: &d2_native::layers::LayerStack,
+    folder: &str,
+) -> Result<Vec<(String, Vec<u8>)>, String> {
+    collect_documents(layers.layers.iter().skip(1), folder)
+}
+fn is_screen_only(layer: &d2_native::layers::Layer) -> bool {
+    layer
+        .info
+        .as_ref()
+        .and_then(|i| i.kit.as_ref())
+        .is_some_and(|m| m.screen_only)
+}
+fn collect_documents<'a>(
+    layers: impl Iterator<Item = &'a d2_native::layers::Layer>,
+    folder: &str,
+) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let mut documents = std::collections::BTreeMap::new();
+    for layer in layers {
+        for name in layer.files_under(folder).map_err(|e| e.to_string())? {
+            if !name.ends_with(".toml") {
+                continue;
+            }
+            let path = format!("{folder}/{name}");
+            let bytes = layer
+                .read(&path)
+                .ok_or_else(|| format!("{path}: missing"))?
+                .map_err(|e| e.to_string())?;
+            if bytes.len() > 256 * 1024 {
+                return Err(format!("{path}: document exceeds 256 KiB"));
+            }
+            documents.insert(path, bytes);
+            if documents.len() > 64 {
+                return Err(format!("files/{folder}: at most 64 documents allowed"));
+            }
+        }
+    }
+    Ok(documents.into_iter().collect())
+}
+
+/// Native decoded assets and explicit mod panel documents.
 impl FileSource for NativeSource {
+    fn mod_versions(&self) -> Vec<(String, String)> {
+        self.layers
+            .layers
+            .iter()
+            .skip(1)
+            .filter(|l| !is_screen_only(l))
+            .filter_map(|l| l.info.as_ref())
+            .map(|m| {
+                (
+                    m.kit
+                        .as_ref()
+                        .map(|k| k.id.clone())
+                        .unwrap_or_else(|| m.name.clone()),
+                    m.version.clone(),
+                )
+            })
+            .collect()
+    }
+
+    fn net_document(&self) -> Result<Option<Vec<u8>>, String> {
+        net_document(&self.layers)
+    }
+
+    fn custom_stat_names(&self) -> Result<std::collections::BTreeMap<String, u16>, String> {
+        custom_stat_names(&self.layers)
+    }
+
+    fn ui_documents(&self) -> Result<Vec<(String, Vec<u8>)>, String> {
+        ui_documents(&self.layers)
+    }
+    fn server_ui_documents(&self) -> Result<Vec<(String, Vec<u8>)>, String> {
+        collect_documents(
+            self.layers
+                .layers
+                .iter()
+                .skip(1)
+                .filter(|l| !is_screen_only(l)),
+            "ui",
+        )
+    }
+    fn effect_documents(&self) -> Result<Vec<(String, Vec<u8>)>, String> {
+        mod_documents(&self.layers, "effects")
+    }
     fn read_file(&self, archive_name: &str) -> Option<Result<Vec<u8>, String>> {
         let p = fold(archive_name);
         match AssetKind::of(&p)? {
@@ -274,6 +382,11 @@ impl FileSource for NativeSource {
             },
             AssetKind::ColorMap => match self.read_native(&p)? {
                 Ok(NativeAsset::ColorMap(b)) => Some(Ok(b)),
+                Ok(_) => None,
+                Err(e) => Some(Err(e)),
+            },
+            AssetKind::ColorTxt => match self.read_native(&p)? {
+                Ok(NativeAsset::ColorTxt(b)) => Some(Ok(b)),
                 Ok(_) => None,
                 Err(e) => Some(Err(e)),
             },
@@ -363,9 +476,231 @@ impl FileSource for MemorySource {
     }
 }
 
+fn custom_stat_names(
+    layers: &d2_native::layers::LayerStack,
+) -> Result<std::collections::BTreeMap<String, u16>, String> {
+    for layer in layers
+        .layers
+        .iter()
+        .skip(1)
+        .rev()
+        .filter(|l| !is_screen_only(l))
+    {
+        if let Some(bytes) = layer.read("stats.toml") {
+            let bytes = bytes.map_err(|e| e.to_string())?;
+            let text = std::str::from_utf8(&bytes).map_err(|e| e.to_string())?;
+            let rules = d2_sim::stats::named::StatRules::from_toml(text)
+                .map_err(|e| format!("{}: files/stats.toml: {e}", layer.name))?;
+            return Ok(rules
+                .custom_stats()
+                .map(|(name, id)| (name.to_owned(), id))
+                .collect());
+        }
+    }
+    Ok(Default::default())
+}
+
+/// Later mod layers replace the contract; the native base never supplies one.
+fn net_document(layers: &d2_native::layers::LayerStack) -> Result<Option<Vec<u8>>, String> {
+    let mut result = None;
+    for layer in layers.layers.iter().skip(1) {
+        if let Some(bytes) = layer.read("net.toml") {
+            let bytes = bytes.map_err(|e| e.to_string())?;
+            if bytes.len() > d2_modkit::net::MAX_DOCUMENT {
+                return Err("files/net.toml exceeds 256 KiB".into());
+            }
+            result = Some(bytes);
+        }
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_stats_use_last_mod_folder_or_pack_and_ignore_base_and_cosmetics() {
+        use d2_native::layers::{Layer, LayerFiles, LayerStack, ModInfo};
+        use std::{fs, sync::Arc};
+        let root = std::env::temp_dir().join(format!("named-stat-source-{}", std::process::id()));
+        let base = root.join("base");
+        let module = root.join("module");
+        let cosmetic = root.join("cosmetic");
+        for path in [&base, &module.join("files"), &cosmetic] {
+            fs::create_dir_all(path).unwrap();
+        }
+        let stat = |id| format!("version=1\n[[stat]]\nname='resonance'\nid={id}");
+        fs::write(base.join("stats.toml"), stat(40000)).unwrap();
+        let mut layers = LayerStack {
+            layers: vec![Layer::dir("base", base, None)],
+        };
+        assert!(custom_stat_names(&layers).unwrap().is_empty());
+        fs::write(module.join("files/stats.toml"), stat(40001)).unwrap();
+        layers
+            .layers
+            .push(Layer::dir("full", module.join("files"), None));
+        assert_eq!(custom_stat_names(&layers).unwrap()["resonance"], 40001);
+        fs::write(module.join("files/stats.toml"), stat(40002)).unwrap();
+        let pack = root.join("stats.d2pack");
+        d2_native::pack::build(&module, &pack, 1).unwrap();
+        layers.layers.push(Layer {
+            name: "pack".into(),
+            info: None,
+            files: LayerFiles::Pack(Arc::new(d2_native::pack::Pack::open(&pack).unwrap())),
+        });
+        fs::write(cosmetic.join("stats.toml"), stat(40003)).unwrap();
+        let info = ModInfo::from_toml("mod.toml", "id='cosmetic'\nname='Cosmetic'\nversion='1.0.0'\nauthor='Test'\ndescription=''\napi=1\nkind='addon'\nfor='d2gamma'\nscreen_only=true").unwrap();
+        layers
+            .layers
+            .push(Layer::dir("cosmetic", cosmetic, Some(info)));
+        assert_eq!(custom_stat_names(&layers).unwrap()["resonance"], 40002);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cosmetic_overrides_preserve_server_actions_and_network_identity() {
+        use d2_native::layers::{Layer, LayerStack, ModInfo};
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("screen-ui-source-{}", std::process::id()));
+        let full = root.join("full");
+        let addon = root.join("addon");
+        for dir in [&full, &addon] {
+            fs::create_dir_all(dir.join("ui")).unwrap();
+        }
+        fs::write(full.join("ui/hud.toml"), "authoritative actions").unwrap();
+        fs::write(addon.join("ui/hud.toml"), "cosmetic panel").unwrap();
+        let manifest = "id='screen-hud'\nname='HUD'\nversion='1.0.0'\nauthor='Test'\ndescription=''\napi=1\nkind='addon'\nfor='d2gamma'\nscreen_only=true";
+        let info = ModInfo::from_toml("mod.toml", manifest).unwrap();
+        let layers = LayerStack {
+            layers: vec![
+                Layer::dir("base", root.join("base"), None),
+                Layer::dir("full", full, None),
+                Layer::dir("addon", addon, Some(info)),
+            ],
+        };
+        assert_eq!(ui_documents(&layers).unwrap()[0].1, b"cosmetic panel");
+        let server = collect_documents(
+            layers.layers.iter().skip(1).filter(|l| !is_screen_only(l)),
+            "ui",
+        )
+        .unwrap();
+        assert_eq!(server[0].1, b"authoritative actions");
+        assert!(layers
+            .layers
+            .iter()
+            .skip(1)
+            .filter(|l| !is_screen_only(l))
+            .filter_map(|l| l.info.as_ref())
+            .next()
+            .is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn panels_read_mod_folders_and_packs_but_never_base() {
+        use d2_native::layers::{Layer, LayerFiles, LayerStack};
+        use std::{fs, sync::Arc};
+        let dir = std::env::temp_dir().join(format!("mod-ui-source-{}", std::process::id()));
+        let base = dir.join("base");
+        let module = dir.join("module");
+        fs::create_dir_all(base.join("ui")).unwrap();
+        fs::create_dir_all(module.join("files/ui")).unwrap();
+        fs::write(base.join("ui/base.toml"), "base must not load").unwrap();
+        fs::write(module.join("files/ui/a.toml"), "folder").unwrap();
+        let mut layers = LayerStack {
+            layers: vec![Layer::dir("base", base, None)],
+        };
+        assert!(ui_documents(&layers).unwrap().is_empty());
+        layers
+            .layers
+            .push(Layer::dir("mod", module.join("files"), None));
+        assert_eq!(
+            ui_documents(&layers).unwrap(),
+            vec![("ui/a.toml".into(), b"folder".to_vec())]
+        );
+        fs::write(module.join("files/ui/a.toml"), "packed").unwrap();
+        let packed = dir.join("test.d2pack");
+        d2_native::pack::build(&module, &packed, 1).unwrap();
+        layers.layers.push(Layer {
+            name: "pack".into(),
+            info: None,
+            files: LayerFiles::Pack(Arc::new(d2_native::pack::Pack::open(&packed).unwrap())),
+        });
+        assert_eq!(
+            ui_documents(&layers).unwrap(),
+            vec![("ui/a.toml".into(), b"packed".to_vec())]
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn effect_documents_use_mod_layers_and_pack_overrides() {
+        use d2_native::layers::{Layer, LayerFiles, LayerStack};
+        use std::{fs, sync::Arc};
+        let root = std::env::temp_dir().join(format!("effects-source-{}", std::process::id()));
+        let base = root.join("base");
+        let module = root.join("module");
+        fs::create_dir_all(base.join("effects")).unwrap();
+        fs::create_dir_all(module.join("files/effects")).unwrap();
+        fs::write(base.join("effects/a.toml"), "ignored").unwrap();
+        fs::write(module.join("files/effects/a.toml"), "folder").unwrap();
+        let mut stack = LayerStack {
+            layers: vec![Layer::dir("base", base, None)],
+        };
+        assert!(mod_documents(&stack, "effects").unwrap().is_empty());
+        stack
+            .layers
+            .push(Layer::dir("mod", module.join("files"), None));
+        assert_eq!(mod_documents(&stack, "effects").unwrap()[0].1, b"folder");
+        let pack = root.join("effects.d2pack");
+        fs::write(module.join("files/effects/a.toml"), "packed").unwrap();
+        d2_native::pack::build(&module, &pack, 1).unwrap();
+        stack.layers.push(Layer {
+            name: "pack".into(),
+            info: None,
+            files: LayerFiles::Pack(Arc::new(d2_native::pack::Pack::open(&pack).unwrap())),
+        });
+        assert_eq!(mod_documents(&stack, "effects").unwrap()[0].1, b"packed");
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn network_contract_reads_folder_pack_and_last_override_but_never_base() {
+        use d2_native::layers::{Layer, LayerFiles, LayerStack};
+        use std::{fs, sync::Arc};
+        let root = std::env::temp_dir().join(format!("net-source-{}", std::process::id()));
+        let base = root.join("base");
+        let module = root.join("module");
+        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(module.join("files")).unwrap();
+        fs::write(base.join("net.toml"), "ignored").unwrap();
+        fs::write(module.join("files/net.toml"), "folder").unwrap();
+        let mut stack = LayerStack {
+            layers: vec![Layer::dir("base", base, None)],
+        };
+        assert!(net_document(&stack).unwrap().is_none());
+        stack
+            .layers
+            .push(Layer::dir("mod", module.join("files"), None));
+        assert_eq!(net_document(&stack).unwrap().unwrap(), b"folder");
+        fs::write(module.join("files/net.toml"), "packed").unwrap();
+        let pack = root.join("net.d2pack");
+        d2_native::pack::build(&module, &pack, 1).unwrap();
+        stack.layers.push(Layer {
+            name: "pack".into(),
+            info: None,
+            files: LayerFiles::Pack(Arc::new(d2_native::pack::Pack::open(&pack).unwrap())),
+        });
+        assert_eq!(net_document(&stack).unwrap().unwrap(), b"packed");
+        stack.layers.pop();
+        fs::write(
+            module.join("files/net.toml"),
+            vec![b' '; d2_modkit::net::MAX_DOCUMENT + 1],
+        )
+        .unwrap();
+        assert!(net_document(&stack).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn two_spellings_one_path() {

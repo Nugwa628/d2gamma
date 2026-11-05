@@ -34,6 +34,8 @@ mod inactive_items;
 pub mod missile_fill;
 pub mod missiles;
 pub mod mod_events;
+#[cfg(test)]
+mod mod_quests;
 pub mod mod_saves;
 pub mod mod_world;
 pub mod monster_add;
@@ -43,6 +45,7 @@ pub mod objects;
 pub mod pending;
 pub mod reaction;
 pub mod rooms;
+pub mod state_stacks;
 pub mod state_update;
 pub mod switch;
 pub mod town_portal;
@@ -254,6 +257,10 @@ pub struct ActionHooks<X> {
     /// The rules this game runs under,
     /// set when the game is built, never changed.
     pub rules: crate::rules::Ruleset,
+    /// Authoritative scripts, absent in base games and script-free mods.
+    pub scripts: Option<Arc<dyn crate::rules::scripts::Runtime>>,
+    /// Events raised while only stat/placement storage is borrowed.
+    pub script_events: Vec<crate::rules::scripts::Event>,
     /// The second word of the coordinate records monsters hold as their
     /// vision record, by record identity; absent = 0.
     pub vision_seen: BTreeMap<crate::monsters::init::VisionRecord, u32>,
@@ -501,6 +508,9 @@ pub struct ActionHooks<X> {
     /// The players' pet lists, created on a player's first summon
     /// ([`crate::wiring::interaction::summon`]).
     pub pet_lists: BTreeMap<UnitId, crate::player::pets::PetLists>,
+    /// The life percent last sent to each summoned pet's owner (S→C 0x7F),
+    /// by pet GUID ([`View::pet_life_updates`]).
+    pub pet_life_sent: BTreeMap<i32, u16>,
     /// A mod game's skill charges by unit and skill
     /// ([`crate::rules::SkillBar`]); freed with the unit.
     pub skill_charges: BTreeMap<(UnitId, i32), crate::rules::SkillCharge>,
@@ -526,6 +536,12 @@ pub struct ActionHooks<X> {
     /// ([`Pending::ai_skill_level`] is asked for a unit without one) and
     /// by the entry lookup [`ActionHooks::monster_entry_of`].
     pub natural_skills: BTreeMap<UnitId, SkillList>,
+    /// The ticks a mod's block skills asked for
+    /// ([`crate::rules::HostTimers::schedule_tick`]), by job number: the unit,
+    /// the frame the timer is due and the tick. Empty in a game with no mod.
+    pub mod_ticks: BTreeMap<u32, ModTickJob>,
+    /// The number the next tick is kept under.
+    pub mod_tick_next: u32,
     /// A unit's source unit (set by `link_source`); read when the unit's
     /// second flag word has bit 0x400.
     pub unit_source: BTreeMap<UnitId, UnitId>,
@@ -552,6 +568,11 @@ pub struct ActionHooks<X> {
     /// callback id, list), taken by `UnitHooks::lists_expired` after the
     /// expiry walk (`units.rs`).
     pub removed_lists: Vec<(UnitId, u32, u32, crate::stats::lists::ListId)>,
+    /// Lists in [`Self::removed_lists`] that a mod's own state op removed:
+    /// their end is not told to the mod's triggers.
+    pub quiet_lists: Vec<crate::stats::lists::ListId>,
+    /// How many mod triggers deep the running actions are.
+    pub trigger_depth: u8,
     /// Skill stat callbacks (stats 83, 126, 127, 188: unit, stat, layer)
     /// the stat lists raised; their "refresh all" runs at the unit's next
     /// update ([`Pending::skill_stat_refresh`]).
@@ -561,8 +582,25 @@ pub struct ActionHooks<X> {
     /// item-move rest syncs the item skills for each (d2-server
     /// `preview_skills::sync_oskills`).
     pub oskill_changes: Vec<(UnitId, u16, u16, i32)>,
+    /// The ground pickups a mod game's event hooks asked for (player,
+    /// item; [`crate::rules::EventHost::pick_up`]), in order, for the host
+    /// that holds the inventory model, which runs the pickup after the
+    /// hook.
+    pub mod_pickups: Vec<(UnitId, UnitId)>,
+    /// The pets the running skill function made (owner, pet), for a mod
+    /// game's [`crate::rules::EventHooks::pet_summoned`] after it.
+    pub mod_pets: Vec<(UnitId, UnitId)>,
     /// Adapter errors, in order.
     pub errors: Vec<WiringError>,
+}
+
+/// One tick a mod's block skill is waiting for ([`ActionHooks::mod_ticks`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModTickJob {
+    pub unit: UnitId,
+    /// The frame its timer is due.
+    pub due: i32,
+    pub tick: crate::rules::Tick,
 }
 
 /// A monster's skill entries, `(skill id, level)`, in the order the game's
@@ -757,6 +795,8 @@ impl<X> ActionHooks<X> {
             ai: Some(AiStore::new()),
             dev: crate::dev::DevSwitches::default(),
             rules: crate::rules::Ruleset::Original,
+            scripts: None,
+            script_events: Vec::new(),
             ai_info: GameInfo::default(),
             combat_lists: BTreeMap::new(),
             event_records: Default::default(),
@@ -819,12 +859,15 @@ impl<X> ActionHooks<X> {
             session: switch::SessionState::default(),
             skill_lists: BTreeMap::new(),
             pet_lists: BTreeMap::new(),
+            pet_life_sent: BTreeMap::new(),
             skill_charges: BTreeMap::new(),
             hireling_units: std::collections::BTreeSet::new(),
             removal_notices: Vec::new(),
             monster_skills: BTreeMap::new(),
             spawn_class_notes: BTreeMap::new(),
             natural_skills: BTreeMap::new(),
+            mod_ticks: BTreeMap::new(),
+            mod_tick_next: 1,
             unit_source: BTreeMap::new(),
             monster_equip: BTreeMap::new(),
             inactive: None,
@@ -832,8 +875,12 @@ impl<X> ActionHooks<X> {
             x,
             orphan_seed: Seed::init(),
             removed_lists: Vec::new(),
+            quiet_lists: Vec::new(),
+            trigger_depth: 0,
             skill_refresh: Vec::new(),
             oskill_changes: Vec::new(),
+            mod_pickups: Vec::new(),
+            mod_pets: Vec::new(),
             errors: Vec::new(),
         }
     }
@@ -920,6 +967,15 @@ impl<X: Pending> View<'_, X> {
             && self.stats.unit_base(item, MAX_DURABILITY, 0) != 0
             && self.stats.unit_total(item, MAX_DURABILITY, 0) != 0
             && self.stats.unit_total(item, INDESTRUCTIBLE, 0) < 1
+    }
+}
+
+impl<X> ActionHooks<X> {
+    /// Bounded queue for events raised during stat/placement storage borrows.
+    pub(crate) fn queue_script_event(&mut self, event: crate::rules::scripts::Event) {
+        if self.scripts.is_some() && self.script_events.len() < 256 {
+            self.script_events.push(event);
+        }
     }
 }
 

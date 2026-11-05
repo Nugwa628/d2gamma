@@ -195,7 +195,18 @@ pub fn in_town(w: &ClientWorld, key: UnitKey) -> bool {
     w.active_rooms
         .as_deref()
         .and_then(|rooms| rooms.iter().find(|r| r.room == room))
-        .is_some_and(|r| d2_sim::drlg::is_town(u32::from(r.level)))
+        .is_some_and(|r| {
+            let level = u32::from(r.level);
+            w.drlg.as_ref().map_or_else(
+                || {
+                    w.act.map_or_else(
+                        || d2_sim::drlg::is_town(level),
+                        |a| u32::from(a.town_level) == level,
+                    )
+                },
+                |d| d.drlg.towns.is_town(level),
+            )
+        })
 }
 
 /// The level id of U's room: `None` in no
@@ -297,6 +308,29 @@ fn place(w: &mut ClientWorld, key: UnitKey, x: u16, y: u16) -> Result<(), Handle
         w.room_units.place(key, room.map(|r| r.room));
     }
     Ok(())
+}
+
+/// Another player's stand (code 7) at the cell where the server's walk
+/// ended: the client's walk track ([`super::motion`]) stops short of a
+/// cut-off or blocked walk, so the stop puts the unit on the server's
+/// cell, at its centre. A cell in no active room leaves the unit where it
+/// is. D2Gamma's own: a realm's client has no other source for where
+/// another player stands.
+fn stand_at(w: &mut ClientWorld, key: UnitKey, x: u16, y: u16) {
+    let room = match &w.active_rooms {
+        Some(_) => match w.room_at(x, y) {
+            Some(r) => Some(r.room),
+            None => return,
+        },
+        None => None,
+    };
+    if let Some(u) = w.units.get_mut(&key) {
+        u.position = Some((x, y));
+        u.precise = Some(super::predict::cell_centre((x, y)));
+    }
+    if w.active_rooms.is_some() && w.room_units.room_of(key) != room {
+        w.room_units.place(key, room);
+    }
 }
 
 /// The player death that codes 0x08 and 0x09 end in:
@@ -408,6 +442,8 @@ fn player(
             // finds the player dead and leaves it.
             if was_dead && (x, y) != (0, 0) {
                 place(w, key, x, y)?;
+            } else if w.local_player != Some(key) && (x, y) != (0, 0) {
+                stand_at(w, key, x, y);
             }
         }
         0x08 => {

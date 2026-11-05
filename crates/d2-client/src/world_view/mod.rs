@@ -42,6 +42,7 @@ pub mod light_sources;
 pub mod looks;
 pub mod minimap_view;
 pub mod missiles;
+pub mod mod_effects;
 pub mod model_feed;
 pub mod monster_label;
 pub mod monster_shift;
@@ -69,6 +70,7 @@ pub mod skill_motion;
 pub mod smooth;
 pub mod state_tint;
 pub mod swap_key;
+pub mod telegraphs;
 pub mod tile_assets;
 pub mod ui_art;
 pub mod ui_bind;
@@ -144,6 +146,11 @@ pub enum ViewError {
         spec: &'static str,
         message: String,
     },
+    /// A panel's art is not there (a mod's art file that is missing or
+    /// unreadable, or an image id naming no file): that widget is skipped
+    /// and the rest of the view draws.
+    #[error("panel art unavailable: {0}")]
+    ArtMissing(String),
     #[error("COF {0:?} is not loaded")]
     CofMissing(CanonicalPath),
     #[error("font table {0:?} is not loaded")]

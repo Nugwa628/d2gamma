@@ -18,6 +18,6 @@ mod units;
 pub use damage::{ElementAdded, HostDamage};
 pub use missiles::{missile_init, HostMissiles, MissileRequest};
 pub use skills::HostSkills;
-pub use states::{HostStates, StateRemove, StateSpec, StateStat};
-pub use timers::HostTimers;
+pub use states::{HostStates, RuledState, StateRemove, StateSpec, StateStat};
+pub use timers::{HostTimers, Tick};
 pub use units::HostUnits;

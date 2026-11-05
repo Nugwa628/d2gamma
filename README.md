@@ -28,12 +28,16 @@ data archives (`d2data.mpq`, `d2exp.mpq`, ...) from your own install when it run
   imported.
 - **Mods as their own games:** a mod runs on D2Gamma as its own game, with its own files and saves. See
   [docs/mods](docs/mods) and [examples/mod-game](examples/mod-game).
+- **Mod kit and Mod Studio:** make a mod without writing code. A mod is a folder of readable files (rules, table
+  patches, items, skills, monster AI, maps, quests, scripts, HUD panels); Mod Studio (`crates/mod-studio`) edits,
+  checks, packages and signs it, and the game plays it with `--mod-dir <folder>`. Start with
+  [docs/modkit](docs/modkit/README.md); example mods are in [templates](templates).
 - **Dev tools:** an in-game dev panel and console (press `` ` ``): god mode, levels, items, warps and more. They are
   on by default during the beta. Turn them off with `--no-dev`.
 
 ## Playing
 
-1. Download `D2Gamma-Game-*.zip` from the [latest release](https://github.com/Nugwa628/d2rust/releases/latest) and
+1. Download `D2Gamma-Game-*.zip` from the [latest release](https://github.com/Nugwa628/d2gamma/releases/latest) and
    unzip it, or build the game yourself (below).
 2. Put `D2Gamma-Game.exe` in your Diablo II folder (the folder that has `d2data.mpq`), or point it at the folder:
    ```powershell
@@ -58,8 +62,8 @@ Key bindings are in `Documents\D2Gamma\controls.toml`. They start as the origina
 You need [Rust](https://rustup.rs). `rust-toolchain.toml` picks the right version automatically.
 
 ```powershell
-git clone https://github.com/Nugwa628/d2rust
-cd d2rust
+git clone https://github.com/Nugwa628/d2gamma
+cd d2gamma
 $env:D2_GAME_DIR = "C:\path\to\Diablo II"
 cargo run --release -p d2-client -- play
 ```
@@ -71,7 +75,7 @@ game server on your own PC and writes the game's `servers.toml` for them.
 ## Running your own realm
 
 Online play needs a main server (`d2rust-realm`) and at least one game server (`d2rust-node`). Both are on the
-[latest release](https://github.com/Nugwa628/d2rust/releases/latest) (`D2Gamma-Realm-*-linux-x86_64.tar.gz`,
+[latest release](https://github.com/Nugwa628/d2gamma/releases/latest) (`D2Gamma-Realm-*-linux-x86_64.tar.gz`,
 `D2Gamma-Node-*-linux-x86_64.tar.gz`, `D2Gamma-Node-*-windows-x86_64.zip`), or build them from this repository
 (`tools/server/server-build.sh`).
 
@@ -96,7 +100,7 @@ Online play needs a main server (`d2rust-realm`) and at least one game server (`
    game = "d2rust"
    address = "realm.example:6112"
    cert_sha256 = "<64 hex digits>"
-   version = "0.1.1.2159"
+   version = "0.1.1.3162"
    ```
 
 More detail: [tools/server/README.md](tools/server/README.md).
@@ -136,6 +140,10 @@ your Diablo II files ──► d2-formats ──► d2-data ──┬──► d
 | `d2rust-node` | A game server: runs online games and links to its main server |
 | `d2-client` | The game window: drawing, UI, sound and input (Bevy). Builds `D2Gamma-Game` |
 | `d2-verify` | Checks that the game files are present |
+| `d2-modkit` | The mod format: manifest, layers, checks, packing and signing |
+| `mod-studio` | Mod Studio, the no-code mod editor (a separate program) |
+| `d2-base-data` | The game data the server programs read, made from your own game files |
+| `d2-item-text` | Item descriptions, shared by the game and Mod Studio |
 | `tools/` | Developer tools: `mpq-tool`, `data-tool`, `d2s-tool`, `d2-convert`, `img-diff` and others |
 
 Crate names, `D2RUST_*` environment variables and file formats keep the project's earlier name, d2rust.
@@ -147,6 +155,7 @@ More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - [docs/REQUIRED_FILES.md](docs/REQUIRED_FILES.md): which game files D2Gamma reads
 - [docs/LOCAL-RUN.md](docs/LOCAL-RUN.md): building and checking on a PC with the game installed
 - [docs/PLAYTEST.md](docs/PLAYTEST.md): how to play-test and report a bug
+- [docs/modkit](docs/modkit/README.md): making a mod with the mod kit and Mod Studio
 - [docs/mods](docs/mods): making a mod game
 - [docs/tools](docs/tools): the test tools (scenarios, sweeps, multiplayer tests, picture checks)
 - [CONTRIBUTING.md](CONTRIBUTING.md): the rules the code follows

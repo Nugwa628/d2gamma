@@ -1,0 +1,24 @@
+version = 1
+
+# The reaction window: on for one second, then gone. Nothing to stack.
+[[state]]
+id = 190
+name = "Reaction window"
+duration_seconds = 1
+
+# The charges: up to 5, each lasting 20 seconds as a group (a new charge starts
+# the clock over). From 3 charges on, the state gives a flat +25 of stat 340,
+# the "bonus damage percent" that skill 390 reads (see skills.toml).
+# `icon` is what the HUD's state row shows, with the stack count on it.
+[[state]]
+id = 191
+name = "Charges"
+duration_seconds = 20
+max_stacks = 5
+reapply = "add_stack"
+icon = "charges"
+[[state.effect]]
+stat = 340
+per_stack = 25
+min_stacks = 3
+flat = true

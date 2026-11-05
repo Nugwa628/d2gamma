@@ -106,6 +106,10 @@ pub(crate) fn path_tables() -> Option<&'static PathTables> {
 /// The precise distance (16.16) below which `127 × l` stays in `i32`.
 const FACING_REACH: i64 = 1 << 23;
 
+/// The most server ticks one frame steps the prediction: the most
+/// `Bridge::display_frame` recovers in one display frame.
+const MAX_TICKS_PER_FRAME: u64 = 16;
+
 /// The precise (16.16) centre of a sub-tile, as `u32`.
 pub fn cell_centre((x, y): (u16, u16)) -> (u32, u32) {
     ((u32::from(x) << 16) | 0x8000, (u32::from(y) << 16) | 0x8000)
@@ -537,6 +541,13 @@ impl Predict {
     /// target's sub-tile centre; reaching it ends the walk. A unit target
     /// not in the model ends the walk.
     pub fn tick(&mut self, world: &ClientWorld, speeds: Speeds) {
+        self.tick_on(world, speeds, world.share_frame());
+    }
+
+    /// [`Self::tick`] for the server tick of game-frame phase `frame`
+    /// ([`ClientWorld::share_frame`] of that tick): at a rate above the
+    /// base one each tick of a second steps its own share.
+    fn tick_on(&mut self, world: &ClientWorld, speeds: Speeds, frame: i32) {
         let (Some((x, y)), Some(walk)) = (self.at, self.walk) else {
             return;
         };
@@ -557,7 +568,7 @@ impl Predict {
             .local()
             .is_some_and(|p| p.stats.get(&10).is_some_and(|s| *s == 0));
         let moves = MoveStats::of_local(world);
-        if self.path_step(world, speeds, moves, walk, target) {
+        if self.path_step(world, speeds, moves, walk, target, frame) {
             return;
         }
         // This tick's share of the base-rate step (the client steps once
@@ -565,7 +576,7 @@ impl Predict {
         let step = super::motion::tick_share(
             world.tick_rate,
             speeds.step_with(walk.run && !self.exhausted, moves),
-            world.share_frame().rem_euclid(world.tick_rate.hz() as i32) as u64,
+            frame.rem_euclid(world.tick_rate.hz() as i32) as u64,
         );
         let dist = isqrt(dx.unsigned_abs().pow(2) + dy.unsigned_abs().pow(2)) as i64;
         if dist <= step || step <= 0 {
@@ -591,6 +602,7 @@ impl Predict {
         moves: MoveStats,
         walk: Walk,
         target: (u16, u16),
+        frame: i32,
     ) -> bool {
         let (Some(at), Some(cell), Some(t)) = (self.at, self.cell(), path_tables()) else {
             return false;
@@ -639,7 +651,7 @@ impl Predict {
         }
         self.path.stamp_others(t, drlg, &self.others, &self.objects);
         if !world.tick_rate.is_base() {
-            self.path.set_frame(world.share_frame());
+            self.path.set_frame(frame);
         }
         let moving = self.path.tick(t, drlg, speeds, own, Some(to));
         if let Some((x, y)) = self.path.position() {
@@ -715,6 +727,23 @@ impl Predict {
         ticked: bool,
         speeds: Speeds,
     ) {
+        self.frame_ticks(world, walks, u64::from(ticked), speeds);
+    }
+
+    /// [`Self::frame`] after `ticks` server ticks: the prediction steps
+    /// once for each, as the server's player does. A display frame can
+    /// pump several ticks (the catch-up of `Bridge::display_frame`; at
+    /// 60 Hz most frames of a slower display do), and one step for all of
+    /// them leaves the prediction behind the server: a realm's game, where
+    /// no server copy puts it back each tick, draws the walk on long after
+    /// the server's player stopped.
+    pub fn frame_ticks(
+        &mut self,
+        world: &ClientWorld,
+        walks: impl IntoIterator<Item = Walk>,
+        ticks: u64,
+        speeds: Speeds,
+    ) {
         self.observe(world);
         self.server_walk(world);
         // B025: a cast or attack at a target turns the player toward it
@@ -757,8 +786,11 @@ impl Predict {
         {
             self.face(world);
         }
-        if ticked {
-            self.tick(world, speeds);
+        // The ticks in order, each at its own phase (the last is the
+        // model's current one).
+        let now = world.share_frame();
+        for back in (0..ticks.min(MAX_TICKS_PER_FRAME)).rev() {
+            self.tick_on(world, speeds, now.wrapping_sub(back as i32));
         }
         self.unit_walk_end(world);
         // The single-player server copy sets
@@ -813,7 +845,7 @@ impl Predict {
         self.since = match (kind, self.since) {
             (None, _) => None,
             (Some(m), Some((t, was))) if was == m => Some((t, m)),
-            (Some(m), _) => Some((world.server_ticks.saturating_sub(u64::from(ticked)), m)),
+            (Some(m), _) => Some((world.server_ticks.saturating_sub(ticks), m)),
         };
     }
 
@@ -1228,6 +1260,21 @@ mod tests {
         assert_eq!(p.cell(), Some((105, 100)));
         assert_eq!(p.walking(), None);
         assert_eq!(p.mode(), None);
+    }
+
+    #[test]
+    fn a_frame_of_several_ticks_steps_once_for_each() {
+        // A display frame that pumps three server ticks moves the
+        // prediction as far as three frames of one tick each (one step for
+        // all three left a realm's player walking on after the server's
+        // stopped).
+        let (w, _) = world_at(100, 100);
+        let mut p = Predict::new();
+        p.frame(&w, [walk_point(110, 100, false)], false, SPEEDS);
+        p.frame_ticks(&w, [], 3, SPEEDS);
+        assert_eq!(p.position(), Some((0x64_8000 + 3 * 0x6000, 0x64_8000)));
+        p.frame_ticks(&w, [], 0, SPEEDS);
+        assert_eq!(p.position(), Some((0x64_8000 + 3 * 0x6000, 0x64_8000)));
     }
 
     #[test]

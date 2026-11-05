@@ -621,3 +621,54 @@ fn a_mod_games_level_entry_rule_refuses_the_portal() {
     assert_eq!(level_of(&mut fx, p), Some(TOWN));
     fx.assert_clean();
 }
+
+#[test]
+fn sixth_act_travel_uses_registry_town_and_emits_its_actual_id() {
+    let mut fx = fx_with(&[
+        (LEVEL, TileRect::new(8, 8, 8, 8)),
+        (LUT, TileRect::new(8, 8, 8, 8)),
+    ]);
+    let text="version=1\n[[acts]]\nname='One'\nstart=1\nend=10\ntown=1\n[[acts]]\nname='Two'\nstart=10\nend=15\ntown=10\n[[acts]]\nname='Three'\nstart=15\nend=20\ntown=15\n[[acts]]\nname='Four'\nstart=20\nend=30\ntown=20\n[[acts]]\nname='Five'\nstart=30\nend=40\ntown=30\n[[acts]]\nname='Six'\nstart=40\nend=150\ntown=40\nwaypoints=[{id=111,level=40}]";
+    let rules = crate::rules::DataMod::from_files(
+        "six",
+        &crate::rules::DataModFiles {
+            acts: Some(("acts.toml", text)),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .into_ruleset();
+    let acts = rules.acts().unwrap().clone();
+    fx.game.lists.set_act_count(6);
+    fx.game.lists.ensure_act(5).unwrap();
+    let entry = fx.game.lists.act(1).unwrap().clone();
+    *fx.game.lists.act_mut(5).unwrap() = entry;
+    fx.game.lists.room_mut(fx.b).unwrap().act = 5;
+    let h = fx.sim.hooks();
+    h.rules = rules;
+    h.drlg.dungeon.set_layout(acts);
+    let mut d = h.drlg.dungeon.acts[1].take().unwrap();
+    d.act = 5;
+    h.drlg.dungeon.acts[5] = Some(d);
+    let a = fx.a;
+    let p = player_in(&mut fx, a, 60, 60);
+    fx.game
+        .lists
+        .add_client(Some(p), None, client_state::IN_GAME);
+    fx.tick();
+    fx.sim.hooks().x.sent.clear();
+    assert!(fx
+        .sim
+        .with(&mut fx.game, |g, v| crate::wiring::path::act_change::run(
+            PathCtx::of(v, g),
+            p,
+            LUT,
+            0
+        )));
+    assert_eq!(room_of(&fx, p), Some(fx.b));
+    assert_eq!(fx.sim.sys.units.get(p).unwrap().act, 5);
+    let messages = sent_to(&mut fx, p);
+    assert!(messages
+        .iter()
+        .any(|m| m.first() == Some(&3) && m[1] == 5 && u16::from_le_bytes([m[6], m[7]]) == 40));
+}

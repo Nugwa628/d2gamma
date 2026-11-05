@@ -1,0 +1,38 @@
+version = 1
+
+# monstats aip1..aip5 of the pantherwoman1 row 83: 70, 70, 8, 6, 0. The body also looks for a pack mate and walks to it when it is
+# farther than aip3 = 8 away (a scan of the pack, which a graph does not have); the graph leaves that step out.
+[[ai]]
+index = 18
+name = "PantherWoman (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "prowl"
+
+# In reach: aip2 = 70 percent swing 1, else stand aip4 = 6 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 70 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.24
+when = [{ kind = "in_melee" }]
+
+# Out of reach: aip1 = 70 percent walk at the target, 75 percent faster.
+[[ai.state.action]]
+kind = "move_to"
+speed = 75
+when = [{ kind = "random", percent = 70 }]
+
+# Else a quarter of the time circle it; else stand 6 frames.
+[[ai.state.action]]
+kind = "move_around"
+steps = 3
+when = [{ kind = "random", percent = 25 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.24

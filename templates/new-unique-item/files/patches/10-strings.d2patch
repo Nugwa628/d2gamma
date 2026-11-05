@@ -1,0 +1,3 @@
+d2patch 1
+# The item's name. The unique's row key below is this string's key.
+stradd emberheart [Emberheart]

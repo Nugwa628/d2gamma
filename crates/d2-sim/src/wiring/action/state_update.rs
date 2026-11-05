@@ -10,12 +10,41 @@
 //! with the stat sends ([`View::player_stat_sends`]) for a player.
 
 use crate::units::messages::SendStat;
-use crate::units::wide_states::{state_change, StateChange};
+use crate::units::wide_states::{stack_count_message, state_change, StateChange};
 use crate::units::{UnitId, UnitType};
 
 use super::{Pending, View};
 
 impl<X: Pending> View<'_, X> {
+    /// Sends authoritative totals in the explicitly selected mod wire.
+    pub(super) fn mod_stat_totals(&mut self, receiver: UnitId, unit: UnitId) {
+        let Some(r) = self.units.get(unit) else {
+            return;
+        };
+        let (ty, guid) = (r.ty as u8, r.guid);
+        if let Some(named) = self
+            .h
+            .rules
+            .stat_rules()
+            .filter(|_| self.h.rules.wide_stat_ids())
+        {
+            let mut ids: Vec<_> = named
+                .custom_stats()
+                .map(|(_, id)| id)
+                .chain(named.targets().iter().copied())
+                .collect();
+            ids.sort_unstable();
+            ids.dedup();
+            for id in ids {
+                let mut bytes = vec![0xB8, 1, ty];
+                bytes.extend_from_slice(&guid.to_le_bytes());
+                bytes.extend_from_slice(&id.to_le_bytes());
+                bytes.extend_from_slice(&self.stats.unit_total(unit, id, 0).to_le_bytes());
+                self.emit(receiver, bytes);
+            }
+        }
+    }
+
     /// Sends the changed-state messages of `unit` to `receiver`.
     pub fn state_change_messages(&mut self, receiver: UnitId, unit: UnitId) {
         let Some(r) = self.units.get(unit) else {
@@ -25,6 +54,7 @@ impl<X: Pending> View<'_, X> {
             return;
         }
         let (ty, guid) = (r.ty as u8, r.guid);
+        self.mod_stat_totals(receiver, unit);
         let Some((bits, changed)) = self.stats.state_bits(unit) else {
             return;
         };
@@ -66,11 +96,24 @@ impl<X: Pending> View<'_, X> {
                         })
                 };
                 out.extend(state_change(change, ty, guid, s as u16, &entries, stat));
+                if has {
+                    out.extend(self.stack_count_message(unit, ty, guid, s as u16));
+                }
             }
         }
         for m in out {
             self.emit(receiver, m);
         }
+    }
+
+    /// The message of the stack count of `state` on `unit` when the mod
+    /// gave the state stack rules (the list's count, 1 when the list was made
+    /// another way).
+    fn stack_count_message(&self, unit: UnitId, ty: u8, guid: u32, state: u16) -> Option<Vec<u8>> {
+        self.h.rules.state_rules()?.get(i32::from(state))?;
+        let l = self.state_list(unit, state)?;
+        let count = self.stats.stacks(l).max(1);
+        Some(stack_count_message(ty, guid, state, count))
     }
 
     /// The stat sends of a player update for stats 67, 68, 12, 0, 2: each

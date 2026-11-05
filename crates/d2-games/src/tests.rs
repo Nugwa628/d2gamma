@@ -1986,3 +1986,82 @@ fn an_unfolded_item_and_d2gamma_games_put_as_before() {
         );
     }
 }
+
+/// A mod game whose server answers each mod message with its payload
+/// reversed, over an S→C envelope.
+#[derive(Debug, Default)]
+struct EchoMod {
+    seen: Mutex<Vec<Vec<u8>>>,
+}
+
+impl d2_sim::rules::ModRules for EchoMod {
+    fn name(&self) -> &str {
+        "echo"
+    }
+    fn message(
+        &self,
+        _: &mut d2_sim::game::Game,
+        player: d2_sim::units::UnitId,
+        payload: &[u8],
+        out: &mut dyn d2_sim::rules::ModOutbox,
+    ) {
+        self.seen.lock().unwrap().push(payload.to_vec());
+        let back: Vec<u8> = payload.iter().rev().copied().collect();
+        assert!(out.send(player, &back), "the echo is sent");
+    }
+}
+
+/// A mod game's host speaks the mod wire; D2Gamma's own keeps the
+/// original wire, where envelopes are refused.
+#[test]
+fn a_mod_games_host_speaks_the_mod_wire_and_d2gammas_the_original() {
+    use d2_proto::envelope::Wire;
+    assert_eq!(instance::wire_for(&Ruleset::Original), Wire::Original);
+    let echo = Ruleset::Mod(Arc::new(EchoMod::default()));
+    assert_eq!(instance::wire_for(&echo), Wire::Mod);
+}
+
+/// Online, a mod game's messages cross both ways: the player's C→S
+/// envelope reaches the mod's rules and their S→C answer reaches the
+/// player's stream.
+#[test]
+#[ignore = "real data: needs D2_GAME_DIR (tools/realdata-gate.sh)"]
+fn a_mod_game_on_a_server_exchanges_a_mod_envelope_both_ways() {
+    use d2_proto::envelope::{self, Direction, Wire};
+    let echo = Arc::new(EchoMod::default());
+    let rules = GameRules {
+        rules: Ruleset::Mod(echo.clone()),
+        codec: Arc::new(D2sCodec),
+    };
+    let s = Server::with_rules("echo", rules);
+    let g = s.start(1, 0);
+    let mut p = Player::join(&g, s.seat(3, "Echoer", Some(4)), "Echoer", 0).unwrap();
+    until_in_game(&g, &mut [&mut p]);
+    assert_eq!(g.with_thread(|i| i.hub.host.wire()).unwrap(), Wire::Mod);
+
+    let up = envelope::encode(Direction::ToServer, &[1, 2, 3]).unwrap();
+    p.send(Lane::Game, up);
+    let want = envelope::encode(Direction::ToClient, &[3, 2, 1]).unwrap();
+    let until = Instant::now() + Duration::from_secs(10);
+    while !p.got.contains(&want) {
+        assert!(Instant::now() < until, "no S→C envelope arrived");
+        std::thread::sleep(Duration::from_millis(5));
+        p.pump().unwrap();
+    }
+    assert_eq!(*echo.seen.lock().unwrap(), [vec![1, 2, 3]]);
+}
+
+/// D2Gamma's own games refuse an envelope online, as any unknown id.
+#[test]
+#[ignore = "real data: needs D2_GAME_DIR (tools/realdata-gate.sh)"]
+fn d2gammas_own_game_on_a_server_keeps_the_original_wire() {
+    use d2_proto::envelope::Wire;
+    let s = Server::new("own-wire");
+    let g = s.start(1, 0);
+    let mut p = Player::join(&g, s.seat(3, "Plain", Some(4)), "Plain", 0).unwrap();
+    until_in_game(&g, &mut [&mut p]);
+    assert_eq!(
+        g.with_thread(|i| i.hub.host.wire()).unwrap(),
+        Wire::Original
+    );
+}

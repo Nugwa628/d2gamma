@@ -1,0 +1,7 @@
+id = "ai-lift-sand-leaper"
+name = "AI 78 SandLeaper, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "SandLeaper as a graph: AI 78 (SandLeaper)."
+api = 1
+kind = "full"

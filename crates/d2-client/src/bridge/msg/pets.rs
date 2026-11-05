@@ -73,6 +73,25 @@ pub fn pet_action(w: &mut ClientWorld, msg: &Message<'_>) -> Result<(), HandlerE
     Ok(())
 }
 
+/// 0x7F AllyPartyInfo `[is player][life % u16@2][GUID u32@4][area u16@8]`: for a
+/// unit that is not a player (a hireling), the life percent goes into its pet
+/// records (+0x1C, [`PetRecord::f1c`]), which the hireling portrait draws. A
+/// player's (the party roster's) changes nothing in the model.
+pub fn ally_party_info(w: &mut ClientWorld, msg: &Message<'_>) -> Result<(), HandlerError> {
+    if msg.bytes.len() != 10 {
+        return Err(HandlerError::Invalid("0x7F is 10 bytes"));
+    }
+    let b = Bytes(msg.bytes);
+    if b.u8(1)? != 0 {
+        return Ok(());
+    }
+    let (life, guid) = (u32::from(b.u16(2)?), b.u32(4)?);
+    for r in w.pets.iter_mut().filter(|r| r.pet == guid) {
+        r.f1c = life;
+    }
+    Ok(())
+}
+
 /// 0x81 AssignMerc.
 pub fn assign_merc(w: &mut ClientWorld, msg: &Message<'_>) -> Result<(), HandlerError> {
     if msg.bytes.len() != 20 {

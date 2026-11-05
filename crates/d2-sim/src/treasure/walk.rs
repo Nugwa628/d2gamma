@@ -105,6 +105,11 @@ pub struct DropRequest<S> {
 /// session (`d2_sim::items`: creation, gold stat 14) and
 /// the collision (free-spot search).
 pub trait DropSink {
+    /// Rules shared by all treasure-class drop paths.
+    fn drop_rules(&self) -> super::rules::DropRules {
+        super::rules::DropRules::defaults()
+    }
+
     /// A room and position.
     type Spot;
     /// A created item unit.
@@ -142,19 +147,7 @@ pub struct WalkArgs {
 
 /// The player factor `n`, steps 1–4 (no draws).
 pub fn player_factor(game: &GameFacts, dropper: &Dropper, recipient: Option<&Recipient>) -> i32 {
-    let p = match recipient.and_then(|r| r.party) {
-        Some(k) if k >= 2 => k.min(8),
-        _ => 1,
-    };
-    let mut players = game.living_players;
-    if matches!(game.game_type, 1..=3) {
-        players = players.max(game.players_setting);
-    }
-    let mut n = p.wrapping_add(players.wrapping_sub(p) / 2);
-    if let DropperKind::Monster { playercount, .. } = dropper.kind {
-        n = n.min(playercount.max(1));
-    }
-    n
+    super::rules::DropRules::defaults().player_factor(game, dropper, recipient)
 }
 
 /// NoDrop `N` for nodrop `n0` ≠ 0, TC total `c` and
@@ -276,8 +269,9 @@ pub fn walk<S: DropSink>(
         args.max
     };
     let exp = game.expansion;
-    let n = player_factor(game, dropper, recipient);
-    let mf = recipient.map_or(0, |r| r.magic_find);
+    let rules = sink.drop_rules();
+    let n = rules.player_factor(game, dropper, recipient);
+    let mf = rules.magic_find(recipient.map_or(0, |r| r.magic_find));
     let first = &tcs[usize::from(tc0)];
     let mut slots = vec![Slot {
         tc: Some(tc0),
@@ -309,7 +303,11 @@ pub fn walk<S: DropSink>(
                 let nd = if tc.nodrop == 0 {
                     0
                 } else {
-                    nodrop(tc.nodrop, total, n)?
+                    nodrop(
+                        super::rules::scale(tc.nodrop, rules.nodrop_percent),
+                        total,
+                        n,
+                    )?
                 };
                 let v = seed.roll(total.wrapping_add(nd)) as i32;
                 if v < nd {

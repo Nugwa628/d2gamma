@@ -1,0 +1,24 @@
+version = 1
+
+# The boss (monstats row 156 here; use your own row). Its first attack
+# interrupts whatever the player is doing; its special attack 1 stuns for 1.5 s.
+[[source]]
+monster = 156
+attack = "a1"
+[[source.effect]]
+kind = "interrupt"
+
+[[source]]
+monster = 156
+attack = "s1"
+[[source.effect]]
+kind = "stun"
+seconds = 1.5
+
+# A missile that is allowed to knock the player back (a missiles row), one
+# time in four.
+[[source]]
+missile = 214
+[[source.effect]]
+kind = "knockback"
+chance = 25

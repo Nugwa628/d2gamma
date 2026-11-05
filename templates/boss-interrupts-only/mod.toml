@@ -1,0 +1,7 @@
+id = "boss-interrupts-only"
+name = "Boss Interrupts Only (template)"
+version = "0.1.0"
+author = "Nugwa"
+description = "Template: players are stunned and interrupted only by attacks that declare it; a stray projectile never cancels a cast."
+api = 1
+kind = "full"

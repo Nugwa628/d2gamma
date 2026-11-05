@@ -2,11 +2,13 @@
 //! quest-granted mercenary. Which NPCs sell and resurrect comes from
 //! [`NpcRoles`] (a mod game's may differ).
 
+use super::npc_rules::{mod_hire_list, mod_offer, HireRequest};
 use super::{
     code, resurrect_message, send_code, stat, u32_at, NpcControl, NpcError, NpcRoles, NpcVendors,
     NpcWorld, UNIT_MONSTER,
 };
 use crate::rng::Seed;
+use crate::rules::Ruleset;
 use crate::units::UnitId;
 use crate::world::npc::class::{KASHYA, QUAL_KEHK};
 
@@ -169,6 +171,12 @@ impl NpcControl {
     /// Make the hire list of a class when
     /// its record has none yet. A class without a record: nothing.
     pub fn make_hire_list(&mut self, class: u16) -> Result<(), NpcError> {
+        self.make_hire_list_for(&crate::rules::ORIGINAL, class)
+    }
+
+    /// [`Self::make_hire_list`] under `rules`: a mod game's list
+    /// ([`super::NpcProvider::hire_list`]) when it gives one.
+    pub fn make_hire_list_for(&mut self, rules: &Ruleset, class: u16) -> Result<(), NpcError> {
         let Some(i) = self.records.iter().position(|r| r.class == class) else {
             return Ok(());
         };
@@ -183,6 +191,15 @@ impl NpcControl {
             seller: class,
             difficulty: 1,
         })?;
+        if let Some(slots) = rules
+            .npcs()
+            .and_then(|p| p.hire_list(class, &self.hirelings[row], &mut self.seed))
+        {
+            self.records[i].hire = Some(HireList {
+                slots: mod_hire_list(slots, HIRE_SLOTS),
+            });
+            return Ok(());
+        }
         let (first, last) = (
             self.hirelings[row].name_first,
             self.hirelings[row].name_last,
@@ -237,7 +254,7 @@ impl NpcControl {
             return Ok(());
         }
         w.send(player, &[0x4F]);
-        self.make_hire_list(class)?;
+        self.make_hire_list_for(w.rules(), class)?;
         let slots = self
             .record(class)
             .and_then(|r| r.hire.as_ref())
@@ -255,7 +272,7 @@ impl NpcControl {
 
     /// When no slot is offered and not hired,
     /// free the list, clear the hire-list-made flag and make a new list.
-    fn refill(&mut self, class: u16) -> Result<(), NpcError> {
+    fn refill(&mut self, rules: &Ruleset, class: u16) -> Result<(), NpcError> {
         let Some(r) = self.record_mut(class) else {
             return Ok(());
         };
@@ -264,7 +281,7 @@ impl NpcControl {
         }
         r.hire = None;
         r.hire_made = false;
-        self.make_hire_list(class)
+        self.make_hire_list_for(rules, class)
     }
 
     /// C→S 0x36 hire.
@@ -337,14 +354,32 @@ impl NpcControl {
             .map_or(0, |r| r.act.wrapping_sub(1));
         // "Player level" is read as stat 12 (not the capped level).
         let level = w.stat(player, stat::LEVEL);
-        let Some(offer) = hire_init(
-            &self.hirelings,
-            self.version(),
-            slot.seed,
+        // A mod game's offer first; the mercenary's init asks the same.
+        let req = HireRequest {
+            expansion: self.expansion,
+            name,
+            seed: slot.seed,
             act,
-            self.difficulty,
-            level,
-        ) else {
+            difficulty: self.difficulty,
+            player_level: level as i32,
+        };
+        let rows = self.hirelings.len();
+        let offer = match mod_offer(w.rules(), &req) {
+            Some(o) => o.filter(|o| o.row < rows).map(|o| HireOffer {
+                row: o.row,
+                level: o.level,
+                price: o.price.max(0) as u32,
+            }),
+            None => hire_init(
+                &self.hirelings,
+                self.version(),
+                slot.seed,
+                act,
+                self.difficulty,
+                level,
+            ),
+        };
+        let Some(offer) = offer else {
             return Ok(0);
         };
         if !w.pay(player, offer.price) {
@@ -377,7 +412,7 @@ impl NpcControl {
         self.send_hire_list(w, player, npc, count < 2)?;
         let mg = w.guid(merc);
         send_code(w, player, code::MERC, mg);
-        self.refill(class)?;
+        self.refill(w.rules(), class)?;
         Ok(0)
     }
 
@@ -444,7 +479,7 @@ impl NpcControl {
         }
         if self.expansion {
             if w.pet(player, PET_HIRELING, 1).is_some() {
-                return self.refill(npc_class);
+                return self.refill(w.rules(), npc_class);
             }
         } else if w.pet(player, PET_HIRELING, 0).is_some() {
             return Ok(());
@@ -483,6 +518,6 @@ impl NpcControl {
             offer: None,
         };
         w.init_mercenary(player, merc, &init);
-        self.refill(npc_class)
+        self.refill(w.rules(), npc_class)
     }
 }

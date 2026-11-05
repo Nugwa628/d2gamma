@@ -1,0 +1,7 @@
+id = "ai-lift-corrupt-rogue"
+name = "AI 10 CorruptRogue, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "CorruptRogue as a graph: AI 10 (CorruptRogue)."
+api = 1
+kind = "full"

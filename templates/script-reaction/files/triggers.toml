@@ -1,0 +1,12 @@
+version = 1
+
+[[trigger]]
+name = "Script reaction"
+on = "skill_used"
+while_stat = 12 # an existing stat: character level; becomes the argument
+
+[[trigger.action]]
+kind = "call_script"
+module = "reaction.luau"
+function = "react"
+argument = "lvl"

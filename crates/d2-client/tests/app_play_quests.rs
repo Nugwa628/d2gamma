@@ -159,7 +159,12 @@ fn akara_on_screen(app: &App) -> (u32, Point) {
     (key.guid, Point::new(x, y - 20))
 }
 
+/// A player's click: the pointer moves onto `at` and one frame draws its
+/// hover (a press reads the hover the previous frame drew), then the
+/// press and the release.
 fn click(app: &mut App, ms: &AtomicU32, at: Point) {
+    queue(app, UiEvent::CursorMoved(at));
+    step(app, ms, 1);
     for button in [true, false] {
         let e = if button {
             UiEvent::Press {
@@ -228,13 +233,9 @@ fn open_akara_menu(app: &mut App, ms: &AtomicU32, wire: &Arc<Mutex<Wire>>) -> u3
         }
     }
     assert!(sent(wire) > before, "C→S 0x13 on Akara: {:?}", ids(wire));
-    // The 0x28 and the menu box (built at the next UI frame).
-    for _ in 0..50 {
-        step(app, ms, 1);
-        if app_support::npc_menu_len(app) > 0 {
-            break;
-        }
-    }
+    // The 0x28 and the menu box (built at the next UI frame), after the
+    // greeting.
+    app_support::until_npc_menu(app, 400, |app| step(app, ms, 1));
     step(app, ms, 2);
     guid
 }
@@ -257,14 +258,18 @@ fn quest_messages(wire: &Arc<Mutex<Wire>>) -> Vec<(u32, u32)> {
 
 #[test]
 #[ignore = "real data: needs D2_GAME_DIR (tools/realdata-gate.sh)"]
-fn talking_to_akara_twice_starts_the_den_of_evil() {
+fn talking_to_akara_starts_the_den_of_evil() {
     let ms = Arc::new(AtomicU32::new(1000));
     let wire = Arc::new(Mutex::new(Wire::default()));
     let (mut app, _server) = play_app(&ms, &wire);
     assert_eq!(client_record(&app)[2] & 0x04, 0, "Den not started yet");
-    // First talk: the server starts the interaction (S→C 0x27 / 0x29 /
-    // 0x28), the client answers C→S 0x2F and the quest message 0x31 of
-    // the list (Akara's introduction, string 12), then closes the chat.
+    // The talk: the server starts the interaction (S→C 0x27 / 0x29 /
+    // 0x28) and the client answers C→S 0x2F. The 0x27 list holds the Den
+    // of Evil (message 64, `quest-messages.tsv`) and Akara's introduction
+    // (string 12); the greeting plays every line of the list, one after
+    // the other with its quest message 0x31, before the menu opens: the
+    // introduction, then the Den, on which the server starts the quest.
+    // Cancel then closes the chat.
     let guid = talk_to_akara(&mut app, &ms, &wire);
     let mut chat = vec![0x2F];
     chat.extend_from_slice(&1u32.to_le_bytes());
@@ -274,14 +279,12 @@ fn talking_to_akara_twice_starts_the_den_of_evil() {
         "C→S 0x2F: {:?}",
         ids(&wire)
     );
-    assert_eq!(quest_messages(&wire), [(guid, 12)]);
+    assert_eq!(quest_messages(&wire), [(guid, 12), (guid, 64)]);
     let mut end = vec![0x30];
     end.extend_from_slice(&1u32.to_le_bytes());
     end.extend_from_slice(&guid.to_le_bytes());
     assert!(wire.lock().unwrap().sent.contains(&end), "C→S 0x30");
-    // Second talk: the list now carries the Den of Evil (message 64,
-    // `quest-messages.tsv`); the server starts the quest on it:
-    // slot 1 bit 2 in the record S→C 0x28 sends.
+    // A second talk has no line left to play.
     talk_to_akara(&mut app, &ms, &wire);
     assert_eq!(quest_messages(&wire), [(guid, 12), (guid, 64)]);
 }
@@ -328,8 +331,7 @@ fn the_quest_log_shows_the_started_den_of_evil() {
         "nothing started: {before:?}"
     );
     press_q(&mut app, &ms);
-    // Akara twice (introduction, then the Den of Evil), then the log.
-    talk_to_akara(&mut app, &ms, &wire);
+    // Akara (her introduction, then the Den of Evil), then the log.
     talk_to_akara(&mut app, &ms, &wire);
     press_q(&mut app, &ms);
     let rows = log_rows(&app);

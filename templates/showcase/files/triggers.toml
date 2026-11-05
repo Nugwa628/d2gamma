@@ -1,0 +1,10 @@
+version=1
+[[trigger]]
+name="Lantern Ward fades"
+on="state_end"
+state=186
+while_skill=357
+[[trigger.action]]
+kind="call_script"
+module="ward.luau"
+function="expired"

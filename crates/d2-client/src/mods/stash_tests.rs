@@ -88,6 +88,7 @@ fn with_ctx<R>(f: impl FnOnce(&StashCtx) -> R) -> R {
         fonts: None,
         mouse: Point::new(0, 0),
         cursor: Some(5),
+        shared: None,
     };
     f(&ctx)
 }

@@ -57,8 +57,13 @@ fn errors(f: &[Finding]) -> Vec<&Finding> {
 #[ignore = "needs original game files in D2_GAME_DIR"]
 fn g1_rows_render_identity_and_empty_diff() {
     let b = base();
-    assert_eq!(b.tables.len(), 85);
-    let rows: usize = b.tables.iter().map(|t| t.rows.len()).sum();
+    assert_eq!(b.tables.len(), 86);
+    let rows: usize = b
+        .tables
+        .iter()
+        .filter(|t| t.name() != "soundenviron")
+        .map(|t| t.rows.len())
+        .sum();
     assert_eq!(rows, 21_632);
     for t in &b.tables {
         let (_, bytes) = read_excel(set(), &t.rules.txt_name).unwrap().unwrap();
@@ -291,4 +296,71 @@ addcol xweather text clear",
     );
     assert_eq!(r.ext.ext("levels", 1, "xbonus"), None);
     assert!(plain.ext.is_empty());
+}
+
+#[test]
+#[ignore = "needs game files in D2_GAME_DIR"]
+fn modkit_base_references_and_empty_mod_are_unchanged() {
+    assert!(d2_data::patch::check_references(base(), base()).is_empty());
+    let mut data = base().clone();
+    assert!(apply_stack(&mut data, &[], "empty.d2stack").is_empty());
+    let result = compile_patched(base(), &data, live());
+    assert!(result.findings.is_empty(), "{:?}", result.findings);
+    let patched = result.live.unwrap();
+    for (a, b) in patched.tables.iter().zip(&live().tables) {
+        assert_eq!(a.records, b.records, "{}", a.name);
+    }
+    let sizes = d2_data::links::LinkerSizes::from_tables(
+        live()
+            .tables
+            .iter()
+            .chain(&d2_data::links::load_lookups(set()).unwrap()),
+    );
+    let report = d2_data::links::validate(&patched.tables, &sizes);
+    assert!(report.broken.is_empty(), "{:?}", report.broken);
+}
+
+#[test]
+#[ignore = "needs game files in D2_GAME_DIR"]
+fn modkit_runtime_sound_tables_are_patchable() {
+    let base = base();
+    let mut data = base.clone();
+    for name in ["sounds", "soundenviron"] {
+        let t = data.table(name).unwrap();
+        let c = t
+            .header
+            .iter()
+            .position(|h| {
+                h.eq_ignore_ascii_case(if name == "sounds" {
+                    b"Volume"
+                } else {
+                    b"Event Delay"
+                })
+            })
+            .unwrap();
+        let key = String::from_utf8(d2_data::patch::canonical_token(t.key(0))).unwrap();
+        let column = String::from_utf8(d2_data::patch::canonical_token(&t.header[c])).unwrap();
+        let old = String::from_utf8(d2_data::patch::canonical_token(&t.rows[0].cells[c])).unwrap();
+        let next = if t.rows[0].cells[c] == b"1" { "2" } else { "1" };
+        let text = format!("d2patch 1\ntable {name}\nset #0 {key} {column} {old} -> {next}\n");
+        let (layer, errors) = parse_layer("sound.d2patch", text.as_bytes(), 1);
+        assert!(errors.is_empty());
+        assert!(!has_errors(&apply_stack(
+            &mut data,
+            &[layer],
+            "sound.d2stack"
+        )));
+    }
+    let compiled = compile_patched(base, &data, live());
+    assert!(!has_errors(&compiled.findings), "{:?}", compiled.findings);
+    let loaded = compiled.live.unwrap();
+    assert_eq!(loaded.sounds.header, data.table("sounds").unwrap().header);
+    assert_eq!(
+        loaded.sounds.records[0].cells,
+        data.table("sounds").unwrap().rows[0].cells
+    );
+    assert_eq!(
+        loaded.soundenviron.records[0].cells,
+        data.table("soundenviron").unwrap().rows[0].cells
+    );
 }

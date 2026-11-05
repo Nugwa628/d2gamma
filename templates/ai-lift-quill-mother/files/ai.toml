@@ -1,0 +1,31 @@
+version = 1
+
+# monstats aip1..aip4 of the quillbear1 row 313 (Normal): 60, 50, 16, 15. The body has one more branch, for the AI state the game
+# sets on a monster (state 3 or 19): it orders its minions to the target and goes at it. A graph has no such state, so it is left out.
+[[ai]]
+index = 75
+name = "QuillMother (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "guard"
+
+# In reach: aip1 = 60% swing, else stand aip3 = 16 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 60 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.64
+when = [{ kind = "in_melee" }]
+
+# Out of reach: aip2 = 50% walk toward the target, else stand aip4 = 15 frames.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 50 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6

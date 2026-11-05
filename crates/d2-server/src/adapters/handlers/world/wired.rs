@@ -845,6 +845,8 @@ impl<R: TradeRest + Default + 'static, S> WiredWorld<R, S> {
             self.corpse_fill(game, events);
         }
         self.collect_sent(events);
+        self.mod_pickups(game, events);
+        self.collect_sent(events);
         {
             let _span = crate::perf::span("world.pet_deaths");
             self.pet_deaths(game, events);
@@ -986,6 +988,43 @@ impl<R: TradeRest + Default + 'static, S> WiredWorld<R, S> {
             return;
         };
         debug_assert!(faults.is_empty(), "corpse fill: {faults:?}");
+        for (unit, bytes) in sent {
+            if let Some(u) = unit {
+                self.inv_sent.push((u, bytes));
+            }
+        }
+    }
+
+    /// The ground pickups a mod game's event hooks asked for
+    /// (`ActionHooks::mod_pickups`): each runs the engine's own pickup into
+    /// the inventory (`d2_sim::items::moves::ground::pickup_auto`, with its
+    /// refusals). A host without the inventory model drops the queue.
+    pub fn mod_pickups<D: ActionEvents>(&mut self, game: &mut Game, events: &mut D)
+    where
+        Self: WorldHost<D>,
+    {
+        let hooks = &mut events.action().sys;
+        let q = std::mem::take(&mut hooks.hooks.mod_pickups);
+        if q.is_empty() || self.inventory.is_none() {
+            return;
+        }
+        let picks: Vec<_> = q
+            .into_iter()
+            .filter_map(|(p, i)| {
+                Some((
+                    d2_sim::items::moves::Owner::player(hooks.units.get(p)?.guid),
+                    hooks.units.get(i)?.guid,
+                ))
+            })
+            .collect();
+        let Some((faults, sent)) = self.moves(
+            game,
+            events,
+            super::super::items::moves::PickupRun { picks },
+        ) else {
+            return;
+        };
+        debug_assert!(faults.is_empty(), "mod pickups: {faults:?}");
         for (unit, bytes) in sent {
             if let Some(u) = unit {
                 self.inv_sent.push((u, bytes));
@@ -1514,7 +1553,7 @@ where
             // The players' quest flags of the game's difficulty, staged
             // for the quest-item uses of 0x20 (`ass`, `xyz`, `tr2`) and
             // written back after the call.
-            let difficulty = usize::from(econ.fields.difficulty).min(2);
+            let difficulty = usize::from(econ.fields.difficulty);
             let mut flags = Vec::new();
             let mut by_owner = Vec::new();
             for u in econ

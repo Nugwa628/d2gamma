@@ -1,0 +1,33 @@
+version = 1
+
+# monstats aip1..aip3 of the wraith5 row and wraith6 to 9 (Normal): 90, 4, 90.
+# (wraith1 to wraith4 have their own numbers: 50/12/70, 60/10/75, 70/8/80, 80/6/85.)
+[[ai]]
+index = 9
+name = "Wraith (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "haunt"
+
+# In reach: aip3 = 90% swing.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 90 }]
+
+# and else stand aip2 = 4 frames.
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.16
+when = [{ kind = "in_melee" }]
+
+# Out of reach: aip1 = 90% float toward the target. The body floats in hops of up to 12 (walk in radius of the target) and
+# decides again after each; the graph's walk goes all the way.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 90 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.16

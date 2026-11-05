@@ -65,6 +65,7 @@ use d2_formats::font::{FontTable, Glyph};
 use d2_formats::palette::{Palette, Rgb};
 use d2_server::seams::Clock;
 use d2_sim::rng::Seed;
+use d2_sim::tick::TickRate;
 
 use crate::app_support;
 
@@ -123,23 +124,30 @@ fn frame_loop_shakes_on_the_tick_time_base() {
         Box::new(feed),
     ));
     app.update();
-    for _ in 0..3 {
-        ms.fetch_add(40, Ordering::SeqCst);
+    // One game tick per pair of updates: the clock steps to the end of
+    // each tick at the game's rate, the second update has no tick due.
+    let rate = TickRate::GAME;
+    for k in 1..=3 {
+        let tick_ms = rate.ms_for_ticks(k) - rate.ms_for_ticks(k - 1);
+        ms.fetch_add(tick_ms as u32, Ordering::SeqCst);
         app.update();
         app.update();
     }
     assert_eq!(bridge(&app).0.world().server_ticks, 3);
 
-    // Ticks 1–3: t = 40, 80, 120 ms → a = 4, 8, 10; two draws each on the
-    // player seed, once per drawn frame. The presented frame is tick 3's,
-    // its origins moved by the third pair of offsets.
+    // Ticks 1–3 at 60 Hz: t = 16, 33, 50 ms → a = 1, 3, 5; two draws each
+    // on the player seed, once per drawn frame. The presented frame is
+    // tick 3's, its origins moved by the third pair of offsets.
+    let amplitude = |k: u32| shake.amplitude(Shake::time_at(k, rate)).unwrap();
+    assert_eq!((1..=3).map(amplitude).collect::<Vec<_>>(), [1, 3, 5]);
     let mut reference = seed;
     let mut offsets = (0, 0);
-    for a in [4, 8, 10] {
-        offsets = d2_client::rules::camera::shake_offsets(a, &mut reference);
+    for k in 1..=3 {
+        offsets = d2_client::rules::camera::shake_offsets(amplitude(k), &mut reference);
     }
     let world = ClientWorld {
         server_ticks: 3,
+        tick_rate: rate,
         ..ClientWorld::default()
     };
     let mut at_tick_2 = TestFeed {
@@ -147,8 +155,8 @@ fn frame_loop_shakes_on_the_tick_time_base() {
         seed,
         ..TestFeed::default()
     };
-    for a in [4, 8] {
-        d2_client::rules::camera::shake_offsets(a, &mut at_tick_2.seed);
+    for k in 1..=2 {
+        d2_client::rules::camera::shake_offsets(amplitude(k), &mut at_tick_2.seed);
     }
     let cam = d2_client::world_view::frame_camera(&world, &mut at_tick_2)
         .unwrap()
@@ -164,8 +172,8 @@ fn frame_loop_shakes_on_the_tick_time_base() {
         seed,
         ..TestFeed::default()
     };
-    for a in [4, 8] {
-        d2_client::rules::camera::shake_offsets(a, &mut fresh.seed);
+    for k in 1..=2 {
+        d2_client::rules::camera::shake_offsets(amplitude(k), &mut fresh.seed);
     }
     let frame = build_frame(&world, &[], &TestRules, &mut fresh, &a).unwrap();
     let want = compose_cpu(&frame, &a).unwrap();
@@ -448,9 +456,10 @@ fn gpu_node_composes_the_frame_into_the_presented_texture() {
         .count();
     assert_eq!(differ, 0, "pixels differing from the CPU reference");
 
-    // Each next frame waits for the previous frame's indices (the frame
-    // cycle's base): the node keeps composing only if
-    // the readback reaches the cycle.
+    // Each next frame is composed over the previous frame's indices: in
+    // live play the node keeps the previous job's output on the GPU and
+    // composes over it while that job's read-back is still on its way
+    // (the main world's `FrameCycle` only counts those frames).
     for _ in 0..120 {
         if app.world().resource::<NodeRuns>().get() >= 4 {
             break;
@@ -460,13 +469,34 @@ fn gpu_node_composes_the_frame_into_the_presented_texture() {
     }
     assert!(
         app.world().resource::<NodeRuns>().get() >= 4,
-        "the frame cycle advanced through the index readback"
+        "the node composed frame after frame"
     );
-    let cycle = app.world().resource::<WorldViewState>().cycle.clone();
-    assert_eq!(
-        cycle.pixels(),
-        &d2_client::scene::compose(&frame.items, &a.frames, &a.maps, VIEW).unwrap()[..],
-        "a static frame over its own previous frame"
+    let image = app.world().resource::<WorldViewTarget>().image.clone();
+    let sink = captured.clone();
+    app.world_mut().spawn(Readback::texture(image)).observe(
+        move |ev: On<ReadbackComplete>, mut commands: Commands| {
+            let mut s = sink.lock().unwrap();
+            if s.is_none() {
+                *s = Some(ev.data.clone());
+                commands.entity(ev.entity).despawn();
+            }
+        },
+    );
+    for _ in 0..60 {
+        if captured.lock().unwrap().is_some() {
+            break;
+        }
+        ms.fetch_add(40, Ordering::SeqCst);
+        app.update();
+    }
+    let data = captured
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the later presented texture was read back");
+    assert!(
+        unpad(&data, VIEW.width, VIEW.height) == want,
+        "a static frame over its own previous frame presents the same picture"
     );
 }
 
@@ -736,9 +766,12 @@ fn frame_loop_uses_the_frame_store_text_layout_and_sound_pool() {
     app.update();
     let audio_stats = app.world().resource::<GameAudio>().stats.clone();
     assert_eq!((audio_stats.frame, audio_stats.presented), (1, 0));
-    // Frames 2–3: a tick each; tick 1 presented released both starts.
-    for _ in 0..2 {
-        ms.fetch_add(40, Ordering::SeqCst);
+    // Frames 2–3: a tick each (the clock steps one tick at the game's
+    // rate); tick 1 presented released both starts.
+    let rate = TickRate::GAME;
+    for k in 1..=2 {
+        let tick_ms = rate.ms_for_ticks(k) - rate.ms_for_ticks(k - 1);
+        ms.fetch_add(tick_ms as u32, Ordering::SeqCst);
         app.update();
     }
     assert_eq!(bridge(&app).0.world().server_ticks, 2);
@@ -851,7 +884,8 @@ fn placeholder_hooks_refuse_text_and_sounds() {
 }
 
 /// The same loop on the user's levels (drlg-data providers): the game
-/// builds from `D2_GAME_DIR`, the server ticks 100 times without error.
+/// builds from `D2_GAME_DIR`, the server ticks for 4 s (100 updates of
+/// 40 ms) without error.
 #[test]
 #[ignore = "needs the game files in D2_GAME_DIR"]
 fn frame_loop_runs_on_the_users_levels() {
@@ -874,7 +908,11 @@ fn frame_loop_runs_on_the_users_levels() {
         ms.fetch_add(40, Ordering::SeqCst);
         app.update();
     }
+    // 4 s at the game's 60 Hz is 240 ticks, each pumped as a bridge frame
+    // of its own after the first update's.
+    let ticks = u64::from(TickRate::GAME.ticks_for_ms(100 * 40));
+    assert_eq!(ticks, 240);
     let w = bridge(&app).0.world();
-    assert_eq!((w.frames, w.server_ticks), (101, 100));
+    assert_eq!((w.frames, w.server_ticks), (ticks + 1, ticks));
     assert!(w.in_game && w.local_player.is_some());
 }

@@ -1,4 +1,3 @@
-// Spec: specs/sim/stat-lists.md; specs/sim/stats.md §4, §6
 //! Stat lists: plain and extended records, flags, sorted stat arrays,
 //! allocation, base writes, total recomputation, value-change callbacks,
 //! attached chains, expiry and the modified-stat array.
@@ -204,6 +203,9 @@ struct List {
     parent: Option<ListId>,
     /// +0x38.
     remove_callback: Option<RemoveCallback>,
+    /// The stack count of a state list of a state with stack rules (the mod
+    /// kit's `states.toml`); 0 for every other list.
+    stacks: u16,
     ext: Option<Extended>,
 }
 
@@ -317,6 +319,7 @@ impl StatLists {
             next: None,
             parent: None,
             remove_callback: None,
+            stacks: 0,
             ext: None,
         })
     }
@@ -350,6 +353,7 @@ impl StatLists {
             next: None,
             parent: None,
             remove_callback: None,
+            stacks: 0,
             ext: Some(Extended {
                 active: None,
                 parked: None,
@@ -474,6 +478,34 @@ impl StatLists {
         let Some(list) = self.try_lm(l) else { return };
         list.skill = skill;
         list.skill_level = level;
+    }
+
+    /// The stack count of a state list with stack rules; 0 for a list that
+    /// has none.
+    pub fn stacks(&self, l: ListId) -> u16 {
+        self.try_l(l).map_or(0, |l| l.stacks)
+    }
+
+    pub fn set_stacks(&mut self, l: ListId, stacks: u16) {
+        if let Some(list) = self.try_lm(l) {
+            list.stacks = stacks;
+        }
+    }
+
+    /// The lists of `unit` that carry a timed state whose expiry frame is
+    /// `frame` or before, oldest first: what the expiry walk of that frame
+    /// would free.
+    pub fn due_state_lists(&self, unit: UnitId, frame: i32) -> Vec<ListId> {
+        let Some(r) = self.unit_list(unit).filter(|&r| self.is_extended(r)) else {
+            return Vec::new();
+        };
+        self.active_chain(r)
+            .into_iter()
+            .filter(|&c| {
+                let l = self.l(c);
+                l.flags & flag::NEWLENGTH != 0 && l.expire <= frame
+            })
+            .collect()
     }
 
     /// The remove callback (+0x38).
@@ -636,8 +668,65 @@ impl StatLists {
 
     // ---- evaluation ---------------------------------------
 
-    /// Evaluates an extended list's total without changing the lists.
+    /// Evaluate the native rules, then the mod's simultaneous transformations.
     pub fn eval(&self, host: &dyn StatHost, l: ListId, k: i32) -> i32 {
+        use super::named::{scaled, Kind};
+        let base = self.eval_native(host, l, k);
+        if super::key_layer(k) != 0
+            || !self.try_l(l).is_some_and(|list| {
+                list.ext.is_some() && matches!(list.owner_type, owner::PLAYER | owner::MONSTER)
+            })
+        {
+            return base;
+        }
+        let stat = key_stat(k);
+        let mut total = i128::from(base);
+        for operation in &self.data.stats.named.operations {
+            let source = self.eval_native(host, l, key(operation.source, 0));
+            let source_shift = self.data.stats.valshift(operation.source);
+            if operation.kind == Kind::Convert && operation.source == stat {
+                total -= i128::from(scaled(source, operation.percent, 0, 0));
+            }
+            if operation.target != stat {
+                continue;
+            }
+            let contribution = if let Some(of) = operation.of {
+                let of_value = self.eval_native(host, l, key(of, 0));
+                let numerator = i128::from(source)
+                    * i128::from(of_value)
+                    * i128::from(operation.percent)
+                    * (1i128 << self.data.stats.valshift(stat).min(31));
+                let denominator = 10000i128
+                    * (1i128 << source_shift.min(31))
+                    * (1i128 << self.data.stats.valshift(of).min(31));
+                (numerator / denominator).clamp(i128::from(i32::MIN), i128::from(i32::MAX)) as i32
+            } else {
+                scaled(
+                    source,
+                    operation.percent,
+                    source_shift,
+                    self.data.stats.valshift(stat),
+                )
+            };
+            total += i128::from(contribution);
+        }
+        total.clamp(i128::from(i32::MIN), i128::from(i32::MAX)) as i32
+    }
+
+    /// Refresh transformed totals after base writes and attachment changes.
+    fn refresh_named(&mut self, host: &mut dyn StatHost, l: ListId, unit: Option<UnitId>) {
+        if self.data.stats.named.targets().is_empty() {
+            return;
+        }
+        let targets = self.data.stats.named.targets().to_vec();
+        for target in targets {
+            let value = self.eval(host, l, key(target, 0));
+            self.set_full(host, l, key(target, 0), value, unit);
+        }
+    }
+
+    /// Evaluates an extended list's total without changing the lists.
+    fn eval_native(&self, host: &dyn StatHost, l: ListId, k: i32) -> i32 {
         let s = key_stat(k);
         let Some(list) = self.try_l(l) else { return 0 };
         let damagerelated = self.info(s).is_some_and(|i| i.damagerelated);
@@ -701,9 +790,20 @@ impl StatLists {
                         continue;
                     };
                     let x = if row.operand == Operand::OpbaseListTotal {
-                        self.raw_total(l, key(e.base, 0)).unwrap_or(0)
+                        if self.data.stats.named.targets().is_empty() {
+                            self.raw_total(l, key(e.base, 0)).unwrap_or(0)
+                        } else {
+                            self.eval_native(host, l, key(e.base, 0))
+                        }
                     } else {
-                        list.unit.map_or(0, |u| self.unit_total(u, e.base, 0))
+                        list.unit.map_or(0, |u| {
+                            if self.data.stats.named.targets().is_empty() {
+                                self.unit_total(u, e.base, 0)
+                            } else {
+                                self.unit_list(u)
+                                    .map_or(0, |r| self.eval_native(host, r, key(e.base, 0)))
+                            }
+                        })
                     };
                     let x = x >> binfo.valshift;
                     if x <= 0 {
@@ -715,7 +815,7 @@ impl StatLists {
             if row.contribution == Contribution::None {
                 continue;
             }
-            let r = self.eval(host, l, key(e.source, 0));
+            let r = self.eval_native(host, l, key(e.source, 0));
             if r == 0 {
                 continue;
             }
@@ -845,7 +945,10 @@ impl StatLists {
         let Some(info) = self.info(s) else {
             return;
         };
-        let (simple, damagerelated) = (!info.a51 && !info.a52, info.damagerelated);
+        let (simple, damagerelated) = (
+            !info.a51 && !info.a52 && self.data.stats.named.targets().is_empty(),
+            info.damagerelated,
+        );
         if d == 0 || !self.is_live(l) || self.l(l).flags & flag::SET != 0 {
             return;
         }
@@ -860,6 +963,7 @@ impl StatLists {
             } else {
                 self.recompute(host, c, k, unit);
             }
+            self.refresh_named(host, c, unit);
             let list = self.l(c);
             if list.flags & flag::SET != 0 || (damagerelated && list.flags & flag::DYNAMIC != 0) {
                 break;

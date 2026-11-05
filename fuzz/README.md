@@ -36,3 +36,12 @@ and `item_ids` (d2-item-registry's save ID reader over arbitrary item records
 and saves, with the unit tests' synthetic item tables). Their `seeds/` are
 synthetic: `seeds/ticket` hand-encoded bodies, `seeds/item_ids` written by
 `cargo run --release --bin mkmpseeds`.
+
+WD5 target `mod_network` covers the LCUI value/action/version decoders and both
+existing mod envelopes. `seeds/mod_network` contains synthetic raw and enveloped
+messages, including both legacy U3 and declared action requests:
+
+```
+cd fuzz
+cargo +nightly fuzz run mod_network seeds/mod_network -- -runs=20000 -max_len=512
+```

@@ -12,7 +12,9 @@
 //!   `size` the whole message's length ([`HEADER`] + the stats stream);
 //! - `op` is [`Op`]: the 0xA7, 0xA8 or 0xA9 form of the change. Only
 //!   [`Op::Set`] has a stats stream (0xA8's: the state list's entries, then
-//!   0x1FF).
+//!   0x1FF). [`Op::Stacks`] is not a change of the state bit: it tells the
+//!   unit's stack count of a state that has stacks (the mod kit's
+//!   `states.toml`), as a u16 after the header ([`stacks`], [`STACKS_SIZE`]).
 //!
 //! The id is valid only on a mod game's wire ([`Wire::Mod`]). On D2RUST's
 //! own wire ([`Wire::Original`]) it is refused like an unknown id, and
@@ -39,6 +41,9 @@ pub enum Op {
     Set = 1,
     /// 0xA9 EndState: the state off.
     End = 2,
+    /// The state's stack count, a u16 after the header; 0 means no stacks
+    /// shown. Sent after the state's set whenever the count changes.
+    Stacks = 3,
 }
 
 impl Op {
@@ -48,6 +53,7 @@ impl Op {
             0 => Some(Op::Delayed),
             1 => Some(Op::Set),
             2 => Some(Op::End),
+            3 => Some(Op::Stacks),
             _ => None,
         }
     }
@@ -70,6 +76,25 @@ pub fn encode(op: Op, unit_type: u8, guid: u32, state: u16, stats: &[u8]) -> Opt
     ];
     b.extend_from_slice(stats);
     Some(b)
+}
+
+/// Length of a [`Op::Stacks`] message: the header and a u16 count.
+pub const STACKS_SIZE: usize = HEADER + 2;
+
+/// The [`Op::Stacks`] message: `state` on the unit (`unit_type`, `guid`)
+/// has `count` stacks.
+pub fn stacks(unit_type: u8, guid: u32, state: u16, count: u16) -> Vec<u8> {
+    encode(Op::Stacks, unit_type, guid, state, &count.to_le_bytes())
+        .expect("a stack count message fits the size byte")
+}
+
+/// The stack count of a decoded [`Op::Stacks`] message; `None` for another
+/// op or a body that is not a u16.
+pub fn stack_count(m: &WideState<'_>) -> Option<u16> {
+    match (m.op, m.stats) {
+        (Op::Stacks, [lo, hi]) => Some(u16::from_le_bytes([*lo, *hi])),
+        _ => None,
+    }
 }
 
 /// One decoded wide state message.
@@ -123,8 +148,27 @@ mod tests {
         bad[6] = 11;
         assert!(decode(&bad).is_none());
         bad = end;
-        bad[7] = 3;
+        bad[7] = 4;
         assert!(decode(&bad).is_none());
+    }
+
+    #[test]
+    fn stack_counts_round_trip() {
+        let m = stacks(1, 0x0102_0304, 380, 513);
+        assert_eq!(m, [ID, 1, 4, 3, 2, 1, 12, 3, 0x7C, 0x01, 0x01, 0x02]);
+        assert_eq!(m.len(), STACKS_SIZE);
+        let d = decode(&m).unwrap();
+        assert_eq!(
+            (d.op, d.state, stack_count(&d)),
+            (Op::Stacks, 380, Some(513))
+        );
+        // Another op has no count; a short body has none either.
+        let set = encode(Op::Set, 1, 9, 380, &[1, 2]).unwrap();
+        assert_eq!(stack_count(&decode(&set).unwrap()), None);
+        let short = encode(Op::Stacks, 1, 9, 380, &[1]).unwrap();
+        assert_eq!(stack_count(&decode(&short).unwrap()), None);
+        assert_eq!(server_size_on(Wire::Mod, &m), Size::Bytes(STACKS_SIZE));
+        assert_eq!(server_size_on(Wire::Original, &m), Size::Invalid);
     }
 
     #[test]

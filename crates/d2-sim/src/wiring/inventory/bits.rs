@@ -11,7 +11,7 @@ use super::{InvDesk, InvRest};
 use crate::items::bitstream::{self, Kind, StatEntry, StreamItem};
 use crate::items::moves::Guid;
 use crate::items::ItemTables;
-use crate::items::{props, stat, ty, ListKey};
+use crate::items::{stat, ty, ListKey};
 use crate::stats::StatLists;
 use crate::stats::{key_layer, key_stat};
 use crate::units::lifecycle::LifecycleHooks;
@@ -84,7 +84,15 @@ impl<H: LifecycleHooks, R: InvRest + ?Sized> InvDesk<'_, '_, H, R> {
             .unwrap_or_default();
         let sockets = self.econ.stats.unit_total(u, STAT_SOCKETS, 0) as u8;
         let t = self.econ.tables;
-        props::runeword_row(t, it.record, it.quality, sockets, &fillers)
+        let stat = |s| self.econ.stats.unit_total(u, s, 0);
+        let item = crate::items::item_rules::RunewordItem {
+            record: it.record,
+            quality: it.quality,
+            sockets,
+            fillers: &fillers,
+            stat: &stat,
+        };
+        crate::items::item_rules::runeword_for(t, &item)
             .and_then(|row| t.runes.get(row))
             .map_or(0xFFFF, |w| w.name_id)
     }
@@ -125,7 +133,7 @@ impl<H: LifecycleHooks, R: InvRest + ?Sized> InvDesk<'_, '_, H, R> {
         };
         view.alt = alt;
         let mut w = bitstream::BitWriter::new(bitstream::BUFFER);
-        let wb = bitstream::write_into(&mut w, &view, &self.econ.tables.isc);
+        let wb = bitstream::write_into(&mut w, &view, self.econ.tables);
         if let Some(u) = self.item_unit(item) {
             self.queue_write_back(u, wb);
         }

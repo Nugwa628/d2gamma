@@ -45,6 +45,18 @@ pub trait EventHost {
     /// Queues the server message `bytes` to the client of `player` (a
     /// player without a client receives nothing).
     fn send(&mut self, player: UnitId, bytes: &[u8]);
+    /// Tells `player` a line of text, in the chat log as the game's own
+    /// notices appear. Nothing when the host has no chat to put it in.
+    fn say(&mut self, player: UnitId, text: &str) {
+        let _ = (player, text);
+    }
+    /// Publishes a transient integer `name` (1 to 128 characters of
+    /// `A-Z a-z 0-9 _ - / .`, the module part included) to `player`'s mod
+    /// panels, which bind to it as `var.<name>`. Nothing when the host has
+    /// no client to send it to.
+    fn ui_variable(&mut self, player: UnitId, name: &str, value: i32) {
+        let _ = (player, name, value);
+    }
     /// The game's own seed (the one its game-wide rolls draw from), for a
     /// hook's game-wide rolls; `None` when the host has none.
     fn game_seed(&mut self) -> Option<&mut Seed> {
@@ -82,6 +94,29 @@ pub trait EventHost {
     fn owner(&self, unit: UnitId) -> Option<UnitId> {
         let _ = unit;
         None
+    }
+    /// The units of type `ty` in `unit`'s level within `range` sub-tiles
+    /// of it on both axes (`unit` itself left out), in the unit lists'
+    /// order. Empty when the game can't tell.
+    fn units_near(&self, unit: UnitId, ty: UnitType, range: i32) -> Vec<UnitId> {
+        let _ = (unit, ty, range);
+        Vec::new()
+    }
+    /// Asks for `player` to pick up the ground item `item` (a gold pile
+    /// goes to the player's gold) as the engine's own pickup into the
+    /// inventory does, with its refusals; it runs when the hook returns.
+    /// `false`: the game can't pick up items at this point.
+    fn pick_up(&mut self, player: UnitId, item: UnitId) -> bool {
+        let _ = (player, item);
+        false
+    }
+    /// Gives `player` the waypoint `object` (it is learned for the game's
+    /// difficulty) and lights it if it is not lit yet, as operating it
+    /// does but without the waypoint menu. `false`: `object` is not a
+    /// waypoint, `player` is not a player, or the game has no waypoints.
+    fn learn_waypoint(&mut self, player: UnitId, object: UnitId) -> bool {
+        let _ = (player, object);
+        false
     }
     /// The monster's type; `None` for a unit that is not a monster.
     fn monster_type(&self, unit: UnitId) -> Option<MonsterType> {
@@ -146,6 +181,19 @@ pub trait EventHooks: Send + Sync + Debug {
     fn unit_killed(&self, h: &mut dyn EventHost, killer: Option<UnitId>, victim: UnitId) {
         let _ = (h, killer, victim);
     }
+    /// A skill of `owner` at skill level `level` made `pet` (a summon, a
+    /// raised or a revived monster), after D2RUST's whole skill function:
+    /// the pet's stats, skills and pet-list entry are set.
+    fn pet_summoned(
+        &self,
+        h: &mut dyn EventHost,
+        owner: UnitId,
+        pet: UnitId,
+        skill: i32,
+        level: i32,
+    ) {
+        let _ = (h, owner, pet, skill, level);
+    }
     /// How often [`EventHooks::periodic`] runs, in base ticks (25 a
     /// second, whatever the game's tick rate); 0: never.
     fn period(&self) -> u32 {
@@ -155,6 +203,18 @@ pub trait EventHooks: Send + Sync + Debug {
     /// tick.
     fn periodic(&self, h: &mut dyn EventHost) {
         let _ = h;
+    }
+    /// Runs just before [`EventHooks::periodic`], with the players' items
+    /// the server holds (the event host has no inventories): the hook may
+    /// count and give items. Only a server with item access calls it.
+    fn item_pass(&self, items: &mut dyn super::stash::ItemHost) {
+        let _ = items;
+    }
+    /// Cumulative item quantities created minus consumed by these hooks in
+    /// this game, keyed by item code. Diagnostic checks compare successive
+    /// snapshots; only successful inventory operations belong here.
+    fn item_balance(&self) -> std::collections::BTreeMap<[u8; 4], i64> {
+        Default::default()
     }
     /// `player` entered level `to`, from level `from` (`None`: the
     /// player's first level in the game), after D2RUST's level change.

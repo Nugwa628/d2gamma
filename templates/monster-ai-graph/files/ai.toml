@@ -1,0 +1,103 @@
+version = 1
+
+# The monstats `AI` value this graph answers. Give your monster's row
+# `ai = 200`; every other monster keeps the AI it has today.
+[[ai]]
+index = 200
+name = "Stalker"
+target = "enemy"
+start = "stalk"
+
+[[ai.cooldown]]
+name = "leap"
+seconds = 6
+
+[[ai.cooldown]]
+name = "howl"
+seconds = 20
+
+# Close in. Within reach, fight; hurt, call the pack; nearly dead, run.
+[[ai.state]]
+name = "stalk"
+
+[[ai.state.transition]]
+to = "flee"
+when = [{ kind = "life_below", percent = 20 }]
+
+[[ai.state.transition]]
+to = "fight"
+when = [{ kind = "in_melee" }]
+
+# Call the pack once in a while (an instant action: the turn goes on).
+[[ai.state.action]]
+kind = "call_allies"
+radius = 20
+when = [{ kind = "life_below", percent = 70 }, { kind = "cooldown_ready", name = "howl" }]
+starts_cooldown = "howl"
+
+# Telegraph the leap for half a second, then use the monster's Skill2.
+[[ai.state.action]]
+kind = "wind_up"
+seconds = 0.5
+event = "leap"
+when = [
+  { kind = "cooldown_ready", name = "leap" },
+  { kind = "distance_below", value = 14 },
+  { kind = "line_of_sight" },
+]
+
+[[ai.state.action]]
+kind = "use_skill"
+slot = 2
+when = [{ kind = "cooldown_ready", name = "leap" }, { kind = "distance_below", value = 14 }]
+starts_cooldown = "leap"
+
+[[ai.state.action]]
+kind = "move_to"
+run = true
+
+[[ai.state]]
+name = "fight"
+
+[[ai.state.transition]]
+to = "flee"
+when = [{ kind = "life_below", percent = 20 }]
+
+[[ai.state.transition]]
+to = "stalk"
+when = [{ kind = "distance_above", value = 6 }]
+
+[[ai.state.action]]
+kind = "attack"
+when = [{ kind = "in_melee" }]
+
+[[ai.state.action]]
+kind = "move_around"
+steps = 3
+when = [{ kind = "random", percent = 25 }]
+
+[[ai.state.action]]
+kind = "move_to"
+
+[[ai.state]]
+name = "flee"
+
+[[ai.state.transition]]
+to = "stalk"
+when = [{ kind = "life_above", percent = 50 }]
+
+[[ai.state.action]]
+kind = "flee"
+
+# A second monster: one of D2Gamma's own AIs by name, with its knobs changed.
+# Give its monstats row `ai = 201`. The names of the presets and their
+# parameters are listed in docs/modkit/ai.md.
+[[ai]]
+index = 201
+name = "Eager Zombie"
+preset = "Zombie"
+
+[ai.params]
+approach = 70            # chance to close in, percent
+aware_dist = [8, 12, 16] # Normal, Nightmare, Hell
+att1_att2 = 60

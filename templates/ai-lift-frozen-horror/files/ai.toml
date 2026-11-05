@@ -1,0 +1,45 @@
+version = 1
+
+# monstats aip1..aip4 of the frozenhorror1 row 502: 60, 40, 60, 10. Skill 1 is Horror Arctic Blast at skill level 4 (monstats Sk1lvl).
+# The body casts when the target is nearer than that skill level, so 4 here; and it clears the blast's state (the inferno state)
+# at the start of the next think, which the first action does.
+[[ai]]
+index = 124
+name = "FrozenHorror (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "chill"
+
+# The blast: under 4 subtiles, aip3 = 60 percent, not while the blast is on.
+[[ai.state.action]]
+kind = "use_skill"
+slot = 1
+when = [{ kind = "distance_below", value = 4 }, { kind = "random", percent = 60 }, { kind = "lacks_state", state = 12 }]
+
+# Its state is cleared at the start of the next think (instant: the actions after it go on).
+[[ai.state.action]]
+kind = "set_state"
+state = 12
+on = false
+when = [{ kind = "has_state", state = 12 }]
+
+# In reach: aip1 = 60 percent swing, else stand aip4 = 10 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 60 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4
+when = [{ kind = "in_melee" }]
+
+# Out of reach: aip2 = 40 percent walk at the target.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 40 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4

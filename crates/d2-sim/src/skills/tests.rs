@@ -772,6 +772,27 @@ fn learning_rules() {
     assert_eq!(f.log.last().unwrap(), "addskill 0 1 1");
 }
 
+/// A point costs 1 without a `skpoints` formula, else the formula's value;
+/// an id without a row has no cost.
+#[test]
+fn skill_point_cost_reads_the_skpoints_formula() {
+    let mut a = skill_rec();
+    a.skpoints = 0;
+    let mut t = skill_tables(vec![a, skill_rec()]);
+    // `skpoints` at offset 0 of `skillscode`: the constant 2.
+    t.skills_code = vec![0x07, 2, 0x00];
+    let mut f = Fake::default();
+    let u = f.add(FUnit::new(UnitType::Player, 1));
+    assert_eq!(skill_point_cost(&mut f, &t, u, 0), Some(2));
+    assert_eq!(skill_point_cost(&mut f, &t, u, 1), Some(1));
+    assert_eq!(skill_point_cost(&mut f, &t, u, 9), None);
+    // Spending takes the formula's cost.
+    f.units[u].base.insert((5, 0), 1);
+    assert!(!spend_skill_point(&mut f, &t, u, 0));
+    f.units[u].base.insert((5, 0), 2);
+    assert!(spend_skill_point(&mut f, &t, u, 0));
+}
+
 // ------------------------------------------------------------ game files
 
 /// Real base-game `skills.txt` vectors. Needs the
@@ -842,6 +863,7 @@ pub(crate) mod game_loader {
             miss_code: read("misscode.bin"),
             level_cap: super::super::LEVEL_CAP_114D,
             stat_count: table("itemstatcost", d2_data::tables::Itemstatcost::SIZE).count as i32,
+            data_rules: d2_data::bin::DataRules::Original,
         }
     }
 }

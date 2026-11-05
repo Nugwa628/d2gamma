@@ -17,6 +17,7 @@
 //! Mana formulas come from [`super::levels`].
 
 pub mod bodies;
+pub mod form;
 pub mod item_type;
 pub mod table;
 
@@ -178,8 +179,12 @@ pub trait UseMissiles: ManaUnits {
 /// `d2-server` (messages), items
 /// (inventory, equippable).
 pub trait UseWorld: UseMissiles + SkillFunctions {
+    /// A cast passed the core start checks, before its start body runs.
+    fn cast_started(&mut self, _u: Self::Unit, _skill: i32) {}
     /// Diagnostic notification after a successful skill start.
     fn record_cast(&mut self, _skill: i32) {}
+    /// The unit's use of `skill` at level `l` did something ([`do_skill`]).
+    fn skill_done(&mut self, _u: Self::Unit, _skill: i32, _l: i32) {}
     // ---- game, messages
     /// Game frame (game +0xA8).
     fn frame(&self) -> i32;
@@ -259,6 +264,12 @@ pub trait UseWorld: UseMissiles + SkillFunctions {
     /// Smallest positive expire frame of the unit's type-1
     /// timers, 0 if none.
     fn endanim_expire(&self, u: Self::Unit) -> i32;
+    /// The unit's current cast has passed its uninterruptible point (the
+    /// `cast` rules; [`crate::skills::cast_point`]). Default: never.
+    fn cast_committed(&self, u: Self::Unit) -> bool {
+        let _ = u;
+        false
+    }
     /// A plain mode set (reenter 1, no gates).
     fn set_mode(&mut self, u: Self::Unit, mode: u32);
     /// The mode's start: set mode, target, the unit's update,
@@ -740,6 +751,10 @@ pub fn interrupt_gate<W: UseWorld>(
     if same && matches!(r.srvdofunc, 67 | 76) {
         return true;
     }
+    // A cast past its point is not replaced by a new action.
+    if w.cast_committed(u) {
+        return false;
+    }
     if !r.interrupt {
         if cur == mode::NU {
             w.set_mode(u, mode::NU);
@@ -1057,6 +1072,7 @@ fn start_core_with<W: UseWorld>(
     if r.srvstfunc >= table::START_SLOTS && !modded {
         return 0;
     }
+    w.cast_started(u, skill);
     if table::lookup(table::Kind::Start, r.srvstfunc).is_none() && !modded {
         w.record_cast(skill);
         return 1;
@@ -1085,6 +1101,9 @@ fn start_core_with<W: UseWorld>(
 pub fn do_skill<W: UseWorld>(w: &mut W, t: &SkillTables, u: W::Unit, skill: i32, l: i32) -> i32 {
     let r = do_core(w, t, u, skill, l, true, false, false);
     schedule_periodic(w, t, u, skill, l, false);
+    if r != 0 {
+        w.skill_done(u, skill, l);
+    }
     r
 }
 

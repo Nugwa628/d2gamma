@@ -27,28 +27,28 @@ use d2_sim::world::waypoints::{WaypointRecord, WaypointRecords};
 
 /// Stat ids the load reads or writes.
 pub mod stat {
-    /// Current hitpoints.
-    pub const HITPOINTS: u16 = 6;
-    /// Current mana.
-    pub const MANA: u16 = 8;
-    /// Current stamina.
-    pub const STAMINA: u16 = 10;
-    /// Maximum stamina.
-    pub const MAXSTAMINA: u16 = 11;
-    /// Character level.
-    pub const LEVEL: u16 = 12;
-    /// Gold carried.
-    pub const GOLD: u16 = 14;
-    /// Gold in the stash.
-    pub const GOLDBANK: u16 = 15;
-    /// Experience needed for the next level.
-    pub const NEXTEXP: u16 = 30;
-    /// Velocity percent (reset to 100 after a load).
-    pub const VELOCITYPERCENT: u16 = 67;
     /// Attack rate percent (reset to 100 after a load).
-    pub const ATTACKRATE: u16 = 68;
+    pub use d2_sim::stats::ids::ATTACKRATE;
+    /// Gold carried.
+    pub use d2_sim::stats::ids::GOLD;
+    /// Gold in the stash.
+    pub use d2_sim::stats::ids::GOLDBANK;
+    /// Current hitpoints.
+    pub use d2_sim::stats::ids::HITPOINTS;
+    /// Character level.
+    pub use d2_sim::stats::ids::LEVEL;
+    /// Current mana.
+    pub use d2_sim::stats::ids::MANA;
+    /// Maximum stamina.
+    pub use d2_sim::stats::ids::MAXSTAMINA;
+    /// Experience needed for the next level.
+    pub use d2_sim::stats::ids::NEXTEXP;
     /// Other animation rate percent (reset to 100 after a load).
-    pub const OTHER_ANIMRATE: u16 = 69;
+    pub use d2_sim::stats::ids::OTHER_ANIMRATE;
+    /// Current stamina.
+    pub use d2_sim::stats::ids::STAMINA;
+    /// Velocity percent (reset to 100 after a load).
+    pub use d2_sim::stats::ids::VELOCITYPERCENT;
 }
 
 /// Iron Golem skill: a saved golem item needs the player to have it.
@@ -306,6 +306,16 @@ pub fn load(
     ctx: &LoadContext,
     w: &mut dyn CharacterWorld,
 ) -> Result<LoadReport, LoadError> {
+    load_with_town(save, ctx, w, None)
+}
+
+/// Loads the independent town byte of a data mod difficulty.
+pub fn load_with_town(
+    save: &D2s,
+    ctx: &LoadContext,
+    w: &mut dyn CharacterWorld,
+    town: Option<u8>,
+) -> Result<LoadReport, LoadError> {
     let mut r = LoadReport::default();
     let Some(body) = &save.body else {
         // The stub: the client act stays 0 (no header step runs), so
@@ -314,7 +324,11 @@ pub fn load(
     };
     // The header step allocates the player, which runs the player init.
     note(&mut r, w.player_skills());
-    let h = header_load(&save.header, ctx);
+    let mut h = header_load(&save.header, ctx);
+    if let Some(t) = town {
+        h.act = t & 0x7F;
+        h.map_seed = (t & 0x80 != 0 && ctx.map_seed_applies).then_some(save.header.map_seed);
+    }
     r.act = h.act;
     // Left first, then right; skill 0 (Attack) is
     // never selected there. A decoded "no item" (-1) is a class entry.

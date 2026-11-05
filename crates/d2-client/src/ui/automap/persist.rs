@@ -15,9 +15,17 @@ pub const MAP_VERSION: u32 = 0xC;
 pub const MAP_BYTES: usize = 0x18;
 /// Slots of the index (`.ma0`–`.ma3`).
 pub const SLOTS: usize = 4;
-/// Entries of a data file's offset table (indexed by layer id).
+/// Entries of a data file's offset table (indexed by layer id) when the
+/// level data has no layer past them; a data set with higher layers grows
+/// the table to fit them ([`table_entries`]).
 pub const TABLE_ENTRIES: usize = 100;
 pub const TABLE_BYTES: usize = TABLE_ENTRIES * 4;
+
+/// The offset table's entry count for a level table whose highest layer id
+/// is `max_layer`: [`TABLE_ENTRIES`] or more, one per layer id.
+pub fn table_entries(max_layer: Option<u32>) -> usize {
+    max_layer.map_or(0, |m| m as usize + 1).max(TABLE_ENTRIES)
+}
 /// A record header: eight u32.
 pub const RECORD_HEADER: usize = 32;
 /// One stored cell: (cel, x, y) i16.
@@ -131,37 +139,58 @@ pub struct Loaded {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MaFile {
     pub bytes: Vec<u8>,
+    /// Entries of the offset table at the start of `bytes`.
+    entries: usize,
 }
 
 impl Default for MaFile {
     fn default() -> Self {
-        MaFile {
-            bytes: vec![0; TABLE_BYTES],
-        }
+        Self::with_entries(TABLE_ENTRIES)
     }
 }
 
 impl MaFile {
+    /// A fresh file whose offset table has `entries` entries.
+    pub fn with_entries(entries: usize) -> Self {
+        MaFile {
+            bytes: vec![0; entries * 4],
+            entries,
+        }
+    }
+
     /// A data file from its bytes: empty → a fresh table.
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, AutomapError> {
+        Self::from_bytes_with(bytes, TABLE_ENTRIES)
+    }
+
+    /// A data file from its bytes, its offset table `entries` long:
+    /// empty → a fresh table.
+    pub fn from_bytes_with(bytes: Vec<u8>, entries: usize) -> Result<Self, AutomapError> {
         if bytes.is_empty() {
-            return Ok(MaFile::default());
+            return Ok(MaFile::with_entries(entries));
         }
-        if bytes.len() < TABLE_BYTES {
+        let table_bytes = entries * 4;
+        if bytes.len() < table_bytes {
             return Err(bad(format!(
-                ".ma file of {} bytes is shorter than its {TABLE_BYTES}-byte table (§7 r2)",
+                ".ma file of {} bytes is shorter than its {table_bytes}-byte table (§7 r2)",
                 bytes.len()
             )));
         }
-        Ok(MaFile { bytes })
+        Ok(MaFile { bytes, entries })
     }
 
-    fn table_slot(layer: u32) -> Result<usize, AutomapError> {
-        if (layer as usize) < TABLE_ENTRIES {
+    /// Entries of the offset table.
+    pub fn entries(&self) -> usize {
+        self.entries
+    }
+
+    fn table_slot(&self, layer: u32) -> Result<usize, AutomapError> {
+        if (layer as usize) < self.entries {
             Ok(4 * layer as usize)
         } else {
             Err(bad(format!(
-                "layer {layer} past the {TABLE_ENTRIES}-entry table (§7 r2)"
+                "layer {layer} past the {}-entry table (§7 r2)",
+                self.entries
             )))
         }
     }
@@ -169,7 +198,7 @@ impl MaFile {
     /// The chain of `layer`: (position of the pointer, record offset) per
     /// record, in order.
     fn chain(&self, layer: u32) -> Result<Vec<(usize, usize)>, AutomapError> {
-        let mut at = Self::table_slot(layer)?;
+        let mut at = self.table_slot(layer)?;
         let mut out = Vec::new();
         loop {
             let off = u32_at(&self.bytes, at)
@@ -221,7 +250,7 @@ impl MaFile {
         // The table entry holds the first record's offset, each
         // record's link (its first u32) the next one's.
         let link_at = match chain.last() {
-            None => Self::table_slot(r.layer)?,
+            None => self.table_slot(r.layer)?,
             Some(&(_, last)) => last,
         };
         put_u32(&mut self.bytes, link_at, off32);
@@ -316,12 +345,13 @@ pub fn paths(dir: &Path, name: &str) -> (PathBuf, [PathBuf; SLOTS]) {
 }
 
 /// On disk: opens (and rewrites) the index for act key `key`,
-/// deletes the slots it names and reads the data file. Returns the data
-/// file, its path and its slot.
+/// deletes the slots it names and reads the data file, its offset table
+/// `entries` long. Returns the data file, its path and its slot.
 pub fn open_files(
     dir: &Path,
     name: &str,
     key: u32,
+    entries: usize,
 ) -> Result<(MaFile, PathBuf, usize), AutomapError> {
     let io = |what: &Path, e: std::io::Error| bad(format!("{}: {e}", what.display()));
     let (map, ma) = paths(dir, name);
@@ -354,5 +384,5 @@ pub fn open_files(
         }
         Err(e) => return Err(io(&path, e)),
     };
-    Ok((MaFile::from_bytes(bytes)?, path, open.slot))
+    Ok((MaFile::from_bytes_with(bytes, entries)?, path, open.slot))
 }

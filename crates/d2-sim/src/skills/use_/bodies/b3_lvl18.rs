@@ -69,7 +69,23 @@ pub fn fire_wall<W: BodyWorld>(
     let Some(r) = rec(t, skill) else {
         return 0;
     };
-    let (a, b) = (s16(r.srvmissilea), s16(r.srvmissileb));
+    wall(w, t, u, skill, lvl, s16(r.srvmissilea), s16(r.srvmissileb))
+}
+
+/// A wall of missile row `a` across the skill's target (the target unit's
+/// position, else the target point), seen from the caster, with a missile of
+/// row `b` (when it is a missile row) at its centre. 0 when the point is
+/// blocked, in town or missing. The body of [`fire_wall`] with the rows
+/// given, which a mod's `wall` part runs.
+pub fn wall<W: BodyWorld>(
+    w: &mut W,
+    t: &SkillTables,
+    u: W::Unit,
+    skill: i32,
+    lvl: i32,
+    a: i32,
+    b: i32,
+) -> i32 {
     if !missile_ok(t, a) || !point_free(w, t, u, a) {
         return 0;
     }

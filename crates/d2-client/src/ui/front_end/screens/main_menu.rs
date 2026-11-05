@@ -5,10 +5,19 @@
 //! and does nothing. Other Multiplayer is drawn but does nothing;
 //! Display Options opens the same Options pages the game's Esc
 //! menu shows, on the Video page.
+//!
+//! The third button (Other Multiplayer, which does nothing) is D2Gamma's
+//! door to its mods when a mods host is wired ([`register_with`]): D2GAMMA
+//! MODS in plain D2Gamma once a mod is installed, BACK TO D2GAMMA inside a
+//! mod. With no host, or nothing installed, it stays as it was.
 
+use std::rc::Rc;
+
+use crate::mod_menu::Switch;
 use crate::ui::front_end::control::{vk, Action, Control, ControlKind};
 use crate::ui::front_end::flow::Trigger;
 use crate::ui::front_end::screen::{FrontCtx, Screen};
+use crate::ui::front_end::screens::mods::{MenuButton, ModsHost};
 use crate::ui::front_end::{Registry, MAIN_MENU};
 
 /// Background descriptor 8's cel (global, loaded by the preload):
@@ -73,7 +82,16 @@ pub const STR_CREDITS: u32 = 5110;
 pub const OPTIONS_LABEL: &str = "DISPLAY OPTIONS";
 pub const OPTIONS_Y: i32 = 486;
 pub const OPTIONS_H: u16 = 35;
-struct MainMenu;
+/// The third button's labels when it leads to mods.
+pub const MODS_LABEL: &str = "D2GAMMA MODS";
+pub const BACK_LABEL: &str = "BACK TO D2GAMMA";
+/// The custom action of BACK TO D2GAMMA.
+pub const ACT_BACK: u32 = 1;
+
+#[derive(Default)]
+struct MainMenu {
+    mods: Option<Rc<dyn ModsHost>>,
+}
 
 fn button(
     art: &'static str,
@@ -213,10 +231,54 @@ impl Screen for MainMenu {
             )
             .with_text(OPTIONS_LABEL, 0),
         );
+        // The third button, when a mod is involved.
+        let door = self
+            .mods
+            .as_ref()
+            .map_or(MenuButton::Stock, |h| h.menu_button());
+        if let Some(c) = controls
+            .iter_mut()
+            .find(|c| c.kind == ControlKind::Button && c.string_id == STR_OTHER_MULTIPLAYER)
+        {
+            match door {
+                MenuButton::Stock => {}
+                MenuButton::Mods => {
+                    c.string_id = 0;
+                    c.text = Some(MODS_LABEL.to_owned());
+                    c.action = Action::Trigger(Trigger::Mods);
+                }
+                MenuButton::Back => {
+                    c.string_id = 0;
+                    c.text = Some(BACK_LABEL.to_owned());
+                    c.action = Action::Custom(ACT_BACK);
+                }
+            }
+        }
         controls
+    }
+
+    fn action(&mut self, _ctx: &mut FrontCtx, id: u32) -> Option<Trigger> {
+        match (id, &self.mods) {
+            (ACT_BACK, Some(host)) => {
+                host.switch(Switch::Plain);
+                Some(Trigger::SwitchMod)
+            }
+            _ => None,
+        }
     }
 }
 
 pub fn register(reg: &mut Registry) {
-    reg.register(MAIN_MENU, Box::new(MainMenu));
+    reg.register(MAIN_MENU, Box::new(MainMenu::default()));
+}
+
+/// The main menu with D2Gamma Mods wired to `host`, as a screen to put in
+/// place of the registered one (`FrontEnd::register_screen`).
+pub fn screen_with(host: Rc<dyn ModsHost>) -> Box<dyn Screen> {
+    Box::new(MainMenu { mods: Some(host) })
+}
+
+/// The main menu with D2Gamma Mods wired to `host`.
+pub fn register_with(reg: &mut Registry, host: Rc<dyn ModsHost>) {
+    reg.register(MAIN_MENU, Box::new(MainMenu { mods: Some(host) }));
 }

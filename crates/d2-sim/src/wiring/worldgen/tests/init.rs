@@ -336,7 +336,25 @@ fn an_event_host_spawns_a_monster_next_to_a_unit() {
                     .flatten()
                     .expect("placed")
             };
-            (near, cv.spawn_monster(0, near, 5), cv.difficulty())
+            let spawned = cv.spawn_monster(0, near, 5);
+            // The units near it, and the auto pickup's refusals of
+            // units that are no player, item or waypoint.
+            let found = spawned.map(|s| {
+                (
+                    cv.units_near(near, crate::units::UnitType::Monster, 10),
+                    cv.units_near(near, crate::units::UnitType::Object, 10),
+                    cv.pick_up(near, s),
+                    cv.learn_waypoint(near, s),
+                    s,
+                )
+            });
+            if let Some((monsters, objects, picked, learned, s)) = found {
+                assert!(monsters.contains(&s) && !monsters.contains(&near));
+                assert!(objects.is_empty());
+                assert!(!picked && !learned);
+                assert!(cv.v.h.mod_pickups.is_empty());
+            }
+            (near, spawned, cv.difficulty())
         })
     });
     let spawned = spawned.expect("spawned");

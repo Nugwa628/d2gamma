@@ -393,6 +393,28 @@ fn units_live_in_their_rooms_lists() {
 }
 
 #[test]
+fn a_placement_after_the_room_free_stands_the_player_on_its_cell_centre() {
+    let mut m = model();
+    m.hex("03 00 c4 88 38 10 01 00 61 d1 e0 9f");
+    m.recv(&sight(true, 8, 0)).recv(&sight(true, 16, 0));
+    let pl = UnitKey::new(PLAYER, 1);
+    m.recv(&assign_player(46, 6)).hex("0b 00 01 00 00 00");
+    assert_eq!(m.unit(pl).precise, None);
+    // The client room free zeroes the player's client point (an act
+    // change frees the old act's rooms).
+    m.recv(&sight(false, 8, 0)).recv(&sight(false, 16, 0));
+    assert_eq!(m.unit(pl).precise, Some((0, 0)));
+    // The placement in the rooms now in sight stands it on the centre of
+    // the placed cell: no precise point of the old place is left (the
+    // walk prediction would take it for the server's).
+    m.recv(&sight(true, 8, 0)).recv(&sight(true, 16, 0));
+    m.hex("15 00 01 00 00 00 2d 00 05 00 01");
+    assert!(m.rejected().is_empty(), "{:?}", m.rejected());
+    assert_eq!(m.unit(pl).position, Some((45, 5)));
+    assert_eq!(m.unit(pl).precise, None);
+}
+
+#[test]
 fn a_0x15_placement_moves_a_monsters_client_path() {
     use super::super::critter_path::{cell, server_walk, Who};
     let mut m = model();
@@ -1563,6 +1585,7 @@ fn search_model(
         miss_code: Vec::new(),
         level_cap: 99,
         stat_count: 359,
+        data_rules: d2_data::bin::DataRules::Original,
     };
     (m, k, rows, t)
 }
@@ -1926,4 +1949,14 @@ fn a_footstep_reads_the_floor_tile_under_the_unit() {
     // A unit in no room: no room (k 0).
     m.recv(&assign_monster(7, 0, 0));
     assert_eq!(floor_under(&m.w, UnitKey::new(MONSTER, 7)), Floor::NoRoom);
+}
+
+#[test]
+fn load_act_uses_the_host_town_without_a_process_selected_mod() {
+    let mut m = model();
+    m.hex("01 02 04 00 10 00 01 00");
+    m.hex("03 00 c4 88 38 10 89 00 61 d1 e0 9f");
+    let towns = &m.w.drlg.as_ref().unwrap().drlg.towns;
+    assert!(towns.is_town(137));
+    assert!(!towns.is_town(1));
 }

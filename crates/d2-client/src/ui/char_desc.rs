@@ -291,6 +291,9 @@ impl SkillUnits for DescUnits<'_> {
     fn seed(&mut self, _u: UnitKey) -> &mut Seed {
         &mut self.seed
     }
+    fn rules(&self) -> &d2_sim::rules::Ruleset {
+        self.inner.rules()
+    }
     fn skill_list(&self, u: UnitKey) -> Vec<SimEntry> {
         self.inner.skill_list(u)
     }
@@ -1660,6 +1663,7 @@ mod tests {
             miss_code: Vec::new(),
             level_cap: 99,
             stat_count: 359,
+            data_rules: d2_data::bin::DataRules::Original,
         };
         let mut w = ClientWorld::default();
         let key = UnitKey::new(crate::bridge::world::PLAYER, 1);
@@ -1732,6 +1736,7 @@ mod tests {
             miss_code: Vec::new(),
             level_cap: 99,
             stat_count: 359,
+            data_rules: d2_data::bin::DataRules::Original,
         };
         let mut w = ClientWorld::default();
         let key = UnitKey::new(crate::bridge::world::PLAYER, 1);

@@ -20,6 +20,7 @@ fn fixture() -> PatchData {
         kind: KeyKind::Code,
         unique: true,
         fixed: false,
+        adopt: false,
         scope: "items.code".into(),
         lists: vec![["name", "code", "lvl", "dam"]
             .iter()

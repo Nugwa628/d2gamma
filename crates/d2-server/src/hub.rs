@@ -426,10 +426,26 @@ where
                 self.lose_client(client, e);
             }
         }
+        let closed: Vec<_> = self
+            .clients
+            .keys()
+            .copied()
+            .filter(|c| {
+                self.host.wire() == d2_proto::envelope::Wire::Mod && self.host.record(*c).is_none()
+            })
+            .collect();
+        for client in closed {
+            self.disconnect(client);
+        }
         let parked: Vec<ClientId> = self.parked.keys().copied().collect();
         for client in parked {
             for msg in self.host.receive(client) {
                 self.keep_for(client, Packet::Deliver(msg));
+            }
+            if self.host.wire() == d2_proto::envelope::Wire::Mod
+                && self.host.record(client).is_none()
+            {
+                self.disconnect(client);
             }
         }
     }

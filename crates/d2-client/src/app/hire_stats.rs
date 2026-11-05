@@ -10,6 +10,7 @@
 
 use d2_sim::world::hirelings::HirelingRows;
 
+use crate::ui::original::merc_portrait::{MercIcons, PetIcons, PetRow};
 use crate::ui::panels::npc_menu::HireStats;
 use crate::world_view::WorldViewUi;
 
@@ -39,6 +40,47 @@ pub fn hire_stats(
     })
 }
 
+/// The pet types' icons of the `pettype` rows, in table order.
+pub fn pet_icons(rows: &[d2_data::tables::Pettype]) -> PetIcons {
+    let name = |b: &[u8; 32]| {
+        let end = b.iter().position(|&c| c == 0).unwrap_or(b.len());
+        String::from_utf8_lossy(&b[..end]).to_ascii_lowercase()
+    };
+    PetIcons {
+        rows: rows
+            .iter()
+            .map(|r| PetRow {
+                pet_type: r.pet_type as u8,
+                icontype: r.icontype,
+                drawhp: r.drawhp,
+                name: r.name,
+                icons: MercIcons {
+                    base: name(&r.baseicon),
+                    classes: [
+                        (r.mclass1, &r.micon1),
+                        (r.mclass2, &r.micon2),
+                        (r.mclass3, &r.micon3),
+                        (r.mclass4, &r.micon4),
+                    ]
+                    .into_iter()
+                    .filter(|(c, i)| *c != 0 && i[0] != 0)
+                    .map(|(c, i)| (c, name(i)))
+                    .collect(),
+                },
+            })
+            .collect(),
+    }
+}
+
+/// Installs the pet types' icons on the play UI; nothing without it.
+pub fn install_pet_icons(app: &mut impl crate::app::session::Setup, icons: PetIcons) {
+    if let Some(mut ui) = app.world_mut().get_non_send_mut::<WorldViewUi>() {
+        if let Some(o) = ui.original.as_mut() {
+            o.set_pet_icons(icons);
+        }
+    }
+}
+
 /// Installs the stats closure over `rows` on the play UI; nothing
 /// without it.
 pub fn install_hire_stats(
@@ -59,6 +101,50 @@ pub fn install_hire_stats(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Each `pettype` row gives its type, icon kind, life-bar flag, name and
+    // icons: the base one and the class ones (a slot without a class or an
+    // icon is left out); the hireling's are those of type 7.
+    #[test]
+    fn pet_icons_come_from_the_pettype_rows() {
+        use d2_data::tables::{Pettype, Record};
+        let rec = |ty: u32, icontype: u8, base: &str, slots: &[(u16, &str)]| {
+            let mut r = [0u8; Pettype::SIZE];
+            r[0..4].copy_from_slice(&ty.to_le_bytes());
+            r[4] = 0x20;
+            r[12..14].copy_from_slice(&4053u16.to_le_bytes());
+            r[14] = icontype;
+            r[15..15 + base.len()].copy_from_slice(base.as_bytes());
+            for (k, (class, icon)) in slots.iter().enumerate() {
+                let c = 178 + 2 * k;
+                r[c..c + 2].copy_from_slice(&class.to_le_bytes());
+                let i = 47 + 32 * k;
+                r[i..i + icon.len()].copy_from_slice(icon.as_bytes());
+            }
+            Pettype::decode(&r)
+        };
+        let rows = vec![
+            rec(3, 3, "EarthGolumIcon", &[(290, "bloodgolumicon")]),
+            rec(
+                7,
+                0,
+                "RogueIcon",
+                &[(338, "Act2HireableIcon"), (0, "unused"), (561, "")],
+            ),
+        ];
+        let icons = pet_icons(&rows);
+        let golem = &icons.rows[0];
+        assert_eq!(
+            (golem.pet_type, golem.icontype, golem.drawhp, golem.name),
+            (3, 3, true, 4053)
+        );
+        assert_eq!(golem.icons.file(290), "hireables\\bloodgolumicon");
+        assert_eq!(golem.icons.file(289), "hireables\\earthgolumicon");
+        let merc = icons.hireling().expect("type 7");
+        assert_eq!(merc.base, "rogueicon");
+        assert_eq!(merc.classes, vec![(338, "act2hireableicon".to_string())]);
+        assert_eq!(merc.file(271), "hireables\\rogueicon");
+    }
     use d2_sim::world::hirelings::HirelingRow;
 
     fn row(act: u32, diff: u32, first: u16, last: u16, gold: i32) -> HirelingRow {

@@ -17,15 +17,18 @@ pub use client_tables::*;
 pub use d2_server::game::rows;
 pub use d2_server::game::{
     clock_map_seed, drawn_map_seed, game_seed, game_seed_or, load_character, load_character_with,
-    loader, new_character, one_character, parse_class, parse_difficulty, refused_load, save_name,
-    wire_view_gap, BuildError, Character, CharacterCodec, Characters, D2sCodec, GameData,
-    GameSource, Layers, LiveData, LiveDs1, LiveSubs, NewCharacter, NewCharacterError, RefusedLoad,
-    Sim, WaypointTables, World, ACT1_TOWN, ACT2_TOWN, ACT5_TOWN, BLOOD_MOOR, CATACOMBS_4,
-    CLASS_NAMES, COLD_PLAINS, CREATE_FLAGS_CLASSIC, CREATE_FLAGS_EXPANSION, DEFAULT_SEED,
-    DEN_OF_EVIL, DURANCE_1, DURANCE_2, DURIELS_LAIR, DURIEL_CLASS, GAME_SETUP, GAME_TYPE,
-    KURAST_DOCKS, LOAD_FAILED, MAX_NAME_LEN, PANDEMONIUM_FORTRESS, PLAYER_CLASS, PLAYER_NAME,
-    STASH_CLASS, STONY_FIELD,
+    loader, new_character, one_character, parse_class, refused_load, save_name, wire_view_gap,
+    BuildError, Character, CharacterCodec, Characters, D2sCodec, GameData, GameSource, Layers,
+    LiveData, LiveDs1, LiveSubs, NewCharacter, NewCharacterError, RefusedLoad, Sim, WaypointTables,
+    World, ACT1_TOWN, ACT2_TOWN, ACT5_TOWN, BLOOD_MOOR, CATACOMBS_4, CLASS_NAMES, COLD_PLAINS,
+    CREATE_FLAGS_CLASSIC, CREATE_FLAGS_EXPANSION, DEFAULT_SEED, DEN_OF_EVIL, DURANCE_1, DURANCE_2,
+    DURIELS_LAIR, DURIEL_CLASS, GAME_SETUP, GAME_TYPE, KURAST_DOCKS, LOAD_FAILED, MAX_NAME_LEN,
+    PANDEMONIUM_FORTRESS, PLAYER_CLASS, PLAYER_NAME, STASH_CLASS, STONY_FIELD,
 };
+/// The active mod's configured difficulty names and numeric ids.
+pub fn parse_difficulty(text: &str) -> Option<u8> {
+    d2_server::game::parse_difficulty_for(text, &crate::kit_mod::ruleset())
+}
 pub use d2_server::local_seams::*;
 pub type Link<C = SystemClock> = LocalLink<Sim, ProtoSizes, PendingSession, C>;
 /// The local join request with the selected presentation width.

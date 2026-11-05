@@ -11,9 +11,9 @@ use super::*;
 ///   (the server copy's here), the arc is removed, the
 ///   landing sounds (the audio layer's); then T := the unit of E +0x20 /
 ///   +0x24 (none when +0x20 is 6), else the pick with (U, 0, 3, 0,
-///   −1); none → frame count := 0x400; a T (the face, the swing sound)
-///   is not modelled (an error). Not landed: a player's sequence position
-///   := (position & 0xFF) + 10 · 256 and frame count := (count & !0xFF) +
+///   −1) ([`landing_pick`]); none → frame count := 0x400; a T → U faces
+///   it (the swing sound is the audio layer's). Not landed: a player's
+///   sequence position := (position & 0xFF) + 10 · 256 and frame count := (count & !0xFF) +
 ///   0x100, and the test fails (a monster's frame is not modelled: an
 ///   error); F bit 1 clear → 0, set → the end below.
 /// - F bit 1 clear: F bit 0x80 (the takeoff): with a point,
@@ -50,13 +50,20 @@ pub(super) fn leap_attack(
             let t = (e.counter != 6)
                 .then(|| UnitKey::new(e.counter as u8, e.param3 as u32))
                 .filter(|t| w.units.contains_key(t));
-            if t.is_some() || charge_search(w, key).is_some() {
-                return Err(HandlerError::Invalid(
-                    "client/client-do/f044-leap-attack.md §1 r1: the Leap Attack landing face is not modelled",
-                ));
-            }
-            if let Some(u) = w.units.get_mut(&key) {
-                u.frame_count = 0x400;
+            let env = search_env(inputs);
+            let face = match t {
+                Some(t) => Some(t),
+                None => landing_pick(w, &env, key)?,
+            };
+            match face {
+                // The landing sounds and the swing sound are the audio
+                // layer's; the swing keeps the sequence running.
+                Some(a) => face_unit(w, key, a),
+                None => {
+                    if let Some(u) = w.units.get_mut(&key) {
+                        u.frame_count = 0x400;
+                    }
+                }
             }
             r = 0;
         } else {
@@ -112,6 +119,17 @@ pub(super) fn leap_attack(
     Ok(1)
 }
 
+/// The landing's pick with (U, 0, 3, 0, −1): among the players and
+/// monsters within radius 3 of U that are not dead (the search mask
+/// 0xA283), the next GUID after −1, so the smallest GUID.
+fn landing_pick(
+    w: &ClientWorld,
+    env: &crate::bridge::client_missiles::Env,
+    key: UnitKey,
+) -> Result<Option<UnitKey>, HandlerError> {
+    crate::bridge::client_missiles::next_guid(w, env, key, (0, 0), 3, 3, u32::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +173,59 @@ mod tests {
         let u = &w.units[&key];
         assert_eq!(u.frame_count, 0x400);
         assert_eq!(u.skills.as_ref().unwrap().entries[0].flags, 0x1000);
+    }
+
+    /// A player in the air at flags 0x101 (no target of its own, no arc so
+    /// it lands), with a monster `near` at (5000, 5003) when given. The
+    /// landing's pick reads the client rooms, which a unit test has none of:
+    /// the pick itself runs in the real-data Leap Attack test.
+    fn landing(near: Option<u32>) -> (ClientWorld, ModelInputs, UnitKey) {
+        let (mut w, key) = world();
+        let mut i = inputs(44);
+        i.tables.skills[usize::from(FROST_NOVA)].cltstfunc = 30;
+        let l = w.units.get_mut(&key).unwrap().skills.as_mut().unwrap();
+        l.entries[0].flags = 0x101;
+        l.entries[0].counter = 6;
+        if let Some(guid) = near {
+            let m = UnitKey::new(MONSTER, guid);
+            let mut c = ClientUnit::new(m);
+            (c.position, c.mode) = (Some((5000, 5003)), 1);
+            w.units.insert(m, c);
+        }
+        (w, i, key)
+    }
+
+    /// The turn the player of [`landing`] takes to face a monster `m` at
+    /// `at` (the face of `face_unit` in a world with only the two).
+    fn turn_toward(m: UnitKey, at: (u16, u16)) -> Option<(u8, u8)> {
+        let (mut w, _, key) = landing(None);
+        let mut c = ClientUnit::new(m);
+        (c.position, c.mode) = (Some(at), 1);
+        w.units.insert(m, c);
+        face_unit(&mut w, key, m);
+        w.units[&key].path_turn
+    }
+
+    #[test]
+    fn the_landing_faces_the_target_the_entry_names() {
+        let (mut w, i, key) = landing(Some(9));
+        let l = w.units.get_mut(&key).unwrap().skills.as_mut().unwrap();
+        (l.entries[0].counter, l.entries[0].param3) = (i32::from(MONSTER), 9);
+        assert_eq!(client_do(&mut w, &i, key, FROST_NOVA, 1).unwrap(), 0);
+        let u = &w.units[&key];
+        assert_eq!(u.faces, 1);
+        assert_eq!(
+            u.path_turn,
+            turn_toward(UnitKey::new(MONSTER, 9), (5000, 5003))
+        );
+    }
+
+    #[test]
+    fn a_landing_with_nobody_near_ends_the_mode_quickly() {
+        let (mut w, i, key) = landing(None);
+        assert_eq!(client_do(&mut w, &i, key, FROST_NOVA, 1).unwrap(), 0);
+        let u = &w.units[&key];
+        assert_eq!(u.faces, 0);
+        assert_eq!(u.frame_count, 0x400);
     }
 }

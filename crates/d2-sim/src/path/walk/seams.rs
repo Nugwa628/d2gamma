@@ -111,6 +111,10 @@ pub trait PathWorld: CollisionRooms {
 /// the narrowest reading; the owning system is named on each.
 #[allow(unused_variables)]
 pub trait WalkUnits {
+    /// The authoritative game's curated settings.
+    fn global_rules(&self) -> &crate::rules::global::GlobalRules {
+        &crate::rules::global::DEFAULT
+    }
     /// Unit type (unit +0x00).
     fn unit_type(&self, unit: UnitId) -> UnitType;
     /// Class (unit +0x04).

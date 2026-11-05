@@ -63,7 +63,16 @@ pub fn failure(e: &OnlineError) -> Failure {
     Failure {
         code: e.code().unwrap_or(ErrorCode(0)),
         wait_s: e.wait_s(),
-        text: e.message(),
+        text: if e.code() == Some(ErrorCode::BUILD)
+            && crate::mod_download::pending().ok().flatten().is_some()
+        {
+            format!(
+                "{} Open D2Gamma Mods to review the official update.",
+                e.message()
+            )
+        } else {
+            e.message()
+        },
     }
 }
 
@@ -95,7 +104,11 @@ fn game_info(g: &d2_net::msg::lobby::GameInfo) -> GameInfo {
         player_hosted: g.player_hosted,
         node_id: g.node_id.clone(),
         host_rtt_ms: g.host_rtt_ms,
-        description: g.description.clone(),
+        description: g
+            .mod_identity
+            .as_ref()
+            .map(|m| format!("{} · {} {}", g.description, m.id, m.version))
+            .unwrap_or_else(|| g.description.clone()),
         level_min: g.level_min,
         level_max: g.level_max,
         created_ms: g.created_ms,

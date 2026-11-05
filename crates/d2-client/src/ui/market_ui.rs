@@ -377,6 +377,11 @@ pub(super) fn button_event(sh: &mut super::Shared, e: UiEvent) -> bool {
     if !button_rect(sh).contains(at) {
         return false;
     }
+    // The mod draws the window: the press asks it to open.
+    if let Some(link) = sh.mod_window() {
+        link.ask_open(crate::mods::OpenAsk::Stash);
+        return true;
+    }
     let open = sh.market.availability().why_not().is_none();
     if open && super::stash_ui::shared_on(sh) && sh.states.is_open(UI_STASH) {
         let st = &mut sh.shared_stash;

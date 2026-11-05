@@ -28,7 +28,7 @@ use crate::msg::{ErrorCode, Reader, Writer, MAX_ERROR_TEXT};
 use crate::NetError;
 
 /// Longest game id (`d2rust`, or a mod game's id).
-pub const MAX_GAME_ID: usize = 32;
+pub const MAX_GAME_ID: usize = 40;
 
 /// Longest server name in a [`SessionWelcome`].
 pub const MAX_SERVER_NAME: usize = 64;
@@ -40,6 +40,7 @@ pub const MAX_NAME: usize = 32;
 /// C→S, the first frame of the control stream.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientHello {
+    pub mod_identity: Option<crate::mod_identity::ModIdentity>,
     /// `d2_proto::PROTOCOL_VERSION` of the client.
     pub protocol: u32,
     /// The game the client plays: `d2rust`, or a mod game's id.
@@ -55,6 +56,7 @@ pub struct ClientHello {
 /// What the server runs: what a [`ClientHello`] must match.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ServerInfo {
+    pub mod_identity: Option<crate::mod_identity::ModIdentity>,
     /// `d2_proto::PROTOCOL_VERSION` of the server.
     pub protocol: u32,
     /// The game the server runs.
@@ -154,8 +156,8 @@ impl From<NetError> for Refused {
 impl ClientHello {
     /// The frame body (kind [`kind::HELLO`]).
     pub fn body(&self) -> Vec<u8> {
-        Writer::new(kind::HELLO)
-            .array(&MAGIC)
+        let mut w = Writer::new(kind::HELLO);
+        w.array(&MAGIC)
             .u16(NET_VERSION)
             .u32(self.protocol)
             .str8(&self.game)
@@ -163,8 +165,9 @@ impl ClientHello {
             .u32(self.tick_rate)
             .opt(self.resume.as_ref(), |w, t| {
                 w.array(&t.0);
-            })
-            .finish()
+            });
+        crate::mod_identity::ModIdentity::write_tail(self.mod_identity.as_ref(), &mut w);
+        w.finish()
     }
 
     /// Reads a hello. Anything that isn't a whole hello of this wire
@@ -186,6 +189,7 @@ impl ClientHello {
                 build: r.str8(MAX_BUILD)?,
                 tick_rate: r.u32()?,
                 resume: r.opt(|r| r.array().map(ResumeToken))?,
+                mod_identity: crate::mod_identity::ModIdentity::read_tail(r)?,
             })
         };
         let hello = read(&mut r).map_err(wire)?;
@@ -199,6 +203,7 @@ impl ClientHello {
         if self.protocol != server.protocol {
             return Err(Refused::new(ErrorCode::PROTOCOL));
         }
+        crate::mod_identity::check(server.mod_identity.as_ref(), self.mod_identity.as_ref())?;
         if self.game != server.game {
             return Err(Refused::with_text(
                 ErrorCode::WRONG_GAME,
@@ -362,6 +367,7 @@ mod tests {
 
     fn hello() -> ClientHello {
         ClientHello {
+            mod_identity: None,
             protocol: 2,
             game: "d2rust".into(),
             build: "0.1.2.0".into(),
@@ -372,11 +378,40 @@ mod tests {
 
     fn server() -> ServerInfo {
         ServerInfo {
+            mod_identity: None,
             protocol: 2,
             game: "d2rust".into(),
             build: "0.1.2.0".into(),
             tick_rate: 60,
         }
+    }
+
+    #[test]
+    fn plain_hello_keeps_wire_v6_bytes_and_mod_version_uses_upgrade_refusal() {
+        let plain = hello();
+        assert_eq!(
+            plain.body(),
+            b"\x01D2RN\x06\x00\x02\x00\x00\x00\x06d2rust\x070.1.2.0\x3c\x00\x00\x00\x00"
+        );
+        let identity = crate::mod_identity::ModIdentity {
+            id: "graph-mod".into(),
+            version: "2.0.0".into(),
+        };
+        let mut required = server();
+        required.game = identity.id.clone();
+        required.mod_identity = Some(identity.clone());
+        let mut client = plain;
+        client.game = identity.id.clone();
+        client.mod_identity = Some(identity.clone());
+        assert_eq!(ClientHello::parse(&client.body()), Ok(client.clone()));
+        assert!(client.check(&required).is_ok());
+        client.mod_identity.as_mut().unwrap().version = "1.0.0".into();
+        let refused = client.check(&required).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::BUILD);
+        assert!(refused.text.contains("graph-mod 2.0.0"));
+        assert_eq!(Refused::parse(&refused.body()).unwrap(), refused);
+        client.mod_identity = None;
+        assert_eq!(client.check(&required).unwrap_err().code, ErrorCode::BUILD);
     }
 
     #[test]
@@ -428,6 +463,7 @@ mod tests {
     fn check_refuses_the_first_mismatch_in_order() {
         assert_eq!(hello().check(&server()), Ok(()));
         let all_wrong = ClientHello {
+            mod_identity: None,
             protocol: 1,
             game: "mod-x".into(),
             build: "0.0.9.0".into(),

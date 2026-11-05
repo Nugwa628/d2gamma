@@ -113,6 +113,16 @@ fn max_sockets_by_ilvl() {
         it.ilvl = ilvl;
         assert_eq!(max_sockets(&t, &it), want, "ilvl {ilvl}");
     }
+    t.rules = crate::rules::global::GlobalRules::default().into_ruleset();
+    let mut it = item(i, 1);
+    it.ilvl = 25;
+    assert_eq!(max_sockets(&t, &it), 3);
+    t.rules = crate::rules::global::GlobalRules::from_toml("socket_level_bands = [10, 20]")
+        .unwrap()
+        .into_ruleset();
+    assert_eq!(max_sockets(&t, &it), 4);
+    it.ilvl = 15;
+    assert_eq!(max_sockets(&t, &it), 4);
 }
 
 #[test]
@@ -450,4 +460,24 @@ fn gold_amount() {
     let mut it = item(i, 1);
     init_item_stats(&t, &mut FakeGame::default(), &mut it, None, false).unwrap();
     assert_eq!(it.stats.base(stat::GOLD, 0), 1);
+}
+
+#[test]
+fn global_socket_bands_change_both_boundaries() {
+    let mut t = tables();
+    let mut r = item_rec(ty::HELM, b"cap ");
+    r.gemsockets = 6;
+    let i = push_item(&mut t, r);
+    let h = &mut t.itemtypes[ty::HELM as usize];
+    (h.maxsock1, h.maxsock25, h.maxsock40) = (2, 4, 6);
+    for (text, expected) in [("", [2, 4]), ("socket_level_bands = [10, 20]", [4, 6])] {
+        t.rules = crate::rules::global::GlobalRules::from_toml(text)
+            .unwrap()
+            .into_ruleset();
+        for (ilvl, count) in [15, 35].into_iter().zip(expected) {
+            let mut it = item(i, 1);
+            it.ilvl = ilvl;
+            assert_eq!(max_sockets(&t, &it), count);
+        }
+    }
 }

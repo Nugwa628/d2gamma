@@ -607,6 +607,21 @@ where
                 });
             }
         }
+        for (client, reason) in self.game.mod_kicks() {
+            let payload = d2_proto::mod_ui::net_rejection(&reason).unwrap_or_else(|| {
+                d2_proto::mod_ui::net_rejection(
+                    "This mod needs updating: incompatible server contract.",
+                )
+                .unwrap()
+            });
+            let bytes = envelope::encode(envelope::Direction::ToClient, &payload)
+                .expect("bounded mod refusal envelope");
+            self.disconnect(client);
+            self.inboxes
+                .entry(client)
+                .or_default()
+                .push_on(Wire::Mod, &bytes)?;
+        }
         Ok(report)
     }
 
@@ -746,6 +761,9 @@ where
             .get_mut(&client)
             .map(Inbox::receive)
             .unwrap_or_default();
+        if !self.records.contains_key(&client) {
+            self.inboxes.remove(&client);
+        }
         if self.coverage.enabled {
             for message in &messages {
                 if let Some(id) = message.first() {

@@ -238,6 +238,14 @@ pub fn nest<W: BodyWorld>(w: &mut W, t: &SkillTables, u: W::Unit, skill: i32) ->
     let Some(ov) = rec(t, skill).map(|r| s16(r.sumoverlay)) else {
         return 0;
     };
+    nest_hatch(w, u, ov)
+}
+
+/// The hatching of a nest: spawns the monster the nest's start function
+/// ([`nest_start`]) put in the used skill entry's parameters (class, place,
+/// mode), with overlay `ov` (a value past the overlay table is none) on it.
+/// The body of [`nest`] with the overlay given, which a mod's `nest` part runs.
+pub fn nest_hatch<W: BodyWorld>(w: &mut W, u: W::Unit, ov: i32) -> i32 {
     let Some(e) = w.used_skill(u) else {
         return 0;
     };
@@ -366,10 +374,17 @@ pub fn zakarum_heal<W: BodyWorld>(
     let hi = eval(w, t, u, c2, skill, lvl).clamp(0, 100);
     let lo = eval(w, t, u, c1, skill, lvl).max(0).min(hi);
     let p = lo.wrapping_add(w.seed(u).roll(hi.wrapping_sub(lo)) as i32);
+    heal_percent(w, tg, p);
+    1
+}
+
+/// Gives `tg` back `p` percent of its maximum life (never above the maximum
+/// and never taking it to 0): the last step of [`zakarum_heal`], which a mod's
+/// heal part runs with a percentage it rolled itself.
+pub fn heal_percent<W: BodyWorld>(w: &mut W, tg: W::Unit, p: i32) {
     let m = w.stat_max(tg, sid::LIFE);
     let v = pct(m, p, 100).wrapping_add(w.stat(tg, sid::LIFE, 0));
     w.set_stat(tg, sid::LIFE, v.max(1).min(m));
-    1
 }
 
 // ------------------------------------------------------------------
@@ -385,6 +400,20 @@ pub fn resurrect<W: BodyWorld>(
     let Some(ov) = rec(t, skill).map(|r| s16(r.srvoverlay)) else {
         return 0;
     };
+    resurrect_target(w, t, ct, u, ov)
+}
+
+/// Raises the dead monster `u` has as its target (its mode is death or dead,
+/// it is not hidden, and its place is free), with overlay `ov` (a value past
+/// the overlay table is none) on the risen one. The body of [`resurrect`]
+/// with the overlay given, which a mod's `resurrect` part runs.
+pub fn resurrect_target<W: BodyWorld>(
+    w: &mut W,
+    t: &SkillTables,
+    ct: &CombatTables,
+    u: W::Unit,
+    ov: i32,
+) -> i32 {
     let Some(tg) = target(w, u) else {
         return 0;
     };

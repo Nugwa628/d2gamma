@@ -111,6 +111,18 @@ pub fn diff_live(before: &Live, after: &Live) -> Vec<Violation> {
     diff(&mut out, "live.quests", &before.quests, &after.quests);
     diff(
         &mut out,
+        "live.mod_sections",
+        &before.mod_sections,
+        &after.mod_sections,
+    );
+    diff(
+        &mut out,
+        "live.difficulty_progress",
+        &before.difficulty_progress,
+        &after.difficulty_progress,
+    );
+    diff(
+        &mut out,
         "live.skills",
         &before.extra.skills,
         &after.extra.skills,
@@ -296,6 +308,20 @@ pub fn read_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mod_sections_are_compared_without_changing_plain_roundtrips() {
+        let plain = Live::default();
+        assert!(diff_live(&plain, &plain).is_empty());
+        let before = Live {
+            mod_sections: Some(vec![d2_formats::d2s::ModSection::new(*b"TEST", vec![17])]),
+            ..Default::default()
+        };
+        assert!(diff_live(&before, &before).is_empty());
+        assert!(diff_live(&before, &plain)
+            .iter()
+            .any(|v| v.sig == "roundtrip:live.mod_sections"));
+    }
 
     // The loader clears quest bits 13 and 14 of every slot; the comparison
     // must apply the same rule to the saved state, or a gossip flag set by a

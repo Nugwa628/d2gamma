@@ -71,8 +71,10 @@ pub fn load_act(w: &mut ClientWorld, msg: &Message<'_>) -> Result<(), HandlerErr
     w.drlg = None;
     w.room_units = Default::default();
     if let Some(src) = &msg.inputs.drlg {
-        w.drlg =
-            Some(ClientDrlg::build(src, m.act, m.f2, w.difficulty).map_err(ClientDrlgError::from)?);
+        w.drlg = Some(
+            ClientDrlg::build_for_town(src, m.act, m.f2, w.difficulty, m.f6)
+                .map_err(ClientDrlgError::from)?,
+        );
         w.refresh_active_rooms()?;
     }
     // replaced the client act (the next drawn frame is cleared after

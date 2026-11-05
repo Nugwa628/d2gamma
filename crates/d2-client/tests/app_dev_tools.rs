@@ -276,7 +276,10 @@ fn stat_commands_level_gold_points_and_heal() {
     assert!(quest_bit(&g, 0) && quest_bit(&g, 2));
     assert!(g.ok("quest 37 8 off").contains("cleared"));
     assert!(!quest_bit(&g, 0) && !quest_bit(&g, 2));
-    assert!(!g.run("quest 41 0").ok);
+    // A slot past the record is refused at the console line: it never
+    // reaches the server.
+    let refused = parse("quest 41 0").unwrap_err();
+    assert!(refused.contains("0..=40"), "{refused}");
     // The help and an unknown name.
     assert!(g.ok("help").contains("god"));
     assert!(!g.run("warp no such place").ok);

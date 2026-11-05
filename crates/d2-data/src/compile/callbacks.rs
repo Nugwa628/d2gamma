@@ -15,6 +15,141 @@ pub const UNIQUES_LINKER: &str = "@uniques";
 /// Name of the add-always name linker over `setitems`.
 pub const SETS_LINKER: &str = "@sets";
 
+/// A target embedded in a callback expression, normalized like the compiler.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReferenceKey {
+    /// A code or name in a compiler linker.
+    Lookup { linker: &'static str, key: Vec<u8> },
+    /// A physical row id, as used by cube output affix modifiers.
+    Row { table: &'static str, id: usize },
+}
+
+/// Linkers read by a callback, for validation and editor schema generation.
+pub fn reference_linkers(callback: &str) -> &'static [&'static str] {
+    match callback {
+        "cubemain.input" | "cubemain.output" => {
+            &["itemtypes.code", "items.code", UNIQUES_LINKER, SETS_LINKER]
+        }
+        "monpreset.place" => &["superuniques.Superunique", "monstats.Id", "monplace.code"],
+        "monstats.skillmode" => &["monmode_lookup.code", "monseq.sequence"],
+        "monstats2.composit" => &["compcode.code"],
+        _ => &[],
+    }
+}
+
+/// Required reference groups in the callback grammar. Each group accepts any
+/// one alternative, for example an item type, item code or special item name.
+/// Uses the same quoting, tokenization and 256-byte cell limit as compilation.
+pub fn reference_choices(callback: &str, text: &[u8]) -> Vec<Vec<ReferenceKey>> {
+    let text = &text[..text.len().min(256)];
+    let lookup = |linker, value: &[u8], code| ReferenceKey::Lookup {
+        linker,
+        key: if code {
+            code4(value).to_vec()
+        } else {
+            name_key(value).unwrap_or_default()
+        },
+    };
+    match callback {
+        "cubemain.input" | "cubemain.output" => {
+            let (first, mut rest) = split(unquote(text), b",");
+            if first.is_empty() {
+                return Vec::new();
+            }
+            let output = callback == "cubemain.output";
+            let reserved = if output {
+                first == b"usetype"
+                    || first == b"useitem"
+                    || [
+                        b"Cow Portal".as_slice(),
+                        b"Pandemonium Portal",
+                        b"Pandemonium Finale Portal",
+                    ]
+                    .iter()
+                    .any(|s| first.eq_ignore_ascii_case(s))
+            } else {
+                first.eq_ignore_ascii_case(b"any")
+            };
+            let mut groups = Vec::new();
+            if !reserved {
+                let mut choices = Vec::new();
+                if first.len() <= 4 {
+                    let order = if output {
+                        ["items.code", "itemtypes.code"]
+                    } else {
+                        ["itemtypes.code", "items.code"]
+                    };
+                    for linker in order {
+                        choices.push(lookup(linker, first, true));
+                    }
+                }
+                choices.push(lookup(UNIQUES_LINKER, first, false));
+                choices.push(lookup(SETS_LINKER, first, false));
+                groups.push(choices);
+            }
+            if output {
+                while let Some(r) = rest {
+                    let (tok, after) = split(r, b"=,");
+                    rest = after;
+                    if matches!(tok, b"qty" | b"pre" | b"suf" | b"sock") {
+                        let Some(value) = rest else { break };
+                        let (value, after) = split(value, b",");
+                        rest = after;
+                        if matches!(tok, b"pre" | b"suf") {
+                            let id = num(value);
+                            if id != 0 {
+                                groups.push(vec![ReferenceKey::Row {
+                                    table: if tok == b"pre" {
+                                        "magicprefix"
+                                    } else {
+                                        "magicsuffix"
+                                    },
+                                    // Affix requests are 1-based within the
+                                    // prefix/suffix part (items::roll_affix).
+                                    id: usize::try_from(i64::from(id) - 1).unwrap_or(usize::MAX),
+                                }]);
+                            }
+                        }
+                    } else if tok != b"reg"
+                        && quality_word(tok).is_none()
+                        && output_flag(tok).is_none()
+                    {
+                        break;
+                    }
+                }
+            }
+            groups
+        }
+        "monpreset.place" => vec![reference_linkers(callback)
+            .iter()
+            .map(|linker| lookup(linker, text, false))
+            .collect()],
+        "monstats.skillmode" => {
+            let mut choices = Vec::new();
+            if text.len() <= 3 && !text.eq_ignore_ascii_case(b"SQ") {
+                choices.push(lookup("monmode_lookup.code", text, true));
+            }
+            choices.push(lookup("monseq.sequence", text, false));
+            vec![choices]
+        }
+        "monstats2.composit" => {
+            let mut groups = Vec::new();
+            let mut text = unquote(text);
+            for _ in 0..12 {
+                let (tok, rest) = split(text, b",");
+                if tok.is_empty() || tok.len() > 4 {
+                    break;
+                }
+                groups.push(vec![lookup("compcode.code", tok, true)]);
+                let Some(rest) = rest else { break };
+                text = rest;
+            }
+            groups
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Base item code and level of a unique or set item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpecialItem {

@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use d2_proto::envelope::{self, Wire};
 use d2_proto::schema::Size;
-use d2_proto::wide_state;
+use d2_proto::{wide_stat, wide_state};
 
 use crate::seams::{ClientId, MessageSink, MessageSizes};
 use crate::transport::MAX_MESSAGE;
@@ -189,6 +189,8 @@ impl Inbox {
             envelope::SERVER_ID => return Err(QueueError::BadId(envelope::SERVER_ID)),
             wide_state::ID if wide_state::valid_on(wire) => self.game.push_back(msg.to_vec()),
             wide_state::ID => return Err(QueueError::BadId(wide_state::ID)),
+            wide_stat::ID if wire == Wire::Mod => self.game.push_back(msg.to_vec()),
+            wide_stat::ID => return Err(QueueError::BadId(wide_stat::ID)),
             id if id >= server_ids() => return Err(QueueError::BadId(id)),
             id if id >= FIRST_SYSTEM_ID => self.system.push_back(msg.to_vec()),
             _ => self.game.push_back(msg.to_vec()),
@@ -228,6 +230,10 @@ impl Inbox {
                         _ => Ok(0),
                     }
                 }
+                wide_stat::ID if wire == Wire::Mod => match wide_stat::size(wire, rest) {
+                    Size::Bytes(n) => Ok(n),
+                    _ => Ok(0),
+                },
                 _ => sizes.server_size(rest),
             };
             let n = match size {

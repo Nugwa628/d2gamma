@@ -38,13 +38,16 @@
 //! handler of the mod game's S→C mod messages
 //! ([`ClientMods::with_mod_messages`], MS13); a mod game's own stash panel
 //! on the game's stash ([`stash`], [`ClientMods::with_stash_panel`]); the UI
-//! layout hooks (E-UI1…E-UI5, [`ui_hooks`]).
+//! layout hooks (E-UI1…E-UI5, [`ui_hooks`]); what mod panels read and ask
+//! the client for ([`crate::ui::mod_io`], [`crate::ui::original::mod_reads`]);
+//! the market link of a mod's own market window ([`ModMarket`], [`market_link`]).
 
 use std::fmt;
 use std::sync::Arc;
 
 use bevy::prelude::Resource;
 use d2_proto::item_bits::ItemBits;
+use d2_sim::rules::Ruleset;
 
 pub use crate::app::shared_stash::StashSettings;
 use crate::bridge::monster_overlays::{MonsterOverlayHook, MonsterOverlays};
@@ -58,6 +61,8 @@ use crate::ui::panels::UiFiles;
 
 mod game_hooks;
 pub use game_hooks::{AutomapMarker, AutomapMarkers};
+pub mod market_link;
+pub use market_link::{ModMarket, OpenAsk};
 
 /// The client-side overrides of a mod game. Built with the `with_…`
 /// methods and inserted as a resource; cheap to clone (the hooks are
@@ -83,6 +88,10 @@ pub struct ClientMods {
     ui: ui_hooks::UiHooks,
     /// The monster overlays ([`ClientMods::with_monster_overlays`]).
     monster_overlays: Option<MonsterOverlayHook>,
+    /// The market link ([`ClientMods::with_market_link`]).
+    market: Option<ModMarket>,
+    /// The rules the game runs under ([`ClientMods::with_rules`]).
+    rules: Ruleset,
 }
 
 /// Makes a game's handler of its S→C mod messages.
@@ -102,6 +111,8 @@ impl Default for ClientMods {
             shared_stash: StashSettings::default(),
             ui: ui_hooks::UiHooks::default(),
             monster_overlays: None,
+            market: None,
+            rules: Ruleset::Original,
         }
     }
 }
@@ -120,6 +131,8 @@ impl fmt::Debug for ClientMods {
             .field("shared_stash", &self.shared_stash)
             .field("ui", &self.ui)
             .field("monster_overlays", &self.monster_overlays.is_some())
+            .field("market", &self.market.is_some())
+            .field("rules", &!self.rules.is_original())
             .finish()
     }
 }
@@ -143,6 +156,22 @@ impl ClientMods {
             && self.shared_stash == StashSettings::default()
             && self.ui.is_empty()
             && self.monster_overlays.is_none()
+            && self.market.is_none()
+            && self.rules.is_original()
+    }
+
+    /// Sets the rules the game runs under, for what the client works out
+    /// from the tables itself: the skill views' formulas and a skill
+    /// click's use state (the play app hands them to the bridge).
+    pub fn with_rules(mut self, rules: Ruleset) -> ClientMods {
+        self.rules = rules;
+        self
+    }
+
+    /// The rules of [`ClientMods::with_rules`]; the engine's own unless
+    /// set.
+    pub fn rules(&self) -> &Ruleset {
+        &self.rules
     }
 
     /// Sets the overlays the client makes on a monster from its creation
@@ -419,6 +448,8 @@ pub trait AudioGains: Send + Sync {
     fn percent(&self, category: SoundCategory, id: i32) -> i32;
 }
 
+pub mod front_hand_back;
+pub mod front_realm_link;
 pub mod stash;
 pub mod ui_hooks;
 

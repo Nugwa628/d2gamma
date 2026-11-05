@@ -26,7 +26,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use d2_accounts::rules::name_key;
 use d2_economy::{CharRef, CharacterRecords, EconomyKey, ItemId, Moved, Place, Refusal};
 use d2_item_registry::{Place as IdPlace, Registry, Split};
+use d2_net::msg::account::CharSummary;
 use d2_net::msg::stash::StashCell;
+use d2_net::msg::{Reader, Writer};
 use d2_save_checks::CheckTables;
 use d2_sim::items::bitstream::hflag;
 use d2_sim::items::bitstream::read::{read_save_entry, ReadEntry};
@@ -63,9 +65,40 @@ CREATE TABLE IF NOT EXISTS realm_stash_records(
     account INTEGER NOT NULL,
     lease INTEGER NOT NULL,
     seq INTEGER NOT NULL,
-    record BLOB NOT NULL
+    record BLOB NOT NULL,
+    summary BLOB
 );
 ";
+
+/// Adds the records' `summary` column to a store made before it.
+fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+    let has = conn
+        .prepare("SELECT 1 FROM pragma_table_info('realm_stash_records') WHERE name = 'summary'")?
+        .exists([])?;
+    if !has {
+        conn.execute_batch("ALTER TABLE realm_stash_records ADD COLUMN summary BLOB")?;
+    }
+    Ok(())
+}
+
+/// The kind byte of a stored summary's bytes.
+const SUMMARY_KIND: u8 = 1;
+
+fn summary_bytes(s: &CharSummary) -> Vec<u8> {
+    let mut w = Writer::new(SUMMARY_KIND);
+    s.encode(&mut w);
+    w.finish()
+}
+
+fn summary_of(b: &[u8]) -> Option<CharSummary> {
+    let (kind, mut r) = Reader::new(b).ok()?;
+    if kind != SUMMARY_KIND {
+        return None;
+    }
+    let s = CharSummary::decode(&mut r).ok()?;
+    r.finish().ok()?;
+    Some(s)
+}
 
 /// A character record a move stored, to be written to its file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +109,9 @@ pub struct StoredRecord {
     pub lease: u64,
     pub seq: u32,
     pub record: Vec<u8>,
+    /// The summary the game server reported with the record's save (what a
+    /// realm of the game's own records stores the record with).
+    pub summary: Option<CharSummary>,
 }
 
 /// An item of a stash page.
@@ -97,6 +133,7 @@ impl Store {
     pub fn open(path: &Path) -> Result<Self, String> {
         let conn = d2_item_registry::open_file(path).map_err(|e| e.to_string())?;
         conn.execute_batch(SCHEMA)
+            .and_then(|_| migrate(&conn))
             .map_err(|e| format!("{}: {e}", path.display()))?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -105,7 +142,9 @@ impl Store {
 
     #[cfg(test)]
     pub fn in_connection(conn: Connection) -> Result<Self, String> {
-        conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
+        conn.execute_batch(SCHEMA)
+            .and_then(|_| migrate(&conn))
+            .map_err(|e| e.to_string())?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -327,7 +366,7 @@ impl Store {
     pub fn record(&self, character: &str) -> Result<Option<StoredRecord>, String> {
         self.conn()
             .query_row(
-                "SELECT name, account, lease, seq, record FROM realm_stash_records \
+                "SELECT name, account, lease, seq, record, summary FROM realm_stash_records \
                  WHERE character = ?1",
                 [character],
                 stored_record,
@@ -341,7 +380,7 @@ impl Store {
         let conn = self.conn();
         let mut st = conn
             .prepare(
-                "SELECT name, account, lease, seq, record FROM realm_stash_records \
+                "SELECT name, account, lease, seq, record, summary FROM realm_stash_records \
                  ORDER BY character",
             )
             .map_err(db)?;
@@ -405,6 +444,10 @@ fn stored_record(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoredRecord> {
         lease: r.get::<_, i64>(2)? as u64,
         seq: r.get(3)?,
         record: r.get(4)?,
+        summary: r
+            .get::<_, Option<Vec<u8>>>(5)?
+            .as_deref()
+            .and_then(summary_of),
     })
 }
 
@@ -487,11 +530,38 @@ impl Owners {
     }
 }
 
-/// The economy's `CharacterRecords`: the record goes into
-/// `realm_stash_records` in the move's transaction.
+/// The summaries the game servers reported with the saves of the moves
+/// running now, by seat lease and save sequence. The stash sets one before
+/// its move's transaction, which stores it with the record.
+#[derive(Clone, Debug, Default)]
+pub struct Summaries(Arc<Mutex<HashMap<(u64, u32), CharSummary>>>);
+
+impl Summaries {
+    fn lock(&self) -> MutexGuard<'_, HashMap<(u64, u32), CharSummary>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn set(&self, lease: u64, seq: u32, summary: CharSummary) {
+        self.lock().insert((lease, seq), summary);
+    }
+
+    pub fn get(&self, lease: u64, seq: u32) -> Option<CharSummary> {
+        self.lock().get(&(lease, seq)).cloned()
+    }
+
+    /// The move's transaction is over (its summary stored, or not needed).
+    pub fn done(&self, lease: u64, seq: u32) {
+        self.lock().remove(&(lease, seq));
+    }
+}
+
+/// The economy's `CharacterRecords`: the record, and the summary its game
+/// server reported, go into `realm_stash_records` in the move's
+/// transaction.
 #[derive(Debug)]
 pub struct Records {
     pub owners: Owners,
+    pub summaries: Summaries,
 }
 
 impl CharacterRecords for Records {
@@ -506,19 +576,24 @@ impl CharacterRecords for Records {
             .owners
             .get(character.lease)
             .ok_or(Refusal::TransferInvalid)?;
+        let summary = self
+            .summaries
+            .get(character.lease, seq)
+            .map(|s| summary_bytes(&s));
         conn.execute(
-            "INSERT INTO realm_stash_records(character, name, account, lease, seq, record) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+            "INSERT INTO realm_stash_records(character, name, account, lease, seq, record, \
+             summary) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
              ON CONFLICT(character) DO UPDATE SET name = excluded.name, \
              account = excluded.account, lease = excluded.lease, seq = excluded.seq, \
-             record = excluded.record",
+             record = excluded.record, summary = excluded.summary",
             params![
                 name_key(&character.name),
                 character.name,
                 account,
                 character.lease as i64,
                 seq,
-                record
+                record,
+                summary
             ],
         )
         .map(|_| ())

@@ -43,33 +43,33 @@ pub mod st {
 
 /// Stats of batch 2 and 3.
 pub mod sid {
-    pub const LIFE: u16 = 6;
-    pub const MAXHP: u16 = 7;
-    pub const MANA: u16 = 8;
-    pub const LEVEL: u16 = 12;
-    pub const TOHIT: u16 = 19;
-    pub const MINDAMAGE: i32 = 21;
-    pub const MAXDAMAGE: i32 = 22;
-    pub const DAMAGEPERCENT: u16 = 25;
-    pub const ARMORCLASS: u16 = 31;
-    pub const HPREGEN: u16 = 74;
-    pub const DURABILITY: u16 = 72;
-    pub const QUANTITY: u16 = 70;
-    pub const VELOCITYPERCENT: u16 = 67;
-    pub const MONSTER_PLAYERCOUNT: u16 = 100;
-    pub const ABSORB_FIRE_PCT: u16 = 142;
-    pub const ABSORB_LIGHT_PCT: u16 = 144;
-    pub const ABSORB_COLD_PCT: u16 = 148;
-    pub const SKILL_FRENZY: i32 = 169;
-    pub const CONVERSION_LEVEL: i32 = 176;
-    pub const CONVERSION_MAXHP: i32 = 177;
-    pub const PROGRESSIVE_TOHIT: u16 = 325;
-    pub const PASSIVE_FIRE_MASTERY: u16 = 329;
-    pub const PASSIVE_LTNG_MASTERY: u16 = 330;
-    pub const PASSIVE_COLD_MASTERY: u16 = 331;
-    pub const PASSIVE_SUMMON_RESIST: u16 = 349;
-    pub const SOURCE_UNIT_TYPE: i32 = 353;
-    pub const SOURCE_UNIT_ID: i32 = 354;
+    pub use crate::stats::ids::HITPOINTS as LIFE;
+    pub use crate::stats::ids::LEVEL;
+    pub use crate::stats::ids::MANA;
+    pub use crate::stats::ids::MAXHP;
+    pub use crate::stats::ids::TOHIT;
+    pub const MINDAMAGE: i32 = crate::stats::ids::MINDAMAGE as i32;
+    pub const MAXDAMAGE: i32 = crate::stats::ids::MAXDAMAGE as i32;
+    pub use crate::stats::ids::ABSORB_COLD_PCT;
+    pub use crate::stats::ids::ABSORB_FIRE_PCT;
+    pub use crate::stats::ids::ABSORB_LIGHT_PCT;
+    pub use crate::stats::ids::ARMORCLASS;
+    pub use crate::stats::ids::DAMAGEPERCENT;
+    pub use crate::stats::ids::DURABILITY;
+    pub use crate::stats::ids::HPREGEN;
+    pub use crate::stats::ids::MONSTER_PLAYERCOUNT;
+    pub use crate::stats::ids::QUANTITY;
+    pub use crate::stats::ids::VELOCITYPERCENT;
+    pub const SKILL_FRENZY: i32 = crate::stats::ids::SKILL_FRENZY as i32;
+    pub const CONVERSION_LEVEL: i32 = crate::stats::ids::CONVERSION_LEVEL as i32;
+    pub const CONVERSION_MAXHP: i32 = crate::stats::ids::CONVERSION_MAXHP as i32;
+    pub use crate::stats::ids::COLD_MASTERY as PASSIVE_COLD_MASTERY;
+    pub use crate::stats::ids::FIRE_MASTERY as PASSIVE_FIRE_MASTERY;
+    pub use crate::stats::ids::LIGHT_MASTERY as PASSIVE_LTNG_MASTERY;
+    pub use crate::stats::ids::PASSIVE_SUMMON_RESIST;
+    pub use crate::stats::ids::PROGRESSIVE_TOHIT;
+    pub const SOURCE_UNIT_TYPE: i32 = crate::stats::ids::SOURCE_UNIT_TYPE as i32;
+    pub const SOURCE_UNIT_ID: i32 = crate::stats::ids::SOURCE_UNIT_ID as i32;
 }
 
 // ---------------------------------------------------------------- shared

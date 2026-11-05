@@ -58,6 +58,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{bail, Context, Result};
 use d2_server::seams::Clock;
 use d2_sim::debug::state;
+use d2_sim::rules::Ruleset;
 
 use super::play_start::{self, CliStart};
 use super::poke::{self as pokes, Entry, When};
@@ -487,7 +488,20 @@ pub struct DumpGame {
     /// `--gfx-ready FILE`, read ([`DumpArgs::gfx_ready`]); empty: none
     /// (the dead draw's write-back runs as not ready).
     pub gfx_ready: BTreeMap<u64, GfxReady>,
+    /// The game's rules ([`Ruleset::Original`] unless a mod game, as
+    /// the arena's, is run).
+    pub rules: Ruleset,
+    /// Called on the server thread after every tick, before that tick's
+    /// pokes ([`TickObserver`]).
+    pub observer: Option<TickObserver>,
+    /// Go on after a fatal exit of the client model (the run is the
+    /// server's, as the arena's, not a reference to the client's end).
+    pub ignore_fatal: bool,
 }
+
+/// A reader of the server's game, run after each tick on the server thread
+/// (the arena's recorder).
+pub type TickObserver = Box<dyn FnMut(&mut pokes::ServerHost<StepClock>) + Send>;
 
 impl DumpGame {
     /// Resolves `args` the way `d2-client play` resolves its command line
@@ -556,6 +570,9 @@ impl DumpGame {
                 Some(p) => read_gfx_ready(p, args.tick_rate)?,
                 None => BTreeMap::new(),
             },
+            rules: Ruleset::Original,
+            observer: None,
+            ignore_fatal: false,
         })
     }
 }
@@ -612,7 +629,9 @@ pub fn dump<W: Write>(
         ticks
     };
     let ms = Arc::new(AtomicU32::new(START_MS));
-    let client_data = ClientData::of(&game.data)?;
+    let client_data = ClientData::of(&game.data, &game.rules)?;
+    let GameData::Live(live) = &game.data;
+    let archives = live.archives.clone();
     let speeds = single_player::walk_speeds(&game.data, &game.character)?;
     // The string tables the NPC dialogs read their text from: without them
     // every dialog opens empty and its scroll never ends.
@@ -636,7 +655,7 @@ pub fn dump<W: Write>(
     // The waypoint menu's rows read the levels' waypoint indexes and names, as
     // `play` installs them: without them the menu has no rows and a row click
     // sends no C→S 0x49.
-    let waypoint_map = single_player::client_waypoint_map(&game.data);
+    let waypoint_map = single_player::client_waypoint_map_with_rules(&game.data, &game.rules);
     let level_names = single_player::client_level_names(&game.data);
     // The HUD's skill tables: without them the select panel has no
     // icons, so its click and a hotkey assign find no record.
@@ -682,7 +701,7 @@ pub fn dump<W: Write>(
                     super::save::appearance_tables(&live.tables.fixed)
                         .map_err(anyhow::Error::msg)?,
                 )),
-                codec: Arc::new(super::single_player::D2sCodec),
+                codec: crate::kit_mod::character_codec(),
             })
         }
         None => None,
@@ -691,13 +710,22 @@ pub fn dump<W: Write>(
         Some(p) => Some(super::rng_dump::RngDump::create(p, info, game.seed, rate)?),
         None => None,
     };
-    let (mut link, _started) = super::rng_dump::start_with(
-        game.data,
-        game.seed,
-        game.character.clone(),
-        StepClock(ms.clone()),
-        rng.is_some(),
-    )?;
+    // The draw log is the original rules' alone.
+    let (mut link, started) = if rng.is_none() {
+        single_player::GameBuilder::new(game.data)
+            .seed(game.seed)
+            .character(game.character.clone())
+            .rules(game.rules.clone())
+            .start(StepClock(ms.clone()))?
+    } else {
+        super::rng_dump::start_with(
+            game.data,
+            game.seed,
+            game.character.clone(),
+            StepClock(ms.clone()),
+            true,
+        )?
+    };
     link.with(move |l| {
         let host = l.host_mut();
         host.game.game.tick_rate = rate;
@@ -761,12 +789,16 @@ pub fn dump<W: Write>(
     // there on every later frame until it ends.
     let (tick_end_entries, rest) = pokes::split_tick_end(game.pokes);
     let tick_end = Arc::new(Mutex::new(TickEndOut::default()));
-    if !tick_end_entries.is_empty() {
+    if !tick_end_entries.is_empty() || game.observer.is_some() {
         tick_end.lock().unwrap_or_else(|e| e.into_inner()).pending = tick_end_entries.len();
         let shared = tick_end.clone();
         let mut entries = tick_end_entries;
+        let mut observer = game.observer;
         link.with(move |l| {
             l.set_tick_end(Box::new(move |h| {
+                if let Some(o) = observer.as_mut() {
+                    o(h);
+                }
                 let frame = h.game.game.frame;
                 let (due, later): (Vec<Entry>, Vec<Entry>) = std::mem::take(&mut entries)
                     .into_iter()
@@ -813,6 +845,7 @@ pub fn dump<W: Write>(
     let tap = link.tap();
     let mut bridge = Bridge::new(link)?;
     client_data.install(&mut bridge);
+    bridge.set_rules(game.rules.clone());
     bridge.set_ping(!game.no_ping);
     // The view's unit art the client model reads cel offsets from: `play` draws
     // every unit, so its COF and layer files are resident; the dump makes them
@@ -829,6 +862,7 @@ pub fn dump<W: Write>(
         request.flags = f;
     }
     bridge.send(&request)?;
+    super::play::install_mod_network(&mut bridge, archives.source().as_ref(), started.wire)?;
     for m in &game.early {
         bridge.send_bytes(m)?;
     }
@@ -933,7 +967,7 @@ pub fn dump<W: Write>(
         if let Some((loader, assets)) = cel_art.as_mut() {
             loader.ensure(bridge.world(), assets);
         }
-        if fatal.is_none() {
+        if fatal.is_none() && !game.ignore_fatal {
             fatal = bridge.log().rejected[rejected_before..]
                 .iter()
                 .find_map(|r| r.error.fatal_exit());
@@ -1251,7 +1285,7 @@ pub(super) fn snapshot_host<C: Clock>(h: &pokes::ServerHost<C>) -> state::StateS
             &sim.events.action.sys.units,
         );
     }
-    let d = usize::from(state::difficulty_world(&sim.events)).min(2);
+    let d = usize::from(state::difficulty_world(&sim.events));
     for (id, q) in &sim.world.rest.quests {
         if let Some(e) = sim.game.lists.unit(*id) {
             s.set_quests(e.guid, state::quest_words(&q.flags[d]));
@@ -1376,11 +1410,11 @@ struct ClientData {
 }
 
 impl ClientData {
-    fn of(data: &GameData) -> Result<Self> {
+    fn of(data: &GameData, rules: &d2_sim::rules::Ruleset) -> Result<Self> {
         let GameData::Live(d) = data;
         let archives = d.archives.as_ref();
         Ok(Self {
-            drlg: single_player::client_drlg_source(data),
+            drlg: single_player::client_drlg_source_with_rules(data, rules),
             levels: single_player::client_level_rows(data),
             objects: single_player::client_object_rows(data),
             skills: single_player::client_skill_rows(archives)?,
@@ -1412,7 +1446,9 @@ impl ClientData {
         b.set_skill_tables(Arc::new(self.skill_tables));
         b.set_unit_rows(self.units);
         b.set_player_anims(Arc::new(self.player_anims));
-        b.set_item_tables(Arc::new(super::items::TableDecoder(self.item_tables)));
+        b.set_item_tables(Arc::new(super::items::TableDecoder::active(
+            self.item_tables,
+        )));
         b.set_high_light_quality(true);
     }
 }

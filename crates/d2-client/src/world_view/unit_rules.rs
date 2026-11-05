@@ -274,7 +274,7 @@ impl<R: ViewRules, F: FrameSource> ViewRules for UnitRules<R, F> {
     /// `Draw` is 0 (the call alone); its shadow
     /// still draws (measured: object 385 `cain start position`).
     fn unit_draws_body(&self, unit: &ClientUnit) -> bool {
-        !(unit.key.unit_type == OBJECT && self.looks.object_no_draw.contains(&unit.class))
+        !self.looks.draws_no_body(unit)
     }
 
     fn unit_light_word(&self, unit: &ClientUnit) -> Option<u32> {

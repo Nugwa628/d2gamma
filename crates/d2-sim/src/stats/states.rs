@@ -29,6 +29,9 @@ pub mod group {
     pub const HIDE: usize = 2;
     /// `disguise`.
     pub const DISGUISE: usize = 16;
+    /// `restrict`: a form (a shapeshift) the skills' `restrict` column
+    /// tests.
+    pub const RESTRICT: usize = 17;
     /// `plrstaydeath` (states flag bit 13; data tables +0x100).
     pub const PLR_STAY_DEATH: usize = 13;
     /// `monstaydeath` (bit 14; +0x104).

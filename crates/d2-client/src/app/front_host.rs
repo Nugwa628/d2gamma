@@ -117,6 +117,9 @@ pub struct FrontArt {
     backdrops: HashMap<&'static str, Option<Arc<IndexImage>>>,
     /// Frame art by background file and palette ([`DrawItem::Frame`]).
     celtic: HashMap<(&'static str, [&'static str; 2]), Arc<CelticArt>>,
+    /// A picture's palette indices by its key and palette
+    /// ([`DrawItem::Picture`]).
+    pictures: HashMap<(u64, &'static str), Arc<Vec<u8>>>,
 }
 
 fn read_palette(source: &dyn FileSource, files: [&str; 2]) -> (Option<Palette>, Option<Pl2>) {
@@ -153,6 +156,7 @@ impl FrontArt {
             doll_epoch: u64::MAX,
             backdrops: HashMap::new(),
             celtic: HashMap::new(),
+            pictures: HashMap::new(),
         }
     }
 
@@ -279,6 +283,29 @@ impl FrontArt {
                 })
                 .collect(),
         )
+    }
+
+    /// The palette indices of a picture (`rgb`, three bytes a pixel) in
+    /// `pal`, worked out once per `key` and palette.
+    fn picture_indices(&mut self, key: u64, pal: &Palette, rgb: &[u8]) -> Arc<Vec<u8>> {
+        self.pictures
+            .entry((key, self.palette_files[0]))
+            .or_insert_with(|| {
+                // Index 0 is a cel's transparent colour: black is the
+                // palette's darkest other colour.
+                let black = darkest(pal);
+                Arc::new(
+                    rgb.as_chunks::<3>()
+                        .0
+                        .iter()
+                        .map(|p| match nearest(pal, [p[0], p[1], p[2]]) {
+                            0 => black,
+                            i => i,
+                        })
+                        .collect(),
+                )
+            })
+            .clone()
     }
 
     /// The frame art of background `file` in the current palette.
@@ -653,6 +680,7 @@ pub fn draw_rows(items: &[DrawItem], art: &mut FrontArt) -> Vec<Vec<String>> {
             | DrawItem::Shade { .. }
             | DrawItem::Border { .. }
             | DrawItem::Pill { .. }
+            | DrawItem::Picture { .. }
             | DrawItem::Cut { .. }
             | DrawItem::Frame { .. }
             | DrawItem::Raised(_)
@@ -873,6 +901,13 @@ pub(crate) fn item_cels(
                 solid(emit, (x + w - 1, y, 1, h), c, 5, false);
             }
         }
+        // A mod's picture in the palette's nearest colours, worked out once
+        // per picture and palette.
+        DrawItem::Picture { key, w, h, rgb, at } => {
+            let px = a.picture_indices(*key, &pal, rgb);
+            let cel = cel_key("picture", "", *key as u32, (*key >> 32) as u32);
+            emit(image_cel(cel, &px, (*w, *h), *at));
+        }
         // The capsule row by row, the rim first and the fill inside it.
         DrawItem::Pill { at, w, h, rgb, rim } => {
             let (rim, fill) = (nearest(&pal, *rim), nearest(&pal, *rgb));
@@ -1086,6 +1121,9 @@ pub struct FrontHost {
     /// The game's character files the stub is written as
     /// ([`FrontHost::with_stub_files`]; `.d2s` by default).
     stub_files: Arc<dyn CharacterFiles>,
+    /// The game start's side of this visit, which a mod game's screens are
+    /// made with ([`FrontHost::with_start`]).
+    start: Option<crate::mods::front_hand_back::FrontStart>,
     /// The stub `.d2s` written for the last created character, or why not.
     pub created: Option<Result<PathBuf, String>>,
     /// A copy of [`Self::outcome`] the caller keeps: the app's world (and
@@ -1266,6 +1304,7 @@ impl FrontHost {
         Self {
             stub: None,
             stub_files: d2s_files(),
+            start: None,
             created: None,
             front,
             art,
@@ -1385,6 +1424,13 @@ impl FrontHost {
     /// into `save_dir`. The choice stays in the sink for the game start.
     pub fn with_stub_writer(mut self, sink: NewCharacterSink, save_dir: PathBuf) -> Self {
         self.stub = Some((sink, save_dir));
+        self
+    }
+
+    /// The game start's side of this visit: the folder, character files and
+    /// cells a mod game's character screens hand their choice back through.
+    pub fn with_start(mut self, start: crate::mods::front_hand_back::FrontStart) -> Self {
+        self.start = Some(start);
         self
     }
 
@@ -1593,7 +1639,10 @@ fn enter_front(world: &mut World) {
     // A mod game's front-end hooks: its canvas and its own screens.
     if let Some(mods) = world.get_resource::<crate::mods::ClientMods>() {
         mods.apply_ui_settings();
-        mods.apply_front(&mut host.front);
+        match host.start.clone() {
+            Some(start) => mods.apply_front_with(&mut host.front, &start),
+            None => mods.apply_front(&mut host.front),
+        }
     }
     world.insert_non_send(starter);
     world.insert_non_send(host);

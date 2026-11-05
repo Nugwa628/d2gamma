@@ -188,10 +188,17 @@ impl<H: LifecycleHooks, R: InvRest + ?Sized> InvDesk<'_, '_, H, R> {
                 }
                 r
             }
-            // U drinks it, whatever the target.
-            entry::POTION => self
-                .unit_of(player)
-                .is_some_and(|u| self.use_entry3(u, item)),
+            // U drinks it; a monster target (the hireling a Shift belt use
+            // feeds, 0x26) drinks it instead.
+            entry::POTION => {
+                let drinker = if target.ty == Owner::MONSTER {
+                    target
+                } else {
+                    player
+                };
+                self.unit_of(drinker)
+                    .is_some_and(|u| self.use_entry3(u, item))
+            }
             n if n >= entry::COUNT => false,
             _ => self.use_unwritten(player, item, target, x, y),
         }

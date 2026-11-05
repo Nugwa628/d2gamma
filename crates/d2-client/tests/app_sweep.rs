@@ -8,7 +8,10 @@ fn scratch(tag: &str) -> PathBuf {
 fn install(tag: &str) -> PathBuf {
     install_with(tag, |_| {})
 }
-fn install_with(tag: &str, tweak: impl FnOnce(&mut test_fixtures::synth::Synthetic)) -> PathBuf {
+pub(super) fn install_with(
+    tag: &str,
+    tweak: impl FnOnce(&mut test_fixtures::synth::Synthetic),
+) -> PathBuf {
     let dir = scratch(tag);
     let mut data = test_fixtures::play::playable();
     // Player action records are absent from the small content fixture. Supply

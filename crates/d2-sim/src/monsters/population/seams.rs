@@ -14,6 +14,10 @@ use crate::units::{RoomId, UnitId};
 /// DRLG, units
 /// and quests.
 pub trait PopWorld {
+    /// Difficulty ids accepted by this game; extended mods override the base three.
+    fn supports_difficulty(&self, difficulty: u8) -> bool {
+        difficulty < 3
+    }
     /// The game seed (game +0xD0).
     fn game_seed(&mut self) -> &mut Seed;
     /// The active room seed (room +0x6C).

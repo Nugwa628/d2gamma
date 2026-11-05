@@ -213,7 +213,28 @@ impl<H: LifecycleHooks, R: InvRest + ?Sized> InvDesk<'_, '_, H, R> {
             return false;
         };
         let (sockets, fillers) = self.runeword_inputs(target);
-        props::runeword_row(self.econ.tables, it.record, it.quality, sockets, &fillers).is_some()
+        self.runeword_of(target, it.record, it.quality, sockets, &fillers)
+            .is_some()
+    }
+
+    /// The runes row `target` forms ([`crate::items::item_rules::runeword_for`]).
+    fn runeword_of(
+        &self,
+        target: UnitId,
+        record: usize,
+        quality: u8,
+        sockets: u8,
+        fillers: &[usize],
+    ) -> Option<usize> {
+        let stat = |s| self.econ.stats.unit_total(target, s, 0);
+        let item = crate::items::item_rules::RunewordItem {
+            record,
+            quality,
+            sockets,
+            fillers,
+            stat: &stat,
+        };
+        crate::items::item_rules::runeword_for(self.econ.tables, &item)
     }
 
     /// [`InvDesk::activate_runeword_on`], then the recharge
@@ -225,9 +246,7 @@ impl<H: LifecycleHooks, R: InvRest + ?Sized> InvDesk<'_, '_, H, R> {
             return (false, Vec::new());
         };
         let (sockets, fillers) = self.runeword_inputs(target);
-        let Some(row) =
-            props::runeword_row(self.econ.tables, it.record, it.quality, sockets, &fillers)
-        else {
+        let Some(row) = self.runeword_of(target, it.record, it.quality, sockets, &fillers) else {
             return (false, Vec::new());
         };
         let ladder = self.econ.fields.ladder;

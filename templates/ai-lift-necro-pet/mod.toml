@@ -1,0 +1,7 @@
+id = "ai-lift-necro-pet"
+name = "AI 67 NecroPet, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "NecroPet as a graph: AI 67 (NecroPet)."
+api = 1
+kind = "full"

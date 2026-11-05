@@ -1,0 +1,14 @@
+version = 1
+
+[[ai]]
+index = 1
+name = "Idle (lifted)"
+target = "none"
+
+[[ai.state]]
+name = "stand"
+
+# The body: with a room, idle 200 frames (8 seconds), over and over.
+[[ai.state.action]]
+kind = "idle"
+seconds = 8

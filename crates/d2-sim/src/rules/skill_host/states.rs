@@ -65,6 +65,21 @@ impl StateSpec {
     }
 }
 
+/// A state put on a unit the engine's standard way
+/// ([`HostStates::apply_ruled_state`]): the state's stack rules from the mod's
+/// `states.toml` apply, and a state with none behaves as the skill bodies' own
+/// state apply does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuledState {
+    pub state: u16,
+    /// The skill and level the state's list records.
+    pub skill: i32,
+    pub level: i32,
+    /// How long it lasts in base ticks (25 a second) when the state's own
+    /// rules give no duration; 0 never expires.
+    pub base_ticks: i32,
+}
+
 /// What a skill body reads and changes of a unit's stats and states
 /// beyond the base reads of [`crate::rules::SkillHost`].
 pub trait HostStates {
@@ -98,6 +113,48 @@ pub trait HostStates {
     fn apply_state(&mut self, u: UnitId, spec: &StateSpec) -> bool {
         let _ = (u, spec);
         false
+    }
+    /// Puts `spec.state` on `target` for `source` the engine's standard way:
+    /// the state's stack rules (`states.toml`) decide what a second
+    /// application does, and the target checks of a skill's state apply run
+    /// (a monster that is an NPC or cannot be attacked takes none). `false`
+    /// when the state was not put on.
+    fn apply_ruled_state(&mut self, source: UnitId, target: UnitId, spec: &RuledState) -> bool {
+        let _ = (source, target, spec);
+        false
+    }
+    /// Enters one level of a mod trigger's actions: `false` at the depth
+    /// limit (the trigger does not run). Pair every `true` with
+    /// [`Self::leave_trigger`].
+    fn enter_trigger(&mut self) -> bool {
+        true
+    }
+    /// Leaves the level [`Self::enter_trigger`] entered.
+    fn leave_trigger(&mut self) {}
+    /// The stack count of `state` on the unit: 0 when it is off, 1 for a
+    /// state without stack rules that is on.
+    fn state_stacks(&self, u: UnitId, state: u16) -> u16 {
+        let _ = (u, state);
+        0
+    }
+    /// Adds `count` stacks to the unit's `state` up to its `max_stacks`
+    /// (the state is put on first when it is off, with `spec`); the count
+    /// after. A state without stack rules is just put on.
+    fn add_state_stacks(
+        &mut self,
+        source: UnitId,
+        target: UnitId,
+        spec: &RuledState,
+        count: u16,
+    ) -> u16 {
+        let _ = (source, target, spec, count);
+        0
+    }
+    /// Takes `count` stacks off the unit's `state`; the state ends when
+    /// none is left. The count after.
+    fn remove_state_stacks(&mut self, u: UnitId, state: u16, count: u16) -> u16 {
+        let _ = (u, state, count);
+        0
     }
     /// Frees the unit's list of `state` (its remove callback runs) and
     /// switches the state off.

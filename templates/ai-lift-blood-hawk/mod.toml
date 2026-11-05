@@ -1,0 +1,7 @@
+id = "ai-lift-blood-hawk"
+name = "AI 5 BloodHawk, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "BloodHawk as a graph: AI 5 (BloodHawk)."
+api = 1
+kind = "full"

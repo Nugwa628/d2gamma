@@ -542,6 +542,7 @@ pub fn skill_tables(skills: Vec<Skills>) -> SkillTables {
         miss_code: Vec::new(),
         level_cap: super::LEVEL_CAP_114D,
         stat_count: 359,
+        data_rules: d2_data::bin::DataRules::Original,
     }
 }
 

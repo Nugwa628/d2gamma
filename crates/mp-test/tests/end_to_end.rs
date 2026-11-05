@@ -173,6 +173,7 @@ fn the_stand_in_speaks_wire_v4() {
         Err(e) => panic!("{e}"),
     };
     let hello = ClientHello {
+        mod_identity: None,
         protocol: d2_proto::PROTOCOL_VERSION,
         game: "d2rust".into(),
         build: "0.0.0".into(),

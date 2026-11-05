@@ -30,7 +30,8 @@
 //!
 //! The panel decides nothing about goods. Its answers ([`StashOut`]) are
 //! mod messages to the mod game's server (an envelope each, `ModRules`
-//! decides), UI sounds, or asks of D2RUST's shared stash store.
+//! decides), UI sounds, asks of D2RUST's shared stash store, or the
+//! market window's open ([`StashOut::OpenMarket`]).
 
 use crate::bridge::world::ClientWorld;
 use crate::ui::draw::UiDrawSink;
@@ -38,7 +39,7 @@ use crate::ui::geom::{Point, Rect};
 use crate::ui::layout::Screen;
 use crate::ui::original::FontMeasure;
 use crate::ui::panels::UiFiles;
-use crate::ui::shared_stash::StashAsk;
+use crate::ui::shared_stash::{SharedStashUi, Shown, StashAsk};
 
 /// The longest page name the rename field takes, in characters.
 pub const PAGE_NAME_MAX: usize = 12;
@@ -55,6 +56,12 @@ pub struct StashCtx<'a> {
     pub mouse: Point,
     /// The GUID of the item on the cursor, if any.
     pub cursor: Option<u32>,
+    /// D2Gamma's shared stash store as its last answer showed it, when one
+    /// is open (online: the account's stash on the realm): the shown item
+    /// page's items and cells, the slots' counts, the gold, the pages'
+    /// shape and the gold cap. The panel drives it with
+    /// [`StashOut::Ask`] and [`StashOut::ShowShared`].
+    pub shared: Option<&'a SharedStashUi>,
 }
 
 /// A place on the mod's panel ([`StashPanelMod::spot`]).
@@ -150,6 +157,14 @@ pub enum StashOut {
     Sound(i32),
     /// An ask of D2RUST's shared stash store (when one is open).
     Ask(StashAsk),
+    /// Shows `Shown` of the shared stash store (an item page or a slot
+    /// page) and reads it again: [`StashCtx::shared`] has it after the
+    /// store's answer.
+    ShowShared(Shown),
+    /// The panel's Market button: the market window opens (the mod's own
+    /// when it draws one, `super::ModMarket::draws_window`, else
+    /// D2Gamma's; online only, as the window says).
+    OpenMarket,
 }
 
 /// Which engine text field is open.

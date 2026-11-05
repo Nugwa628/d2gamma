@@ -7,6 +7,9 @@
 //! `d2_server::adapters::handlers::player::resurrect`); this module only
 //! shows the state and sends the intent.
 //!
+//! A mod game that shows the death itself
+//! (`ClientMods::without_death_screen`) gets no screen; Esc still respawns.
+//!
 //! The screen is the game's: the
 //! two banner images and up to two text rows. The banners are DC6 art in
 //! the game; the preview sets their words as text.
@@ -87,6 +90,13 @@ pub fn is_down(w: &ClientWorld) -> bool {
         .is_some_and(|u| u.mode == player_mode::DEATH || u.mode == player_mode::DEAD)
 }
 
+/// The game's death screen shows: the local player is down and the mod
+/// game, if any, does not show the death itself
+/// (`ClientMods::without_death_screen`).
+pub fn screen_shown(w: &ClientWorld, mods: Option<&crate::mods::ClientMods>) -> bool {
+    is_down(w) && !mods.is_some_and(|m| m.death_screen_hidden())
+}
+
 /// The local player lies dead (mode 0x11): the only mode the server
 /// accepts 0x41 in.
 pub fn is_dead(w: &ClientWorld) -> bool {
@@ -139,14 +149,15 @@ pub(super) fn death_screen(
     mut bridge: ResMut<BridgeResource>,
     keys: Option<Res<ButtonInput<KeyCode>>>,
     hardcore: Option<Res<HardcoreRun>>,
+    mods: Option<Res<crate::mods::ClientMods>>,
     mut screen: ResMut<DeathScreen>,
     mut nodes: Query<(&DeathText, &mut Visibility, &mut Node, &Children)>,
     mut texts: Query<&mut Text>,
 ) {
     let w = bridge.0.world();
-    let down = is_down(w);
     let respawn = is_dead(w) && keys.is_some_and(|k| k.just_pressed(KeyCode::Escape));
-    screen.active = down;
+    screen.active = is_down(w);
+    let down = screen_shown(w, mods.as_deref());
     let rows = match w.local_player {
         Some(key) if down => death_rows(
             hardcore.is_some_and(|h| h.0),
@@ -238,5 +249,27 @@ mod tests {
             death_rows(true, 9, 2),
             vec![row(2, "Your deeds of valor will be remembered")]
         );
+    }
+
+    /// A mod game that shows the death itself hides the game's screen; the
+    /// player is down either way.
+    #[test]
+    fn a_mod_game_can_leave_the_screen_out() {
+        use crate::bridge::world::{ClientUnit, UnitKey, PLAYER};
+        use crate::mods::ClientMods;
+        let me = UnitKey::new(PLAYER, 1);
+        let mut w = ClientWorld::default();
+        let mut u = ClientUnit::new(me);
+        u.mode = player_mode::DEAD;
+        w.units.insert(me, u);
+        w.local_player = Some(me);
+        let hidden = ClientMods::new().without_death_screen();
+        assert!(hidden.death_screen_hidden());
+        assert!(is_down(&w));
+        assert!(screen_shown(&w, None));
+        assert!(screen_shown(&w, Some(&ClientMods::new())));
+        assert!(!screen_shown(&w, Some(&hidden)));
+        w.units.get_mut(&me).unwrap().mode = player_mode::NEUTRAL;
+        assert!(!screen_shown(&w, None));
     }
 }

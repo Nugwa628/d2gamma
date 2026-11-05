@@ -200,9 +200,12 @@ fn a_skill_point_adds_the_skill_and_tells_the_client() {
         .unwrap();
     let got = g.tick();
     assert_eq!(g.stat(p, 5), points - 1, "the point is spent");
+    // The start weapon carries the class's `StartSkill` at +1 (stat 107):
+    // learning that skill reports the item's +1 as its bonus level.
+    let bonus = u8::from(skill == g.charstats().startskill);
     let mut m = vec![0x21, 0, 0];
     m.extend_from_slice(&guid.to_le_bytes());
-    m.extend_from_slice(&[skill as u8, (skill >> 8) as u8, 1, 0, 0]);
+    m.extend_from_slice(&[skill as u8, (skill >> 8) as u8, 1, bonus, 0]);
     assert!(has(&got, &m), "{got:02X?}");
     assert!(has(&got, &stat_msg(5, (points - 1) as u8)), "{got:02X?}");
     // The spent point is gone: asking again for a skill needing a point

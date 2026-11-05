@@ -17,7 +17,7 @@ use d2_net::msg::node::{SaveInfo, SAVE_REASON_TRANSFER};
 use d2_net::msg::transfer::{placed, ItemInDone};
 
 use super::cells::Placement;
-use super::store::{Owners, RealmItems, Records, Store, StoredRecord};
+use super::store::{Owners, RealmItems, Records, Store, StoredRecord, Summaries};
 use super::*;
 use crate::realm::guard::GuardConfig;
 use crate::realm::saves::{SavePairs, TransferHalf, PAIR_WAIT};
@@ -74,6 +74,14 @@ fn save(seq: u32) -> Save {
 /// The realm database with the registry (a block granted to the game),
 /// the economy with the stash's hooks, and the stash's store.
 fn realm(dir: &Path) -> (Economy, Store, Owners, rusqlite::Connection, Registry, u32) {
+    realm_with(dir, Summaries::default())
+}
+
+/// [`realm`] whose records take the summaries in `summaries`.
+fn realm_with(
+    dir: &Path,
+    summaries: Summaries,
+) -> (Economy, Store, Owners, rusqlite::Connection, Registry, u32) {
     let path = dir.join("realm.sqlite");
     let conn = d2_item_registry::open_file(&path).unwrap();
     let registry = Registry::open(&conn, "d2rust", Config::default()).unwrap();
@@ -87,6 +95,7 @@ fn realm(dir: &Path) -> (Economy, Store, Owners, rusqlite::Connection, Registry,
         .unwrap()
         .with_records(Box::new(Records {
             owners: owners.clone(),
+            summaries,
         }))
         .with_registry(Box::new(RealmItems::new(registry.clone(), None)));
     (economy, store, owners, conn, registry, block.first)
@@ -134,6 +143,7 @@ fn a_put_stores_the_record_and_moves_the_id_to_the_stash() {
             lease: LEASE,
             seq: 2,
             record: save(2).record,
+            summary: None,
         }
     );
     assert_eq!(
@@ -735,4 +745,61 @@ fn a_mod_realms_cells_slots_and_cap_are_its_own() {
     );
     assert!(s.stack_of(&stack_out(Some(("r01", 10_000_000)))).is_err());
     assert_eq!(StashShape::DEFAULT, StashSettings::default().shape);
+}
+
+/// A realm of the game's own records can't read a record: the summary the
+/// game server reported with the move's save is stored with the record, in
+/// the move's transaction, so the record can be written to its file.
+#[test]
+fn a_put_stores_the_reported_summary_with_the_record() {
+    let dir = temp("put-summary");
+    let summaries = Summaries::default();
+    let (mut e, store, owners, _, _, id) = realm_with(&dir, summaries.clone());
+    owners.set(LEASE, ACCOUNT);
+    let reported = CharSummary {
+        name: "Amy".into(),
+        level: 33,
+        ..CharSummary::default()
+    };
+    summaries.set(LEASE, 2, reported.clone());
+    e.put(
+        &owner(),
+        &Req::lease(LEASE, 2),
+        &amy(),
+        PutGoods::Item(item(id)),
+        &save(2),
+        NOW,
+    )
+    .unwrap();
+    summaries.done(LEASE, 2);
+    let r = store.record("amy").unwrap().unwrap();
+    assert_eq!(r.summary, Some(reported.clone()));
+    assert_eq!(r.record, save(2).record);
+    // It survives the main server's restart.
+    drop(store);
+    let again = Store::open(&dir.join("realm.sqlite")).unwrap();
+    assert_eq!(again.records().unwrap()[0].summary, Some(reported));
+}
+
+/// A store made before the summary column gets it, its rows kept.
+#[test]
+fn an_older_store_gets_the_summary_column() {
+    let dir = temp("old-records");
+    let path = dir.join("realm.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE realm_stash_records(character TEXT PRIMARY KEY, name TEXT NOT NULL, \
+             account INTEGER NOT NULL, lease INTEGER NOT NULL, seq INTEGER NOT NULL, \
+             record BLOB NOT NULL); \
+             INSERT INTO realm_stash_records VALUES ('amy', 'Amy', 7, 9, 3, x'0102');",
+        )
+        .unwrap();
+    }
+    let store = Store::open(&path).unwrap();
+    let r = store.record("amy").unwrap().unwrap();
+    assert_eq!((r.record, r.summary), (vec![1, 2], None));
+    // Opening again finds the column there.
+    drop(store);
+    assert!(Store::open(&path).is_ok());
 }

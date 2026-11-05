@@ -1,0 +1,7 @@
+id = "ai-lift-vile-dog"
+name = "AI 69 VileDog, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "VileDog as a graph: AI 69 (VileDog)."
+api = 1
+kind = "full"

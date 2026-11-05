@@ -93,6 +93,7 @@ pub fn client_size_on(wire: Wire, b: &[u8]) -> Size {
 /// its length field, a wide state message by its size rule.
 pub fn server_size_on(wire: Wire, b: &[u8]) -> Size {
     match b.first() {
+        Some(&crate::wide_stat::ID) => crate::wide_stat::size(wire, b),
         Some(&envelope::SERVER_ID) if wire.envelopes() => envelope::size(b),
         Some(&wide_state::ID) if wide_state::valid_on(wire) => {
             SERVER_MESSAGES[usize::from(wide_state::ID)].size.eval(b)
@@ -183,7 +184,11 @@ pub enum ServerList {
 /// and a wide state message (only ever split out on [`Wire::Mod`]) go to
 /// the game list.
 pub fn server_list(id: u8) -> ServerList {
-    if id < FIRST_SERVER_SYSTEM_ID || id == envelope::SERVER_ID || id == wide_state::ID {
+    if id < FIRST_SERVER_SYSTEM_ID
+        || id == envelope::SERVER_ID
+        || id == wide_state::ID
+        || id == crate::wide_stat::ID
+    {
         ServerList::Game
     } else {
         ServerList::System

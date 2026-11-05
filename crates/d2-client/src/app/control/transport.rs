@@ -57,6 +57,50 @@ pub struct Channel {
     pub exit_on_close: bool,
 }
 
+// A process restart must keep the existing stdin reader: it may already
+// hold buffered lines and cannot be interrupted while blocked in read.
+static RESTART_INPUT: std::sync::Mutex<Option<Receiver<Incoming>>> = std::sync::Mutex::new(None);
+
+impl Drop for Channel {
+    fn drop(&mut self) {
+        if self.exit_on_close && crate::app::dev::reload::restart_pending() {
+            let (_, empty) = mpsc::channel();
+            let input = std::mem::replace(
+                self.incoming.get_mut().unwrap_or_else(|e| e.into_inner()),
+                empty,
+            );
+            *RESTART_INPUT.lock().unwrap_or_else(|e| e.into_inner()) = Some(input);
+        }
+    }
+}
+
+/// The old app's stdio input, for forwarding into a restarted child.
+pub fn take_restart_input() -> Option<Receiver<Incoming>> {
+    RESTART_INPUT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+}
+
+/// Forward complete lines, preserving the one stdin reader across process
+/// generations. Closing the driver's input closes the child's input too.
+pub fn forward_input(input: Receiver<Incoming>, mut output: impl Write) {
+    for message in input {
+        match message {
+            Incoming::Connected => {}
+            Incoming::Closed => break,
+            Incoming::Line(line) => {
+                if writeln!(output, "{line}")
+                    .and_then(|()| output.flush())
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }
+    }
+}
+
 /// Opens `t`'s channel and starts its threads.
 pub fn open(t: Transport) -> std::io::Result<Channel> {
     match t {
@@ -232,6 +276,23 @@ fn pipe() -> std::io::Result<Channel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restart_forwards_buffered_control_lines_and_stops_at_eof() {
+        let (tx, rx) = mpsc::channel();
+        for message in [
+            Incoming::Connected,
+            Incoming::Line("state".into()),
+            Incoming::Line("resume".into()),
+            Incoming::Closed,
+            Incoming::Line("quit".into()),
+        ] {
+            tx.send(message).unwrap();
+        }
+        let mut bytes = Vec::new();
+        forward_input(rx, &mut bytes);
+        assert_eq!(bytes, b"state\nresume\n");
+    }
 
     #[test]
     fn transports_parse() {

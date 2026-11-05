@@ -157,7 +157,7 @@ impl<H: LifecycleHooks, R: InvRest + ?Sized> InvDesk<'_, '_, H, R> {
         // not fit has length 0 and step 3's read fails.
         let view = self.save_view(src)?;
         let mut w = BitWriter::new(COPY_BUFFER);
-        let wbs = bitstream::write_save_into(&mut w, &view, &self.econ.tables.isc);
+        let wbs = bitstream::write_save_into(&mut w, &view, self.econ.tables);
         let bytes = w.finish().unwrap_or_default();
         // The writer's changes (item level < 1 becomes 1, quality outside
         // 1–9 becomes 2) stay on the source and each child, in write order.

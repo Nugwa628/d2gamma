@@ -9,6 +9,7 @@ pub mod difficulty;
 pub mod element_ids;
 pub mod loading;
 pub mod main_menu;
+pub mod mods;
 pub mod online;
 pub mod trademark;
 
@@ -26,11 +27,13 @@ pub mod ids {
     pub const CREDITS: ScreenId = ScreenId("credits");
     pub const LOADING: ScreenId = ScreenId("loading");
     pub const CONTROLS: ScreenId = ScreenId("controls");
+    pub const MODS: ScreenId = ScreenId("mods");
 }
 
 pub fn register_all(reg: &mut Registry) {
     trademark::register(reg);
     main_menu::register(reg);
+    mods::register(reg);
     char_select::register(reg);
     create::register(reg);
     difficulty::register(reg);

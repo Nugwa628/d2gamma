@@ -44,6 +44,13 @@ pub trait MonsterProvider: Send + Sync + Debug {
         let _ = (state, class);
         None
     }
+    /// The value of AI parameter `n` (1 to 8) for monsters whose monstats
+    /// `AI` value is `ai`, on `difficulty` (0 Normal, 1 Nightmare, 2 Hell);
+    /// `None`: the monstats column.
+    fn aip(&self, ai: u16, n: usize, difficulty: u8) -> Option<i32> {
+        let _ = (ai, n, difficulty);
+        None
+    }
     /// Runs init function `function` on `unit`; `false`: D2RUST's.
     fn ai_init(
         &self,

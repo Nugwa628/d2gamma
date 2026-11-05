@@ -27,6 +27,7 @@
 
 use std::sync::Arc;
 
+use super::front_hand_back::FrontStart;
 use super::{ClientMods, PanelFactory, PanelPlace};
 use crate::app::config::MenuSides;
 use crate::rules::camera::FrameSize;
@@ -53,6 +54,21 @@ pub(super) struct UiHooks {
     hud_rows: Option<i32>,
     /// [`ClientMods::without_panel_shift`].
     no_panel_shift: bool,
+    /// [`ClientMods::with_hire_list_in_npc_menu`].
+    hire_in_npc_menu: bool,
+    /// [`ClientMods::without_overhead_bubbles`].
+    no_bubbles: bool,
+    /// [`ClientMods::without_chat_lines`].
+    no_chat_lines: bool,
+    /// A [`GamePanel::ChatPrompt`] is registered.
+    chat_prompt: bool,
+    /// A [`GamePanel::Inventory`] is registered: the mod game's panel
+    /// lays the inventory out and draws its own item tips.
+    own_inventory: bool,
+    /// [`ClientMods::without_npc_menu_box`].
+    no_npc_menu_box: bool,
+    /// [`ClientMods::without_death_screen`].
+    no_death_screen: bool,
 }
 
 impl UiHooks {
@@ -191,6 +207,15 @@ pub trait LevelBackdrops: Send + Sync {
 /// starts.
 pub trait FrontScreenFactory: Send + Sync {
     fn make(&self) -> Box<dyn Screen>;
+
+    /// Makes the screen with the game start's side of this front-end visit
+    /// ([`FrontStart`]): a character select or create screen lists the
+    /// game's characters and hands its choice back through it, so the game
+    /// starts with it. The front end calls this; a screen that needs
+    /// nothing from the start keeps the default, which is [`Self::make`].
+    fn make_with(&self, _start: &FrontStart) -> Box<dyn Screen> {
+        self.make()
+    }
 }
 
 impl ClientMods {
@@ -217,7 +242,11 @@ impl ClientMods {
     /// border, control panel and side bars are no longer drawn, the world
     /// is drawn under the HUD's rows, and presses and hovers reach the
     /// world down to the row above the HUD's `rows` bottom UI rows
-    /// ([`crate::ui::ui_frame::UiFrame::bottom_band`]).
+    /// ([`crate::ui::ui_frame::UiFrame::bottom_band`]). Widgets the HUD
+    /// shows above those rows (orbs, skill and state icons) get hovers and
+    /// presses before the world when the HUD's rect spans them: the HUD
+    /// hides the world only where `Panel::covers_world_at` says so, and a
+    /// press it ignores goes on to the world.
     pub fn with_hud(mut self, rows: i32, factory: impl PanelFactory + 'static) -> ClientMods {
         self.ui.hud_rows = Some(rows.max(0));
         self.with_panel(PanelPlace::Replace, factory)
@@ -234,6 +263,93 @@ impl ClientMods {
     pub fn without_panel_shift(mut self) -> ClientMods {
         self.ui.no_panel_shift = true;
         self
+    }
+
+    /// The hire list an NPC offers shows in the mod game's own NPC menu
+    /// ([`GamePanel::NpcMenu`]): the game's hire list box is not drawn,
+    /// the NPC menu panel reads the offers with `UiCtx::hire_offers`
+    /// ([`crate::ui::mod_io`]) and opens, closes and hires with
+    /// `UiCtx::request` (`ModRequest::HireList`, `ModRequest::Hire`).
+    pub fn with_hire_list_in_npc_menu(mut self) -> ClientMods {
+        self.ui.hire_in_npc_menu = true;
+        self
+    }
+
+    /// Whether the hire list shows in the mod game's NPC menu.
+    pub fn hire_list_in_npc_menu(&self) -> bool {
+        self.ui.hire_in_npc_menu
+    }
+
+    /// The game's overhead text bubbles are not drawn: the mod game's own
+    /// panel draws the texts it reads with `UiCtx::speech`
+    /// ([`crate::ui::mod_io`]). They still age and free as the game's do.
+    pub fn without_overhead_bubbles(mut self) -> ClientMods {
+        self.ui.no_bubbles = true;
+        self
+    }
+
+    /// Whether the game's overhead bubbles are left out.
+    pub fn overhead_bubbles_hidden(&self) -> bool {
+        self.ui.no_bubbles
+    }
+
+    /// The game's screen messages (the recent chat lines at the top left)
+    /// are not drawn: the mod game's own panel draws the lines it reads
+    /// with `UiCtx::chat_lines` ([`crate::ui::mod_io`]). They still age as
+    /// the game's do.
+    pub fn without_chat_lines(mut self) -> ClientMods {
+        self.ui.no_chat_lines = true;
+        self
+    }
+
+    /// Whether the game's screen messages are left out.
+    pub fn chat_lines_hidden(&self) -> bool {
+        self.ui.no_chat_lines
+    }
+
+    /// Whether the mod game has its own chat prompt
+    /// ([`GamePanel::ChatPrompt`]).
+    pub fn has_chat_prompt(&self) -> bool {
+        self.ui.chat_prompt
+    }
+
+    /// Whether the mod game replaces the inventory panel
+    /// ([`GamePanel::Inventory`]): the game then draws no tip for the item
+    /// under the mouse in its own inventory layout, which the mod's panel
+    /// does not share.
+    pub fn has_own_inventory(&self) -> bool {
+        self.ui.own_inventory
+    }
+
+    /// The game's NPC menu box (the option rows over the NPC) is not
+    /// drawn: the mod game's own panel draws the menu it reads with
+    /// `UiCtx::npc_menu` and runs a row with `ModRequest::NpcRow`
+    /// ([`crate::ui::mod_io`]), so every option does what the game's does
+    /// (the talk, the shop, the hire list, the waiting state). The rest of
+    /// the interaction stays the game's: the talk and its topics, the
+    /// waiting note, the shop's confirm box, Esc, and a press that reaches
+    /// the game's menu (outside the mod game's panels) ends the chat.
+    pub fn without_npc_menu_box(mut self) -> ClientMods {
+        self.ui.no_npc_menu_box = true;
+        self
+    }
+
+    /// Whether the game's NPC menu box is left out.
+    pub fn npc_menu_box_hidden(&self) -> bool {
+        self.ui.no_npc_menu_box
+    }
+
+    /// The game's death screen (the banners and the gold and experience
+    /// lines while the player is down) is not shown: the mod game's own
+    /// panel shows the death. Esc still asks for the respawn.
+    pub fn without_death_screen(mut self) -> ClientMods {
+        self.ui.no_death_screen = true;
+        self
+    }
+
+    /// Whether the game's death screen is left out.
+    pub fn death_screen_hidden(&self) -> bool {
+        self.ui.no_death_screen
     }
 
     /// Puts the mod game's own screen in place of front-end screen `id`
@@ -300,6 +416,14 @@ impl ClientMods {
         }
     }
 
+    /// [`ClientMods::apply_front`] with the visit's game start, which the
+    /// screens are made with ([`FrontScreenFactory::make_with`]).
+    pub fn apply_front_with(&self, front: &mut FrontEnd, start: &FrontStart) {
+        for (id, factory) in &self.ui.front_screens {
+            front.register_screen(*id, factory.make_with(start));
+        }
+    }
+
     /// Applies the mod game's process-wide UI settings (the UI frame
     /// floor, the HUD's rows, the panel shift, the front canvas, the menu
     /// sides default); D2Gamma's own where it set none. Called when the
@@ -340,7 +464,9 @@ pub enum GamePanel {
     Quests,
     /// An NPC's talk menu.
     NpcMenu,
-    /// The hireling list an NPC offers.
+    /// The hireling list an NPC offers. A mod game that shows the list in
+    /// its NPC menu sets [`ClientMods::with_hire_list_in_npc_menu`]
+    /// instead.
     HireList,
     /// The message log.
     MessageLog,
@@ -351,10 +477,22 @@ pub enum GamePanel {
     /// The hireling's sheet and gear: a UI state the game draws no panel
     /// for.
     HirelingSheet,
+    /// The chat prompt of a game off a realm: the chat UI state, which the
+    /// game draws no panel for there. The Chat key opens it; while it is
+    /// open the typed text (Enter, Esc and Backspace included) reaches it
+    /// as `UiEvent::Char` and no key binding runs. It sends with
+    /// `ModRequest::Say` and closes with `ModRequest::SetUi`.
+    ChatPrompt,
+    /// A scroll read in the world (the Inifuss scroll's UI state, left
+    /// side): a UI state the game draws no panel for.
+    ScrollPanel,
+    /// A reference page (the recipe scroll's UI state, left side): a UI
+    /// state the game draws no panel for.
+    ReferencePanel,
 }
 
 impl GamePanel {
-    pub const ALL: [GamePanel; 14] = [
+    pub const ALL: [GamePanel; 17] = [
         GamePanel::Inventory,
         GamePanel::Character,
         GamePanel::SkillTree,
@@ -369,6 +507,9 @@ impl GamePanel {
         GamePanel::EscMenu,
         GamePanel::Party,
         GamePanel::HirelingSheet,
+        GamePanel::ChatPrompt,
+        GamePanel::ScrollPanel,
+        GamePanel::ReferencePanel,
     ];
 
     /// The panel's id: the id the mod game's panel must report. A UI
@@ -391,13 +532,23 @@ impl GamePanel {
             GamePanel::EscMenu => state(id::ESC_MENU),
             GamePanel::Party => state(id::PARTY),
             GamePanel::HirelingSheet => state(id::MERC_INV),
+            GamePanel::ChatPrompt => state(id::CHAT),
+            GamePanel::ScrollPanel => state(id::INI_SCROLL),
+            GamePanel::ReferencePanel => state(id::RECIPE_SCROLL),
         }
     }
 
     /// Whether the game draws a panel of its own here (one to replace);
     /// else the mod game's panel is added and follows the UI state.
     pub fn is_built_in(self) -> bool {
-        !matches!(self, GamePanel::Party | GamePanel::HirelingSheet)
+        !matches!(
+            self,
+            GamePanel::Party
+                | GamePanel::HirelingSheet
+                | GamePanel::ChatPrompt
+                | GamePanel::ScrollPanel
+                | GamePanel::ReferencePanel
+        )
     }
 }
 
@@ -415,10 +566,12 @@ impl ClientMods {
     /// opens and closes with that state. The factory's panel must report
     /// [`GamePanel::id`]; installing the UI fails otherwise.
     pub fn with_game_panel(
-        self,
+        mut self,
         which: GamePanel,
         factory: impl PanelFactory + 'static,
     ) -> ClientMods {
+        self.ui.chat_prompt |= which == GamePanel::ChatPrompt;
+        self.ui.own_inventory |= which == GamePanel::Inventory;
         let place = if which.is_built_in() {
             PanelPlace::Replace
         } else {
@@ -571,6 +724,26 @@ mod tests {
         (usize::from(id.0) < crate::ui::layout::UI_STATE_COUNT).then_some(id.0 as u8)
     }
 
+    /// A mod game's own inventory panel stops the game's inventory tip
+    /// pass: the game's layout is not where the mod's items are, so the
+    /// item under the mouse there would get a second tip. Other
+    /// replaced panels leave it on.
+    #[test]
+    fn a_mod_inventory_panel_ends_the_games_inventory_tips() {
+        let plain = ClientMods::new();
+        assert!(!plain.has_own_inventory());
+        let (ui, _) = installed_ui(plain);
+        assert!(ui.draws_own_inventory_tips());
+        let other = ClientMods::new()
+            .with_game_panel(GamePanel::Character, MakeStandIn(GamePanel::Character.id()));
+        assert!(!other.has_own_inventory());
+        let own = ClientMods::new()
+            .with_game_panel(GamePanel::Inventory, MakeStandIn(GamePanel::Inventory.id()));
+        assert!(own.has_own_inventory());
+        let (ui, _) = installed_ui(own);
+        assert!(!ui.draws_own_inventory_tips());
+    }
+
     /// Every built-in panel a mod game names is replaced in place: the
     /// root opens the same panels as the game's own, and the mod game's
     /// panel draws while its state is open.
@@ -703,6 +876,59 @@ mod tests {
         // No front hook: the game's screens.
         ClientMods::new().apply_front(&mut plain);
         assert!(!plain.wide());
+    }
+
+    /// The front end makes a mod's screens with the visit's game start
+    /// (`make_with`); a factory that does not take it still gets `make`.
+    #[test]
+    fn mod_screens_are_made_with_the_game_start() {
+        use crate::app::front_start::StartHandles;
+        use crate::ui::front_end::{Screen as FrontScreen, CHAR_SELECT, MAIN_MENU};
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        struct Counts(Arc<AtomicU32>, Arc<AtomicU32>);
+        impl FrontScreenFactory for Counts {
+            fn make(&self) -> Box<dyn FrontScreen> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Box::new(Plain)
+            }
+            fn make_with(&self, start: &FrontStart) -> Box<dyn FrontScreen> {
+                assert_eq!(start.save_dir(), std::path::Path::new("saves"));
+                self.1.fetch_add(1, Ordering::SeqCst);
+                Box::new(Plain)
+            }
+        }
+        struct Plain;
+        impl FrontScreen for Plain {}
+        /// Only `make`: the default `make_with` calls it.
+        struct OnlyMake(Arc<AtomicU32>);
+        impl FrontScreenFactory for OnlyMake {
+            fn make(&self) -> Box<dyn FrontScreen> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Box::new(Plain)
+            }
+        }
+
+        let (made, made_with, only) = (Arc::default(), Arc::default(), Arc::default());
+        let mods = ClientMods::new()
+            .with_front_screen(
+                CHAR_SELECT,
+                Counts(Arc::clone(&made), Arc::clone(&made_with)),
+            )
+            .with_front_screen(MAIN_MENU, OnlyMake(Arc::clone(&only)));
+        let start = FrontStart::new(
+            std::path::Path::new("saves"),
+            &StartHandles::default(),
+            true,
+        );
+        let mut front = FrontEnd::with_screens(true, Box::new(true));
+        mods.apply_front_with(&mut front, &start);
+        assert_eq!(made.load(Ordering::SeqCst), 0);
+        assert_eq!(made_with.load(Ordering::SeqCst), 1);
+        assert_eq!(only.load(Ordering::SeqCst), 1, "the default is `make`");
+        // The plain path still makes with `make`.
+        mods.apply_front(&mut front);
+        assert_eq!(made.load(Ordering::SeqCst), 1);
     }
 
     /// The front canvas and the menu sides default reach the front host

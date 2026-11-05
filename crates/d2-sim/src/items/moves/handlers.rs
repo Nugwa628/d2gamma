@@ -14,6 +14,7 @@ use super::{
     page, res, sound, stat, ty, uflag, Guid, MoveFatal, Outcome, Owner, CUBE_CODE, DROP_MASK,
     DROP_MASK2, MAX_PILES, PICK_COLLISION_MASK, PICK_RANGE, PILE_CAP, USE_RANGE, WALK_RANGE,
 };
+use crate::items::item_rules::{ItemMove, MoveViewOf};
 
 /// The ids handled here with their exact handler size (`handler_size`
 /// column of `client-messages.tsv`).
@@ -61,6 +62,14 @@ pub fn handle<W: MoveWorld>(w: &mut W, player: Guid, msg: &[u8]) -> Option<Resul
     }
     let p = Owner::player(player);
     let m = msg;
+    // A mod game's veto: nothing moves, as a failed requirement.
+    let rules = w.item_rules();
+    if let Some(items) = rules.items() {
+        let mv = ItemMove { player: p, id, msg };
+        if !items.may_move(&mut MoveViewOf(w), &mv) {
+            return Some(Ok(res::OK));
+        }
+    }
     Some(match id {
         0x16 => pick_item(w, p, u32_at(m, 1), u32_at(m, 5), u32_at(m, 9)),
         0x17 => drop_item(w, p, u32_at(m, 1)),
@@ -1724,7 +1733,9 @@ pub fn merc_give<W: MoveWorld>(w: &mut W, p: Owner, merc: Option<Owner>, c: Guid
     {
         let target = merc.unwrap_or(p);
         w.use_item(p, target, c);
-        w.consume_one(c);
+        if !w.consume_one(c) {
+            w.use_up_cursor_item(p, c);
+        }
         w.set_cursor(p, None);
         return 1;
     }

@@ -79,6 +79,13 @@ impl<X: WorldPending> WorldHost<'_, X> {
 }
 
 impl<X: WorldPending> PopWorld for WorldHost<'_, X> {
+    fn supports_difficulty(&self, difficulty: u8) -> bool {
+        self.v
+            .h
+            .rules
+            .difficulties()
+            .map_or(difficulty < 3, |d| d.contains(difficulty))
+    }
     fn game_seed(&mut self) -> &mut Seed {
         &mut self.v.h.game_seed
     }
@@ -200,7 +207,7 @@ impl<X: WorldPending> PopWorld for WorldHost<'_, X> {
     /// was found. A DRLG error is logged and reads as none.
     fn spawn_location(&mut self, room: RoomId, kind: u8) -> Option<(i32, i32)> {
         let level = self.room_level_id(room) as u32;
-        let act = crate::drlg::act_of_level(level);
+        let act = self.v.h.rules.act_of_level(level);
         let r = self
             .v
             .h

@@ -17,6 +17,7 @@ d2-net.workspace = true
 d2-proto.workspace = true
 d2-quic.workspace = true
 d2-service.workspace = true
+d2-base-data.workspace = true
 d2-link.workspace = true
 d2-tickets.workspace = true
 d2-games.workspace = true

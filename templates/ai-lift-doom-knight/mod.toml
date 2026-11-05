@@ -1,0 +1,7 @@
+id = "ai-lift-doom-knight"
+name = "AI 72 DoomKnight, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "DoomKnight as a graph: AI 72 (DoomKnight)."
+api = 1
+kind = "full"

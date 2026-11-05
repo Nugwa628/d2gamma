@@ -10,6 +10,7 @@ mod mod_missile_fill;
 mod mod_missile_world;
 mod mod_skill_seams;
 mod mod_stat_callbacks;
+mod mod_traders;
 mod npc;
 mod quest_npc;
 mod regen;
@@ -22,7 +23,7 @@ mod unit_events;
 mod vendors;
 mod vitals;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use d2_data::bin::BinTable;
@@ -324,13 +325,20 @@ pub fn hireling_tables(rows: &[HireRow]) -> HirelingTables {
     }
 }
 
-/// Hooks with every default.
+/// Hooks with every default, under the rules the world runs (D2Gamma's
+/// own unless a test sets a mod's).
 #[derive(Default)]
-pub struct Hooks;
+pub struct Hooks {
+    pub rules: crate::rules::Ruleset,
+}
 
 impl StatHost for Hooks {}
 impl UnitHooks for Hooks {}
-impl LifecycleHooks for Hooks {}
+impl LifecycleHooks for Hooks {
+    fn rules(&self) -> &crate::rules::Ruleset {
+        &self.rules
+    }
+}
 
 /// A fake of every seam the wiring leaves open; logs what matters.
 #[derive(Default)]
@@ -350,6 +358,9 @@ pub struct Rest {
     /// The quest sends (first byte; 0x27 for a text list) and the
     /// mercenary spawn / init, in call order.
     pub trace: Vec<String>,
+    /// Units created since the last sync: the rest knows no act or level
+    /// of them (every other unit is in act 0, level 1).
+    pub unsynced: BTreeSet<UnitId>,
 }
 
 impl Rest {
@@ -593,11 +604,11 @@ impl QuestRest for Rest {
     fn quest_chain(&mut self, _: UnitId) -> Option<&mut QuestChain> {
         None
     }
-    fn unit_act(&self, _: UnitId) -> Option<u8> {
-        Some(0)
+    fn unit_act(&self, u: UnitId) -> Option<u8> {
+        (!self.unsynced.contains(&u)).then_some(0)
     }
-    fn unit_level(&self, _: UnitId) -> Option<u32> {
-        Some(1)
+    fn unit_level(&self, u: UnitId) -> Option<u32> {
+        (!self.unsynced.contains(&u)).then_some(1)
     }
     fn unit_kind(&self, _: UnitId) -> UnitKind {
         UnitKind::Other
@@ -754,7 +765,7 @@ impl World {
                 expansion,
                 ..UnitData::default()
             },
-            hooks: Hooks,
+            hooks: Hooks::default(),
             fields,
             tables: item_tables(),
             items: ItemStore::new(),

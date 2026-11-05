@@ -332,6 +332,17 @@ impl HudBelt {
             .is_some_and(|r| self.state.hit_area(&r, screen.w, screen.h, at.0, at.1))
     }
 
+    /// The belt slot a right click at `at` uses: a box holding an item,
+    /// with no item on the cursor.
+    pub fn use_slot(&self, world: &ClientWorld, screen: &Screen, at: (i32, i32)) -> Option<u16> {
+        let rec = self.record(screen)?;
+        let b = self.state.box_hit(&rec, at.0, at.1)?;
+        if self.cursor(world).item.is_some() || Self::slot_item(world)(b).is_none() {
+            return None;
+        }
+        u16::try_from(b).ok()
+    }
+
     /// The belt click on a release: the intents it sends.
     pub fn click(&self, world: &ClientWorld, screen: &Screen, at: (i32, i32)) -> Vec<ClientIntent> {
         let Some(rec) = self.record(screen) else {

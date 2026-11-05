@@ -1,0 +1,83 @@
+version = 1
+
+# monstats aip1..aip7 of the sand raider row 29 (Normal): 40, 70, 75, 70, 18, 0, 50.
+# The body counts its thinks in its AI params. At aip5 = 18 it starts an overlay and stands for aidel frames, and after that it
+# is "powered" (state 91, or 90 for the blue rows where aip6 = 1) until it has used skill 1 once, which resets the count.
+# `thinks_at_least` counts the same thinks: `calm` goes to `powered` at the 19th, `fire` uses the skill and goes back.
+[[ai]]
+index = 8
+name = "SandRaider (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "calm"
+
+[[ai.state.transition]]
+to = "powered"
+when = [{ kind = "thinks_at_least", count = 19 }]
+
+# Back from the fire hit: the powered state goes off.
+[[ai.state.action]]
+kind = "set_state"
+state = 91
+on = false
+when = [{ kind = "has_state", state = 91 }]
+
+# aip2 = 70%, farther than 4: circle.
+[[ai.state.action]]
+kind = "move_around"
+steps = 4
+when = [{ kind = "distance_above", value = 4 }, { kind = "random", percent = 70 }]
+
+# In reach: aip3 = 75% swing, half of them swing 2 (aip7 = 50).
+[[ai.state.action]]
+kind = "attack"
+attack = 2
+when = [{ kind = "in_melee" }, { kind = "random", percent = 38 }]
+
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 60 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6
+when = [{ kind = "in_melee" }]
+
+# Out of reach: aip4 = 70% walk toward the target, else stand 15 frames.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 70 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6
+
+[[ai.state]]
+name = "powered"
+
+# In reach the fire hit (skill 1) goes off in the next state.
+[[ai.state.transition]]
+to = "fire"
+when = [{ kind = "in_melee" }]
+
+[[ai.state.action]]
+kind = "set_state"
+state = 91
+on = true
+
+[[ai.state.action]]
+kind = "move_to"
+
+[[ai.state]]
+name = "fire"
+
+# The think that enters this state uses the skill; the next one starts the count again.
+[[ai.state.transition]]
+to = "calm"
+when = [{ kind = "thinks_at_least", count = 2 }]
+
+[[ai.state.action]]
+kind = "use_skill"
+slot = 1

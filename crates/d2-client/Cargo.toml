@@ -11,10 +11,12 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+d2-item-text.workspace = true
 # The only crate allowed to depend on Bevy (enforced by tools/depcheck).
 bevy.workspace = true
 d2-formats.workspace = true
 d2-native.workspace = true
+d2-modkit.workspace = true
 d2-proto.workspace = true
 d2-net.workspace = true
 # The in-process server of single player (`bridge::local`). Never the
@@ -58,6 +60,11 @@ toml_edit = { version = "0.25", default-features = false, features = ["parse"] }
 # Bevy already builds (same version and backends), used directly so the
 # compositor runs headless for verify; `wgpu::naga` validates its WGSL in CI.
 wgpu = { version = "29.0.3", default-features = false, features = ["wgsl", "dx12", "metal", "vulkan", "naga-ir"] }
+
+# A mod's window icon (`app::window_icon`): `winit::window::Icon`, the same
+# winit version Bevy builds (the lock holds one winit), used directly because
+# Bevy has no icon setting; nothing else of winit is used.
+winit = { version = "0.30.13", default-features = false }
 
 # The game exe's global allocator (feature `mimalloc`, main.rs).
 mimalloc = { version = "0.1", optional = true }

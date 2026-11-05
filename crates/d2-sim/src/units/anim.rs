@@ -71,14 +71,17 @@ pub enum AnimError {
 }
 
 /// Where the event bytes come from: the AnimData record (index −1 is
-/// +0x0F), or a sequence.
+/// +0x0F), or a sequence (index −1 is the record before its frame list).
 #[derive(Clone, Copy, Debug)]
 pub enum Events<'a> {
     Record {
         byte_0f: u8,
         events: &'a [u8; ANIM_EVENTS],
     },
-    Sequence(&'a [u8]),
+    Sequence {
+        before: Option<u8>,
+        events: &'a [u8],
+    },
 }
 
 impl Events<'_> {
@@ -91,12 +94,15 @@ impl Events<'_> {
                     .and_then(|i| events.get(i).copied())
                     .ok_or(AnimError::EventIndex(i)),
             },
-            // TODO(sequence): sequence event bytes outside the
-            // sequence are not described.
-            Events::Sequence(e) => usize::try_from(i)
-                .ok()
-                .and_then(|i| e.get(i).copied())
-                .ok_or(AnimError::EventIndex(i)),
+            // TODO(sequence): sequence event bytes past the end of
+            // the list are not described.
+            Events::Sequence { before, events } => match i {
+                -1 => before.ok_or(AnimError::EventIndex(i)),
+                _ => usize::try_from(i)
+                    .ok()
+                    .and_then(|i| events.get(i).copied())
+                    .ok_or(AnimError::EventIndex(i)),
+            },
         }
     }
 }
@@ -128,7 +134,20 @@ pub fn schedule_at(
     cur: i32,
     events: Events<'_>,
 ) -> Result<Option<Schedule>, AnimError> {
-    let step = |tick: i32| rate.share(s, tick);
+    schedule_with_feel((rate, false), form, f, s, frame_count, cur, events)
+}
+
+/// Schedule frame events and completion using the same advancement as live units.
+pub fn schedule_with_feel(
+    (rate, classic): (TickRate, bool),
+    form: Form,
+    f: i32,
+    s: i32,
+    frame_count: i32,
+    cur: i32,
+    events: Events<'_>,
+) -> Result<Option<Schedule>, AnimError> {
+    let step = |tick: i32| rate.animation_share(s, tick, classic);
     let variant = !matches!(form, Form::Main { .. });
     if let Form::Frames(p) = form {
         if p <= 0 {
@@ -189,7 +208,7 @@ pub fn schedule_at(
     let mut out = Vec::new();
     while a < frame_count {
         n = n.wrapping_add(1);
-        while i <= a >> 8 && (variant || i < ANIM_EVENTS as i32) {
+        while (!classic || step(n) != 0) && i <= a >> 8 && (variant || i < ANIM_EVENTS as i32) {
             let e = events.get(i)?;
             if variant {
                 if matches!(e, 1..=4) {
@@ -220,7 +239,7 @@ pub fn schedule_at(
         }
         a = a.wrapping_add(step(n.wrapping_add(1)));
     }
-    if n == f {
+    if n == f && !classic {
         n = f.wrapping_add(1);
     }
     out.push(Scheduled {
@@ -254,21 +273,35 @@ pub fn cancel_mode_events(game: &mut Game, unit: UnitId) {
 /// the sequence or the AnimData record. Cancels (variants), schedules,
 /// then sets +0x44.
 pub fn run(game: &mut Game, unit: UnitId, anim: &mut Anim, form: Form) -> Result<(), AnimError> {
+    run_with_feel(game, unit, anim, form, false)
+}
+
+/// Run a schedule on the host-selected animation clock.
+pub fn run_with_feel(
+    game: &mut Game,
+    unit: UnitId,
+    anim: &mut Anim,
+    form: Form,
+    classic: bool,
+) -> Result<(), AnimError> {
     let (f, rate) = (game.frame, game.tick_rate);
     let sched = match &anim.sequence {
-        Some(seq) => schedule_at(
-            rate,
+        Some(seq) => schedule_with_feel(
+            (rate, classic),
             form,
             f,
             seq.speed,
             seq.frame_count,
             anim.frame,
-            Events::Sequence(&seq.events),
+            Events::Sequence {
+                before: seq.event_before,
+                events: &seq.events,
+            },
         )?,
         None => {
             let rec = anim.record.as_ref().ok_or(AnimError::NoRecord)?;
-            schedule_at(
-                rate,
+            schedule_with_feel(
+                (rate, classic),
                 form,
                 f,
                 i32::from(anim.speed),
@@ -330,10 +363,24 @@ pub fn advance_sequence(anim: &mut Anim) -> bool {
 /// by this tick's share of its speed (stated per base tick). Identity at
 /// 25 Hz.
 pub fn advance_sequence_at(anim: &mut Anim, rate: TickRate, tick: i32) -> bool {
+    advance_sequence_with_feel(anim, rate, tick, false)
+}
+
+/// Sequence advancement on the mod's animation clock.
+pub fn advance_sequence_with_feel(
+    anim: &mut Anim,
+    rate: TickRate,
+    tick: i32,
+    classic: bool,
+) -> bool {
     let Some(seq) = anim.sequence.as_mut() else {
         return false;
     };
-    let speed = rate.share(seq.speed, tick);
+    let speed = rate.animation_share(seq.speed, tick, classic);
+    if classic && speed == 0 {
+        anim.action_frame = 0;
+        return true;
+    }
     let old = seq.pos;
     let mut p = old.wrapping_add(speed);
     if p >= seq.frame_count {

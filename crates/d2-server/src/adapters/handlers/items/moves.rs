@@ -318,6 +318,29 @@ impl MoveCall for CorpseFillRun {
     }
 }
 
+/// The ground pickups a mod game's event hooks asked for (player, item
+/// GUID): the engine's own pickup into the inventory, each with its
+/// refusals. The result carries what the rest sent.
+pub struct PickupRun {
+    pub picks: Vec<(Owner, d2_sim::items::moves::Guid)>,
+}
+
+impl MoveCall for PickupRun {
+    type Out = (Vec<MoveFatal>, Vec<(Option<UnitId>, Vec<u8>)>);
+    fn call<H: LifecycleHooks>(self, econ: &mut Economy<'_, H>, parts: &mut InvParts) -> Self::Out {
+        let mut faults = Vec::new();
+        let mut d = parts.desk(econ);
+        for (p, item) in self.picks {
+            // A refused pickup leaves the item where it lies.
+            if let Err(e) = sim_moves::ground::pickup_auto(&mut d, p, item) {
+                faults.push(e);
+            }
+        }
+        d.flush_equip();
+        (faults, take_sent(&mut d))
+    }
+}
+
 /// C→S 0x60 SwapWeapons: the handler gates (the player handler's) and
 /// the body ([`InvDesk::swap_weapon_sets`],
 /// [`InvDesk::weapon_switch_sides`]). A host without the inventory parts
@@ -653,7 +676,7 @@ impl MoveCall for UpdateRun {
         // with an update queue are cleared too (the drops of minions far
         // from the player lose 0x2000 as well).
         let lists = &d.econ.game.lists;
-        let in_rooms: Vec<UnitId> = (0..d2_sim::units::lists::ACTS as u8)
+        let in_rooms: Vec<UnitId> = (0..lists.act_count() as u8)
             .flat_map(|act| std::iter::successors(lists.room_first(act), |&r| lists.room_next(r)))
             .filter(|&r| lists.room(r).is_some_and(|e| !e.no_update))
             .flat_map(|r| lists.room_units(r))

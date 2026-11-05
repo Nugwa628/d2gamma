@@ -230,7 +230,7 @@ impl DevReply {
 }
 
 /// The command table: keyword, usage, one-line description.
-pub const COMMANDS: [(&str, &str, &str); 27] = [
+pub const COMMANDS: [(&str, &str, &str); 28] = [
     (
         "help",
         "help [command]",
@@ -308,6 +308,11 @@ pub const COMMANDS: [(&str, &str, &str); 27] = [
     ),
     ("info", "info", "toggle the info overlay (client only)"),
     (
+        "aiview",
+        "aiview",
+        "toggle the monster AI overlay: the state, transition and phase of the monsters nearby that run a behaviour graph (client only)",
+    ),
+    (
         "bugreport",
         "bugreport [note]",
         "write a bug report folder (client only)",
@@ -326,7 +331,15 @@ pub const COMMANDS: [(&str, &str, &str); 27] = [
 
 /// The console's own commands: [`parse`] answers `Ok(None)`, the client
 /// runs them.
-pub const CLIENT_COMMANDS: [&str; 6] = ["clear", "animation", "info", "bugreport", "save", "load"];
+pub const CLIENT_COMMANDS: [&str; 7] = [
+    "clear",
+    "animation",
+    "info",
+    "aiview",
+    "bugreport",
+    "save",
+    "load",
+];
 
 /// The help text: every command, or one command's usage.
 pub fn help(topic: Option<&str>) -> Result<String, String> {
@@ -413,7 +426,7 @@ pub fn parse(line: &str) -> Result<Option<DevCommand>, String> {
             [t] => DevCommand::Help(Some(t.to_ascii_lowercase())),
             _ => return Err(usage(kw)),
         },
-        "clear" | "info" => {
+        "clear" | "info" | "aiview" => {
             none(kw, args)?;
             return Ok(None);
         }
@@ -605,6 +618,7 @@ mod tests {
         assert_eq!(parse("clear"), Ok(None));
         for l in [
             "info",
+            "aiview",
             "bugreport",
             "bugreport stuck here",
             "save a1",
@@ -618,7 +632,7 @@ mod tests {
         ] {
             assert_eq!(parse(l), Ok(None), "{l}");
         }
-        assert!(parse("save").is_err() && parse("info x").is_err());
+        assert!(parse("save").is_err() && parse("info x").is_err() && parse("aiview x").is_err());
     }
 
     /// `item` and `spawn` options are taken from the end of the line.

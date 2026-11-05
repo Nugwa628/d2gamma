@@ -205,6 +205,15 @@ impl<'a, R: ?Sized, S: ?Sized> OriginalView<'a, R, S> {
     /// an empty clip ([`TileDraw::is_call_only`]), kept for the draw-call log, never
     /// composed.
     pub fn tile(&self, tile: &MapTile, image: &IndexFrame) -> Result<Option<TileDraw>, ViewError> {
+        self.placed_tile(tile, image, true)
+    }
+
+    fn placed_tile(
+        &self,
+        tile: &MapTile,
+        image: &IndexFrame,
+        wall_clip: bool,
+    ) -> Result<Option<TileDraw>, ViewError> {
         if image.anchor != FrameAnchor::Top {
             return Err(unresolved(
                 "tile placement",
@@ -227,7 +236,8 @@ impl<'a, R: ?Sized, S: ?Sized> OriginalView<'a, R, S> {
                 }
                 Some(frame)
             }
-            TileList::Wall => self.wall_clip(tile, origin, frame)?,
+            TileList::Wall if wall_clip => self.wall_clip(tile, origin, frame)?,
+            TileList::Wall => Some(frame),
         };
         let placed = placement::place(image, origin.0, origin.1, clip.unwrap_or(frame));
         let clip = clip
@@ -260,8 +270,32 @@ impl<'a, R: ?Sized, S: ?Sized> OriginalView<'a, R, S> {
         image: &IndexFrame,
         blocks: &[BlockShade],
     ) -> Result<Vec<TileDraw>, ViewError> {
-        let Some(whole) = self.tile(tile, image)? else {
+        // Overlapping DT1 block rectangles cannot always be represented by
+        // one clip of the assembled image. Draw their own frames instead.
+        let (whole, separate) = match self.tile(tile, image) {
+            Err(ViewError::Unresolved {
+                what: "wall block culling",
+                ..
+            }) => (self.placed_tile(tile, image, false)?, true),
+            result => (result?, false),
+        };
+        let Some(whole) = whole else {
             return Ok(Vec::new());
+        };
+        let uniform;
+        let blocks = if separate && blocks.is_empty() {
+            uniform = tile
+                .blocks
+                .iter()
+                .map(|block| BlockShade {
+                    block: *block,
+                    shade: tile.shade,
+                    blend: tile.blend,
+                })
+                .collect::<Vec<_>>();
+            uniform.as_slice()
+        } else {
+            blocks
         };
         if blocks.is_empty() || whole.is_call_only() {
             return Ok(vec![whole]);
@@ -296,6 +330,9 @@ impl<'a, R: ?Sized, S: ?Sized> OriginalView<'a, R, S> {
             };
             next = i + 1;
             let (x, y) = placement::block_pixel(origin, (b.block.x, b.block.y), (0, 0));
+            if separate && !cam.wall_block_visible(x, y) {
+                continue;
+            }
             let Some(clip) = whole
                 .clip
                 .intersect(&Rect::new(x, y, b.block.width, b.block.height))

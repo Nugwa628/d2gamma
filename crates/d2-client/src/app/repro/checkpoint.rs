@@ -369,8 +369,22 @@ fn compare_live(
     let GameData::Live(live) = &session.data;
     let before = read_live(host)?;
     let first = save::apply_live(base, &before, 0);
-    let bytes = d2s::write(&first, &live.save)?;
-    let first = live.read_save(&bytes, s.difficulty.index())?;
+    let rules = host
+        .server()
+        .lock()
+        .map_err(|_| anyhow!("server lock"))?
+        .with(|link| link.host_mut().game.events.action.hooks().rules.clone())?;
+    let codec: Box<dyn d2_server::game::CharacterCodec> = if rules.wide_stat_ids() {
+        Box::new(d2_server::game::ModCodec(rules.clone()))
+    } else {
+        Box::new(d2_server::game::D2sCodec)
+    };
+    let bytes = codec
+        .write(&first, &live.save)
+        .map_err(anyhow::Error::msg)?;
+    let first = codec
+        .read(live, &bytes, s.difficulty.index())
+        .map_err(anyhow::Error::msg)?;
     let character = Character::Save(
         Box::new(first.clone()),
         d2_server::adapters::character::LoadContext {
@@ -378,11 +392,27 @@ fn compare_live(
             map_seed_applies: false,
         },
     );
-    let again = Host::start_with(session.data.clone(), character, None, false, Some(s.seed))?;
+    let again = Host::start_configured(
+        session.data.clone(),
+        character,
+        None,
+        false,
+        Some(s.seed),
+        false,
+        rules,
+    )?;
     let after = read_live(&again)?;
     let mut violations = roundtrip::diff_live(&before, &after);
     let second = save::apply_live(&first, &after, 0);
-    let second = live.read_save(&d2s::write(&second, &live.save)?, s.difficulty.index())?;
+    let second = codec
+        .read(
+            live,
+            &codec
+                .write(&second, &live.save)
+                .map_err(anyhow::Error::msg)?,
+            s.difficulty.index(),
+        )
+        .map_err(anyhow::Error::msg)?;
     violations.extend(roundtrip::diff_saves(&first, &second));
     Ok(violations)
 }

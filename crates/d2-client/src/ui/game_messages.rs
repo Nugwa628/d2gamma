@@ -256,14 +256,17 @@ impl super::OriginalUi {
         std::cell::RefMut::filter_map(self.shared.borrow_mut(), |s| s.messages.window.as_mut()).ok()
     }
 
-    /// The input line of the chat window has the typing: the game's key
-    /// bindings wait.
+    /// The input line of the chat window, or a mod game's own chat prompt
+    /// while it is open, has the typing: the game's key bindings wait.
     pub fn chat_typing(&self) -> bool {
         let sh = self.shared.borrow();
-        sh.messages
+        let window = sh
+            .messages
             .window
             .as_ref()
-            .is_some_and(|w| w.shown && w.focused)
+            .is_some_and(|w| w.shown && w.focused);
+        // A mod game's own chat prompt takes the typed text while open.
+        window || (self.mods_chat_prompt() && sh.states.is_open(crate::ui::states::id::CHAT))
     }
 }
 
@@ -299,6 +302,12 @@ fn latin1(b: &[u8]) -> String {
 /// The panel that draws the list (module doc).
 pub(super) struct MessagesUi {
     pub(super) sh: SharedRef,
+    /// A mod game draws the screen messages itself
+    /// (`ClientMods::without_chat_lines`): the list ages as ever, nothing
+    /// is drawn.
+    pub(super) hidden: bool,
+    /// A mod game's panels read the list (`mod_io::UiCtx::chat_lines`).
+    pub(super) feed: bool,
 }
 
 impl Panel for MessagesUi {
@@ -350,8 +359,22 @@ impl Panel for MessagesUi {
         for t in std::mem::take(&mut sh.messages.pending_notes) {
             sh.messages.list.add(&t, 0, now, w, log_open, &m);
         }
+        if self.feed {
+            crate::ui::mod_io::set_chat_lines(
+                sh.messages
+                    .list
+                    .records()
+                    .iter()
+                    .map(|r| crate::ui::mod_io::ChatLine {
+                        lines: r.lines.clone(),
+                        color: r.color,
+                        expiry: r.expiry,
+                    })
+                    .collect(),
+            );
+        }
         // The list is drawn only while the message log is closed.
-        if !log_open {
+        if !log_open && !self.hidden {
             let fill = sh.tables.files.id(FILL_FILE);
             for (mut r, l) in sh.messages.list.draw(w, open_mode, state_13, &m) {
                 r.x += dx;

@@ -19,7 +19,11 @@
 
 use std::fmt::Debug;
 
-use super::{column_of, global_column_of, COLUMNS, FLAGGED, NO_STORE_REFRESH, REPAIRERS};
+use super::stock::{StockHost, StockItem, StockRequest};
+use super::{
+    column_of, global_column_of, VendorTables, COLUMNS, FLAGGED, NO_STORE_REFRESH, REPAIRERS,
+};
+use crate::rng::Seed;
 use crate::rules::Ruleset;
 
 /// What an NPC class's store does.
@@ -70,6 +74,22 @@ pub trait StoreProvider: Send + Sync + Debug {
     /// The store roles of NPC `class`; `None`: D2RUST's.
     fn roles(&self, class: u16) -> Option<StoreRoles> {
         let _ = class;
+        None
+    }
+
+    /// The items a store generation makes for `req` ([`super::stock`]):
+    /// `Some(items)` replaces D2RUST's column and permanent lists (an
+    /// empty list makes an empty store); `None` makes D2RUST's. Draws come
+    /// from `seed` only (the NPC-control seed). Items with a record past
+    /// `t.items` are skipped.
+    fn stock(
+        &self,
+        t: &VendorTables,
+        host: &dyn StockHost,
+        req: &StockRequest,
+        seed: &mut Seed,
+    ) -> Option<Vec<StockItem>> {
+        let _ = (t, host, req, seed);
         None
     }
 }

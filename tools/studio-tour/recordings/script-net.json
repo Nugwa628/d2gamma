@@ -1,0 +1,32 @@
+{
+  "steps": [
+    {"do": "click", "text": "Scripts"},
+    {"do": "fill", "text": "New module", "value": "ward.luau", "offset": [110, 0]},
+    {"do": "click", "text": "Add module"},
+    {"do": "fill", "text": "local M = {}\n\n-- Add handlers with the event picker.\n\nreturn M\n", "value": "return {\n    ward = function(e, api)\n        api.apply_state(e.unit, e.unit, 186, 120, e.skill)\n        api.ui_variable(e.unit, \"ward_active\", 1)\n        api.ui_variable(e.unit, \"casts\", api.base_stat(e.unit, 40000, 0))\n        return 1\n    end,\n    expired = function(e, api)\n        api.ui_variable(e.unit, \"ward_active\", 0)\n        return 1\n    end,\n    can_charge = function(current)\n        return current < 20 and 1 or 0\n    end,\n}\n", "offset": [10, 0]},
+    {"do": "capture", "name": "15-luau"},
+    {"do": "click", "text": "Save"},
+    {"do": "click", "text": "Network values & actions"},
+    {"do": "click", "text": "Add declaration"},
+    {"do": "fill", "text": "name", "value": "resonance", "offset": [100, 0]},
+    {"do": "fill", "text": "source", "value": "stat.resonance", "offset": [110, 0]},
+    {"do": "capture", "name": "16-synced-value"},
+    {"do": "click", "text": "Server actions"},
+    {"do": "click", "text": "Add declaration"},
+    {"do": "fill", "text": "name", "value": "charge", "offset": [100, 0]},
+    {"do": "fill", "text": "stat", "value": "resonance", "offset": [100, 0]},
+    {"do": "fill", "text": "delta", "value": "1", "offset": [65, 0]},
+    {"do": "key", "key": "Enter"},
+    {"do": "fill", "text": "minimum", "value": "0", "offset": [65, 0]},
+    {"do": "key", "key": "Enter"},
+    {"do": "fill", "text": "maximum", "value": "20", "offset": [65, 0]},
+    {"do": "key", "key": "Enter"},
+    {"do": "fill", "text": "cooldown", "value": "25", "offset": [65, 0]},
+    {"do": "key", "key": "Enter"},
+    {"do": "click", "text": "Also validate with a Luau predicate"},
+    {"do": "fill", "text": "module", "value": "ward.luau", "offset": [110, 0]},
+    {"do": "fill", "text": "function", "value": "can_charge", "offset": [110, 0]},
+    {"do": "capture", "name": "17-server-action"},
+    {"do": "click", "text": "Save"}
+  ]
+}

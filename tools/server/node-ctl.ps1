@@ -4,6 +4,9 @@
 #   node-ctl.ps1 setup [ID]       once, from an elevated PowerShell: the folders, the current version (the
 #                                 folder's d2rust-node.exe), the firewall rule for its port and the scheduled
 #                                 task "D2RUST game server <ID>" (ID: default the folder's name)
+#                [--program NAME] a mod game's own game server program (NAME.exe, NAME.cfg; program.txt)
+#                [--release BASE] [--release-tag PREFIX]
+#                                 the folder's release channel (channel.txt), below
 #   node-ctl.ps1 start | stop | restart | status
 #   node-ctl.ps1 fetch <version>  download and check that version's signed package into downloads\ (the game
 #                                 server's updater runs it during an upgrade's countdown)
@@ -18,6 +21,14 @@
 #   downloads\<version>\             a fetched, checked package until it is swapped in
 #   logs\  status.json (the health check), console.log, supervise.log
 #   run\   supervisor.pid, node.pid, swap, trial, stop, stopped
+#   program.txt, channel.txt     optional: a mod game's program and release channel (below)
+#
+# A mod game's game server is the same with its own program (program.txt: `mygame-node`, so
+# mygame-node.exe, mygame-node.cfg, bin\mygame-node-<version>.exe) and its own release channel
+# (channel.txt: `base=URL` and `tag=PREFIX` lines): `fetch V` downloads
+# <base>/<tag>V/mygame-node-V-windows-x86_64.zip with SHA256SUMS.windows, signed as D2Gamma's releases
+# are. Without the files: d2rust-node and D2Gamma's releases (server-V). A mod's package may carry
+# both files, so `setup` needs no options.
 #
 # The task runs as the user who ran setup, "whether logged on or not": it starts at boot, runs in no
 # desktop session and can never show a window. Its action is `supervise`, which starts d2rust-node.exe
@@ -33,7 +44,15 @@ Set-StrictMode -Version 2
 
 $Self = $PSCommandPath
 if ($env:D2RUST_NODE_HOME) { $NodeHome = $env:D2RUST_NODE_HOME } else { $NodeHome = $PSScriptRoot }
+$ProgramFile = Join-Path $NodeHome 'program.txt'
+$ChannelFile = Join-Path $NodeHome 'channel.txt'
+# A game server program's name: a-z, 0-9 and '-', 1-31 long.
+function Test-ProgramName([string]$n) { return ($n -cmatch '^[a-z0-9][a-z0-9-]{0,30}$') -and $n -ne 'd2rust-realm' }
 $Program = 'd2rust-node'
+if (Test-Path -LiteralPath $ProgramFile) {
+    $named = ([IO.File]::ReadAllText($ProgramFile)).Trim()
+    if (Test-ProgramName $named) { $Program = $named }
+}
 $Cfg = Join-Path $NodeHome "$Program.cfg"
 $Bin = Join-Path $NodeHome 'bin'
 $Run = Join-Path $NodeHome 'run'
@@ -51,8 +70,14 @@ if ($env:D2RUST_NODE_STOP_WAIT) { $StopWait = [int]$env:D2RUST_NODE_STOP_WAIT }
 # The release download base: $env:D2RUST_RELEASE_BASE, else release-base.txt in the node folder.
 # There is no default; fetching stops until one is set.
 $ReleaseBase = ''
-if ($env:D2RUST_RELEASE_BASE) { $ReleaseBase = $env:D2RUST_RELEASE_BASE }
 $ReleaseTag = 'server-'
+if (Test-Path -LiteralPath $ChannelFile) {
+    foreach ($line in [IO.File]::ReadAllLines($ChannelFile)) {
+        if ($line -match '^base=(.+)$') { $ReleaseBase = $Matches[1].Trim() }
+        if ($line -match '^tag=(.*)$') { $ReleaseTag = $Matches[1].Trim() }
+    }
+}
+if ($env:D2RUST_RELEASE_BASE) { $ReleaseBase = $env:D2RUST_RELEASE_BASE }
 $ReleaseNamespace = 'd2rust-release'
 
 function Say([string]$m) { Write-Output $m }
@@ -411,8 +436,46 @@ function Add-FolderExe {
     Say "current version: $v (bin\$Program-$v.exe)"
 }
 
-function Invoke-Setup([string]$id) {
+# setup's options: --program NAME, --release BASE, --release-tag PREFIX (written to program.txt and
+# channel.txt); the first other word is the ID.
+function Read-SetupArgs([string[]]$a) {
+    $o = @{ id = ''; program = ''; base = ''; tag = '' }
+    for ($i = 0; $i -lt $a.Count; $i++) {
+        $w = $a[$i]
+        if ($w -in @('--program', '--release', '--release-tag')) {
+            if ($i + 1 -ge $a.Count) { Die "$w needs a value" }
+            $i++
+            switch ($w) { '--program' { $o.program = $a[$i] } '--release' { $o.base = $a[$i] } '--release-tag' { $o.tag = $a[$i] } }
+        } elseif (-not $o.id) { $o.id = $w } else { Die "setup: unknown option $w" }
+    }
+    if ($o.program -and -not (Test-ProgramName $o.program)) { Die "--program $($o.program): a game server program name (a-z, 0-9, -)" }
+    if ($o.base -and $o.base -notmatch '^https://') { Die "--release $($o.base): an https:// URL" }
+    if ($o.tag -and $o.tag -notmatch '^[A-Za-z0-9._-]+$') { Die "--release-tag $($o.tag): letters, digits, . _ -" }
+    if ($o.tag -and -not $o.base) { Die '--release-tag goes with --release BASE' }
+    return $o
+}
+
+# Writes setup's program and channel files, and takes the program from then on.
+function Set-ProgramAndChannel($o) {
+    if ($o.program) {
+        Write-Text $ProgramFile $o.program
+        $script:Program = $o.program
+        $script:Cfg = Join-Path $NodeHome "$($o.program).cfg"
+    }
+    if ($o.base) {
+        $tag = $o.tag
+        if (-not $tag) { $tag = 'server-' }
+        [IO.File]::WriteAllText($ChannelFile, "base=$($o.base)`ntag=$tag`n", [Text.Encoding]::ASCII)
+        $script:ReleaseBase = $o.base
+        $script:ReleaseTag = $tag
+    }
+}
+
+function Invoke-Setup([string[]]$setupArgs) {
     if (-not (Test-Admin)) { Die 'setup registers a task that starts at boot: run it once from an elevated PowerShell (Run as administrator)' }
+    $o = Read-SetupArgs $setupArgs
+    Set-ProgramAndChannel $o
+    $id = $o.id
     if (-not (Test-Path -LiteralPath $Cfg)) { Die "no $Cfg`: write it first (d2rust-node.cfg.example)" }
     if ($id) { Write-Text $IdFile $id }
     New-Item -ItemType Directory -Force -Path $Bin, $Run, $Downloads, $Logs | Out-Null
@@ -629,6 +692,40 @@ public static class $cls {
         $r = & $run @('fetch', '3.0.0')
         Check 'fetch stages the unhealthy one too' ($r.Code -eq 0)
 
+        # A mod game's game server folder: program.txt and channel.txt name its program and its own
+        # release channel; D2Gamma's releases are not its.
+        $M = Join-Path $T 'modnode'
+        $mrel = Join-Path $T 'mod-releases'
+        New-Item -ItemType Directory -Force -Path $M, $mrel | Out-Null
+        $mctl = Join-Path $M 'node-ctl.ps1'
+        Copy-Item -LiteralPath $Self -Destination $mctl
+        Copy-Item -LiteralPath (Join-Path $H 'release-signers') -Destination (Join-Path $M 'release-signers')
+        Write-Text (Join-Path $M 'program.txt') 'tiny-node'
+        [IO.File]::WriteAllText((Join-Path $M 'channel.txt'), "base=$mrel`ntag=tiny-node-`n", [Text.Encoding]::ASCII)
+        $mpkg = Join-Path $work 'tiny-node-5.0.0'
+        New-Item -ItemType Directory -Force -Path $mpkg | Out-Null
+        New-FakeExe '5.0.0' $true (Join-Path $mpkg 'tiny-node.exe')
+        [IO.File]::WriteAllText((Join-Path $mpkg 'version.json'), "{`"version`":`"5.0.0`",`"programs`":[`"tiny-node.exe`"]}`n")
+        $md = Join-Path $mrel 'tiny-node-5.0.0'
+        New-Item -ItemType Directory -Force -Path $md | Out-Null
+        Compress-Archive -LiteralPath $mpkg -DestinationPath (Join-Path $md 'tiny-node-5.0.0-windows-x86_64.zip') -Force
+        $mhash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $md 'tiny-node-5.0.0-windows-x86_64.zip')).Hash.ToLowerInvariant()
+        [IO.File]::WriteAllText((Join-Path $md 'SHA256SUMS.windows'), "$mhash  tiny-node-5.0.0-windows-x86_64.zip`n")
+        & $sign $key (Join-Path $md 'SHA256SUMS.windows')
+        $env:D2RUST_RELEASE_BASE = ''
+        $mrun = { param([string[]]$a)
+            $q = ($a | ForEach-Object { "`"$_`"" }) -join ' '
+            return Invoke-Hidden $ps "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$mctl`" $q" $null
+        }
+        $r = & $mrun @('fetch', '5.0.0')
+        Check "a mod game's folder fetches its program from its own channel" ($r.Code -eq 0 -and (Test-Path (Join-Path $M 'downloads\5.0.0\tiny-node-5.0.0\tiny-node.exe')))
+        $r = & $mrun @('fetch', '2.0.0')
+        Check 'and never a D2Gamma release' ($r.Code -ne 0 -and $r.Err -match 'downloading')
+        $env:D2RUST_RELEASE_BASE = $rel
+        $o = Read-SetupArgs @('mxl-1', '--program', 'tiny-node', '--release', 'https://example.invalid/r', '--release-tag', 'tiny-node-')
+        Check 'setup reads its ID, program and channel' ($o.id -eq 'mxl-1' -and $o.program -eq 'tiny-node' -and $o.base -eq 'https://example.invalid/r' -and $o.tag -eq 'tiny-node-')
+        Check "D2Gamma's folder has no program or channel file" (-not (Test-Path (Join-Path $H 'program.txt')) -and -not (Test-Path (Join-Path $H 'channel.txt')))
+
         $psi = New-Object Diagnostics.ProcessStartInfo
         $psi.FileName = $ps
         $psi.Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$ctl`" supervise"
@@ -692,7 +789,7 @@ if ($args.Count -ge 1) { $cmd = $args[0] }
 $arg1 = ''
 if ($args.Count -ge 2) { $arg1 = $args[1] }
 switch ($cmd) {
-    'setup' { Invoke-Setup $arg1 }
+    'setup' { Invoke-Setup @($args | Select-Object -Skip 1) }
     'start' { Invoke-Start }
     'stop' { Invoke-Stop }
     'restart' { Invoke-Stop; Invoke-Start }
@@ -701,5 +798,5 @@ switch ($cmd) {
     'rollback' { Invoke-Rollback }
     'supervise' { Invoke-Supervise }
     'selftest' { Invoke-Selftest }
-    default { Die 'usage: node-ctl.ps1 setup [ID] | start | stop | restart | status | fetch <version> | rollback | selftest' }
+    default { Die 'usage: node-ctl.ps1 setup [ID] [--program NAME] [--release BASE] [--release-tag PREFIX] | start | stop | restart | status | fetch <version> | rollback | selftest' }
 }

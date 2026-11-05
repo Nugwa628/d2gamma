@@ -2,6 +2,7 @@
 //! refresh rules.
 
 use super::price::PriceFatal;
+use super::stock::{valid, StockRequest, StockView};
 use super::trade::repair_item;
 use super::{
     flag, gamble, stat, store_level, unit_flag, EventNode, StoreRoles, VendorRecord, VendorTables,
@@ -233,6 +234,30 @@ pub fn generate<W: VendorWorld>(
     let lp = w.stat(player, stat::LEVEL, 0);
     let ilvl = store_level(lp, w.difficulty(), rec.act);
     let mut fails = 0u32;
+    // A mod game's stock replaces the lists.
+    let rules = w.rules().clone();
+    if let Some(p) = rules.stores() {
+        let req = StockRequest {
+            class: rec.class,
+            act: rec.act,
+            player,
+            player_level: lp,
+            difficulty: w.difficulty(),
+            ilvl,
+        };
+        if let Some(items) = p.stock(t, &StockView(&*w), &req, c.seed) {
+            for it in items.iter().filter(|it| valid(t, it)) {
+                let made = make_store_item(c, rec, w, it.record, it.quality, it.ilvl, lp)?;
+                if made.is_none() {
+                    fails += 1;
+                    if fails > FAIL_LIMIT {
+                        break;
+                    }
+                }
+            }
+            return Ok(());
+        }
+    }
     let entries = rec.items.clone();
     for e in &entries {
         // Every list code is an item record's code, so the map

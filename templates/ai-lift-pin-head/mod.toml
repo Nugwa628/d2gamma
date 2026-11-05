@@ -1,0 +1,7 @@
+id = "ai-lift-pin-head"
+name = "AI 39 PinHead, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "PinHead as a graph: AI 39 (PinHead)."
+api = 1
+kind = "full"

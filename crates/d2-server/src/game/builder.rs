@@ -1,6 +1,7 @@
 //! Source selection and character codecs for the headless game.
 use super::realm::{BlockIds, GrantError, ItemIdSource, ItemIds, RealmStart};
 use super::*;
+use d2_data::bin::DataRules;
 use d2_formats::d2s::SaveTables;
 use std::fmt::Debug;
 use std::path::PathBuf;
@@ -10,8 +11,9 @@ pub enum Layers {
     /// `base/`, then the mods `mods/order.toml` lists, in its order.
     #[default]
     OrderFile,
-    /// `base/` and exactly these folders under `mods/`, in this order;
-    /// `mods/order.toml` is not read. Empty is `base/` alone.
+    /// `base/` and exactly these mods, in this order: folders under `mods/`
+    /// or data packs (`docs/mods/data-pack.md`); `mods/order.toml` is not
+    /// read. Empty is `base/` alone.
     List(Vec<String>),
 }
 
@@ -45,13 +47,39 @@ pub enum GameSource {
 }
 
 impl GameData {
-    /// Loads the game's tables and level data from `source`.
+    /// Loads the game's tables and level data from `source`, under
+    /// D2Gamma's own data rules.
     pub fn open(source: &GameSource) -> Result<GameData, BuildError> {
-        match source {
-            GameSource::Archives(dir) => GameData::select(Some(dir)),
-            GameSource::LayeredArchives(dir, layers) => GameData::select_layered(dir, layers),
-            GameSource::Native(dir, layers) => GameData::select_native_with(dir, layers),
-        }
+        GameData::open_with(source, DataRules::Original)
+    }
+
+    /// [`GameData::open`] under the data `rules` of the game: a mod game
+    /// passes its `Ruleset::data_rules` (`DataRules::Mod`), and every
+    /// table load from the files (the game's and the client's readers
+    /// alike, through `TableFiles::data_rules`) checks and reads the
+    /// tables under them; a native folder's patches and compile run under
+    /// them too.
+    pub fn open_with(source: &GameSource, rules: DataRules) -> Result<GameData, BuildError> {
+        let archives = |dir: &std::path::Path, set: Result<ArchiveSet, _>| {
+            set.map(|s| GameFiles::archives(Arc::new(s)))
+                .map_err(|e: d2_formats::mpq::MpqError| BuildError::Archives {
+                    dir: dir.display().to_string(),
+                    message: e.to_string(),
+                })
+        };
+        let files = match source {
+            GameSource::Archives(dir) => archives(dir, ArchiveSet::open_dir(dir))?,
+            GameSource::LayeredArchives(dir, layers) => {
+                archives(dir, ArchiveSet::open_layered(dir, layers))?
+            }
+            GameSource::Native(dir, layers) => GameFiles::native_under(dir, layers.order(), rules)
+                .map_err(|message| BuildError::Archives {
+                    dir: dir.display().to_string(),
+                    message,
+                })?,
+        };
+        let files = files.with_data_rules(rules);
+        Ok(GameData::Live(Arc::new(LiveData::load(Arc::new(files))?)))
     }
 }
 
@@ -152,6 +180,21 @@ impl GameBuilder {
     }
     /// Construct the simulation before its first client joins.
     pub fn build(self) -> Result<Sim, BuildError> {
+        let scripts = load_scripts(&self.rules, || {
+            let GameData::Live(data) = &self.data;
+            data.archives.script_sources()
+        })
+        .map_err(BuildError::Setup)?;
+        let ui_actions = load_ui_actions(&self.rules, scripts.as_ref(), || {
+            let GameData::Live(data) = &self.data;
+            crate::ui_actions::UiActions::load(data.archives.source().as_ref())
+        })
+        .map_err(BuildError::Setup)?;
+        let mut network = load_network(&self.rules, scripts.as_ref(), || {
+            let GameData::Live(data) = &self.data;
+            crate::mod_network::Network::load(data.archives.source().as_ref())
+        })
+        .map_err(BuildError::Setup)?;
         let appearance = self.appearance.unwrap_or_else(|| {
             let GameData::Live(d) = &self.data;
             super::appearance::AnimationNames::load(d.archives.as_ref())
@@ -165,7 +208,81 @@ impl GameBuilder {
             self.rules,
             appearance,
         )?;
+        network.set_legacy(ui_actions);
+        sim.mod_network = network;
         *sim.item_ids() = ItemIds::new(self.item_ids);
+        if let Some(scripts) = scripts {
+            let scripts = Arc::new(scripts);
+            sim.events.action.sys.hooks.scripts = Some(scripts.clone());
+            sim.script_tick = Some(|game, events| events.action.run_scripts(game));
+            sim.scripts = Some(scripts);
+        }
         Ok(sim)
+    }
+}
+
+fn load_network(
+    rules: &Ruleset,
+    scripts: Option<&crate::scripts::ScriptHost>,
+    read: impl FnOnce() -> Result<crate::mod_network::Network, String>,
+) -> Result<crate::mod_network::Network, String> {
+    if matches!(rules, Ruleset::Original) {
+        return Ok(Default::default());
+    }
+    let network = read()?;
+    network.validate_scripts(scripts)?;
+    Ok(network)
+}
+
+fn load_ui_actions(
+    rules: &Ruleset,
+    scripts: Option<&crate::scripts::ScriptHost>,
+    read: impl FnOnce() -> Result<crate::ui_actions::UiActions, String>,
+) -> Result<crate::ui_actions::UiActions, String> {
+    if matches!(rules, Ruleset::Original) {
+        return Ok(Default::default());
+    }
+    let actions = read()?;
+    actions.validate_scripts(scripts)?;
+    Ok(actions)
+}
+
+fn load_scripts(
+    rules: &Ruleset,
+    read: impl FnOnce() -> Result<crate::scripts::Sources, String>,
+) -> Result<Option<crate::scripts::ScriptHost>, String> {
+    if matches!(rules, Ruleset::Original) {
+        return Ok(None);
+    }
+    read()?.instantiate_for(rules)
+}
+
+#[cfg(test)]
+mod script_tests {
+    use super::*;
+
+    #[test]
+    fn original_rules_never_read_network_or_send_declared_values() {
+        assert!(load_network(&Ruleset::Original, None, || panic!(
+            "base game must not read network contracts"
+        ))
+        .unwrap()
+        .definition
+        .empty());
+    }
+    #[test]
+    fn original_rules_do_not_read_ui_actions() {
+        assert!(load_ui_actions(&Ruleset::Original, None, || panic!(
+            "base game must not read UI actions"
+        ))
+        .is_ok());
+    }
+    #[test]
+    fn original_rules_do_not_read_scripts_or_initialize_luau() {
+        assert!(load_scripts(&Ruleset::Original, || panic!(
+            "base game must not read scripts"
+        ))
+        .unwrap()
+        .is_none());
     }
 }

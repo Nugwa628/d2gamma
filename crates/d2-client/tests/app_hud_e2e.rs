@@ -28,7 +28,7 @@ use d2_client::bridge::predict::Speeds;
 use d2_client::bridge::{BridgeResource, Pumped, SendQueue};
 use d2_client::rules::unit_composite::code;
 use d2_client::ui::layout::Screen;
-use d2_client::ui::original::hud::HudTables;
+use d2_client::ui::original::hud::{HudTables, SkillButtonFlags};
 use d2_client::ui::original::{FontMeasure, OriginalUi, UiConfig, CHARACTER_FONTS};
 use d2_client::ui::{font_info, Point, PointerButton, UiDraw, UiEvent};
 use d2_client::world_view::tile_assets::TileAssets;
@@ -333,6 +333,17 @@ fn the_play_hud_draws_model_values_and_takes_clicks() {
     let mut tables = HudTables::default();
     tables.icons.insert(0, (0xFF, 7));
     tables.icons.insert(1, (1, 9));
+    // Both are left skills usable in the game (`leftskill`, `InGame`) in
+    // the select's first row: the select lists only skills whose
+    // `skills` flags it holds.
+    for skill in [0, 1] {
+        let flags = SkillButtonFlags {
+            in_game: true,
+            left_skill: true,
+            ..SkillButtonFlags::default()
+        };
+        tables.flags.insert(skill, flags);
+    }
     tables.experience = std::iter::once([99; 7])
         .chain((0..100u32).map(|l| [500 * l; 7]))
         .collect();
@@ -427,9 +438,10 @@ fn the_play_hud_draws_model_values_and_takes_clicks() {
         img.iter().any(|d| d.0 == "spells\\soskillicon" && d.1 == 9),
         "skill 1 listed: {img:?}"
     );
-    // Skill 1 is the second icon of the row (x 165, bottom y 552).
+    // Skill 1 is the second icon of the row (`select_layout`: x 80 + 48,
+    // bottom y H − 86 = 514, 48 × 48).
     sent.lock().unwrap().clear();
-    click(&mut app, &ms, 170, 530);
+    click(&mut app, &ms, 152, 490);
     assert!(!open(&app), "state 3 closed");
     let msgs = sent.lock().unwrap().clone();
     let mut want = vec![0x3C];

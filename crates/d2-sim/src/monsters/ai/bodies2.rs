@@ -84,18 +84,23 @@ pub(super) const GROUP_UDEAD: u8 = 33;
 
 /// The mummy scan's record R.
 #[derive(Default)]
-struct MummyScan {
-    corpse: Option<UnitId>,
-    hurt: Option<UnitId>,
-    matches: i32,
-    seen: i32,
-    max: i32,
-    wide: bool,
-    normal: bool,
+pub(super) struct MummyScan {
+    pub(super) corpse: Option<UnitId>,
+    pub(super) hurt: Option<UnitId>,
+    pub(super) matches: i32,
+    pub(super) seen: i32,
+    pub(super) max: i32,
+    pub(super) wide: bool,
+    pub(super) normal: bool,
 }
 
 /// Callback over scan 1.
-fn mummy_scan<W: AiHost + ?Sized>(game: &Game, cx: &Ctx<'_, W>, m: UnitId, r: &mut MummyScan) {
+pub(super) fn mummy_scan<W: AiHost + ?Sized>(
+    game: &Game,
+    cx: &Ctx<'_, W>,
+    m: UnitId,
+    r: &mut MummyScan,
+) {
     for v in scan_units(game, m) {
         // 1.
         if v == m

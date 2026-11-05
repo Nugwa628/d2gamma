@@ -30,7 +30,6 @@
 //!
 //! [`HirelingCall::ActChange`]: crate::wiring::action::HirelingCall::ActChange
 
-use crate::drlg::act_of_level;
 use crate::path::place::level_spawn_point;
 use crate::path::place_seams::{mask, CollisionView};
 use crate::path::search::free_point_step;
@@ -118,7 +117,7 @@ fn build_act<X: Pending>(c: &mut PathCtx<'_, X>, act: u8) -> bool {
 pub fn run<X: Pending>(mut c: PathCtx<'_, X>, player: UnitId, level: u32, tile_index: u32) -> bool {
     // Step 1: D2RUST has no arena record; its flag bit 1 is
     // clear in every game D2RUST runs.
-    let act = act_of_level(level);
+    let act = c.v.h.rules.act_of_level(level);
     let client = c
         .game
         .lists
@@ -153,10 +152,7 @@ pub fn run<X: Pending>(mut c: PathCtx<'_, X>, player: UnitId, level: u32, tile_i
         return false;
     };
     let obj_seed = c.v.h.objects.as_ref().map_or(0, |o| o.obj_seed);
-    let town = crate::drlg::TOWN_LEVELS
-        .get(usize::from(act))
-        .copied()
-        .unwrap_or_default();
+    let town = c.v.h.rules.act_town(act).unwrap_or_default();
     // The client waits for the new act.
     if let Some(e) = client.and_then(|k| c.game.lists.client_mut(k)) {
         e.state = client_state::CHANGING_ACT;

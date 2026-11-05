@@ -443,7 +443,7 @@ pub fn superunique<H: PopHost + ?Sized>(
     mut y: i32,
     su: i32,
 ) -> Option<UnitId> {
-    if cx.info.difficulty >= 3 {
+    if !cx.host.supports_difficulty(cx.info.difficulty) {
         return None;
     }
     let rec = cx

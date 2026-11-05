@@ -173,6 +173,11 @@ pub trait StashStore {
     fn shape(&self) -> StashShape {
         StashShape::DEFAULT
     }
+    /// The most gold the stash holds, when the store says (an online
+    /// realm's `stash_gold_max`); `None`: not known here.
+    fn gold_max(&self) -> Option<u64> {
+        None
+    }
     /// The item pages' names, page I first: the player's, else the
     /// default roman numeral.
     fn page_names(&mut self) -> Result<Vec<String>, StoreError> {

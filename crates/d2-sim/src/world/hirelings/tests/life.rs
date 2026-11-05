@@ -692,3 +692,68 @@ fn restore_tail_order_per_loader() {
     assert_eq!(w.log, vec!["inventory 10".to_string()]);
     assert!(!st.list(p).unwrap().nodes[0].dead);
 }
+
+#[test]
+fn global_curve_scales_new_hire_offer_and_starting_experience() {
+    for (text, expected) in [
+        ("", 26460),
+        ("hireling_experience_curve_percent = 200", 52920),
+    ] {
+        let (mut w, p, _, m) = world();
+        w.rules = crate::rules::global::GlobalRules::from_toml(text)
+            .unwrap()
+            .into_ruleset();
+        let t = act1_tables();
+        let mut st = HirelingState::default();
+        let offer = life::init(
+            &mut w,
+            &t,
+            &mut st,
+            p,
+            m,
+            NEW_HIRE,
+            Slot {
+                name: 105,
+                seed: 22_752_887,
+            },
+            false,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(offer.experience, expected);
+        assert_eq!(w.base(m, stat::EXPERIENCE), expected);
+        assert_eq!(w.base(m, stat::LEVEL), 6);
+    }
+}
+
+/// The owner of a living hireling gets her life percent (S→C 0x7F, not a
+/// player) the first time and whenever it changes; nothing while it stays,
+/// and nothing for a dead hireling's node.
+#[test]
+fn the_owner_gets_the_hirelings_life_percent_when_it_changes() {
+    let (mut w, p, _, m) = world();
+    w.set(m, stat::MAXHP, 90 << 8);
+    w.set(m, stat::HITPOINTS, 45 << 8);
+    let mut st = with_nodes(p, vec![node(M_GUID, false)]);
+    life::send_life_updates(&mut w, &mut st);
+    assert_eq!(
+        w.sent_to(p),
+        vec![life::ally_life_message(M_GUID, 50).to_vec()]
+    );
+    assert_eq!(
+        life::ally_life_message(M_GUID, 50),
+        [0x7F, 0, 50, 0, 0x20, 0, 0, 0, 0, 0]
+    );
+    life::send_life_updates(&mut w, &mut st);
+    assert_eq!(w.sent_to(p).len(), 1, "unchanged: nothing more");
+    w.set(m, stat::HITPOINTS, 9 << 8);
+    life::send_life_updates(&mut w, &mut st);
+    assert_eq!(
+        w.sent_to(p).last(),
+        Some(&life::ally_life_message(M_GUID, 10).to_vec())
+    );
+    let mut dead = with_nodes(p, vec![node(M_GUID, true)]);
+    let before = w.sent_to(p).len();
+    life::send_life_updates(&mut w, &mut dead);
+    assert_eq!(w.sent_to(p).len(), before, "a dead hireling: none");
+}

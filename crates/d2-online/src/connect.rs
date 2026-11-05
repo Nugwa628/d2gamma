@@ -37,6 +37,7 @@ pub struct ServerSpec {
 /// What this client is, for the handshake.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientInfo {
+    pub mod_identity: Option<d2_net::mod_identity::ModIdentity>,
     /// `d2_proto::PROTOCOL_VERSION`.
     pub protocol: u32,
     /// `d2rust`, or a mod game's id.
@@ -148,6 +149,7 @@ impl Session {
         let (quic, mut control) = QuicClient::connect(addr, server.trust.clone(), timing)
             .map_err(|e| OnlineError::Connect(e.to_string()))?;
         let hello = options.hello.clone().unwrap_or_else(|| ClientHello {
+            mod_identity: me.mod_identity.clone(),
             protocol: me.protocol,
             game: me.game.clone(),
             build: me.build.clone(),
@@ -169,6 +171,9 @@ impl Session {
         })
     }
 
+    pub(crate) fn mod_identity(&self) -> Option<&d2_net::mod_identity::ModIdentity> {
+        self.me.mod_identity.as_ref()
+    }
     /// The server this session is with.
     pub fn server(&self) -> &ServerSpec {
         &self.server
@@ -314,6 +319,8 @@ impl Session {
     /// game stream, attached with the ticket. This session's connection
     /// stays open for the lobby and chat.
     pub fn join_node(&mut self, j: &JoinNode) -> Result<GameLink, OnlineError> {
+        d2_net::mod_identity::check(j.mod_identity.as_ref(), self.me.mod_identity.as_ref())
+            .map_err(OnlineError::from)?;
         let to = NodeTarget {
             addr: resolve(&j.addr)?,
             cert_sha256: j.node_cert_sha256,

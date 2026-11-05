@@ -1,0 +1,21 @@
+native="cof"
+native_version=1
+version=20
+unknown="0x00000000"
+frames=4
+directions=8
+x_min=-24
+x_max=24
+y_min=-48
+y_max=4
+animation_rate=256
+events=[0,0,0,0]
+event_padding=[]
+draw_order=[[1,1,1,1],[1,1,1,1],[1,1,1,1],[1,1,1,1],[1,1,1,1],[1,1,1,1],[1,1,1,1],[1,1,1,1]]
+[[layer]]
+component=1
+shadow=1
+selectable=1
+override_translucency=0
+new_translucency=0
+weapon_class="hth "

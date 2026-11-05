@@ -198,3 +198,63 @@ pub fn shield_choices(
     }
     Ok(out)
 }
+
+/// Mod monsters may supply complete COFs without copying the installed animation table.
+/// An explicit animation-table record always wins; plain game data stays byte-identical.
+pub(super) fn load_animation_data(
+    archives: &super::GameFiles,
+) -> Result<d2_formats::animdata::AnimData, super::BuildError> {
+    use crate::file_source::{read_cof, CanonicalPath};
+    use d2_data::bin::TableFiles;
+    use d2_formats::animdata::{hash, AnimRecord, EVENTS};
+    use d2_native::source::NativeAsset;
+    let path = CanonicalPath::new(d2_formats::animdata::PATH)
+        .map_err(|e| super::BuildError::Tables(e.to_string()))?;
+    let mut anim = match archives.read_native(&path) {
+        Some(Ok(NativeAsset::AnimData(anim))) => anim,
+        Some(Ok(_)) => return Err(super::BuildError::Tables("AnimData.d2: wrong kind".into())),
+        Some(Err(e)) => return Err(super::BuildError::Tables(format!("AnimData.d2: {e}"))),
+        None => {
+            return Err(super::BuildError::Tables(
+                "AnimData.d2: in no archive".into(),
+            ))
+        }
+    };
+    if archives.data_rules() != d2_data::bin::DataRules::Mod {
+        return Ok(anim);
+    }
+    let names = AnimationNames::load(archives).map_err(super::BuildError::Tables)?;
+    for class in 0..names.monsters.len() {
+        for mode in 0..16 {
+            let Some(key) = names.anim_key(UnitType::Monster, class as u32, mode, 0) else {
+                continue;
+            };
+            if !matches!(anim.find(&key), Ok(None)) {
+                continue;
+            }
+            let Some(name) = names.cof(UnitType::Monster, class as u32, mode) else {
+                continue;
+            };
+            let read = |name: &CofName| read_cof(archives, &name.full()).and_then(Result::ok);
+            let cof = read(&name).or_else(|| {
+                read(&CofName {
+                    weapon_class: HTH,
+                    ..name
+                })
+            });
+            let Some(cof) = cof else { continue };
+            let mut events = [0; EVENTS];
+            for (out, event) in events.iter_mut().zip(&cof.events) {
+                *out = *event;
+            }
+            let len = key.iter().position(|b| *b == 0).unwrap_or(key.len());
+            anim.buckets[hash(&key[..len])].push(AnimRecord {
+                name: key,
+                frames: u32::from(cof.frames),
+                speed: cof.animation_rate,
+                events,
+            });
+        }
+    }
+    Ok(anim)
+}

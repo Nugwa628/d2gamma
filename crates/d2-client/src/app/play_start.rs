@@ -57,7 +57,7 @@ pub fn resolve(
         game_dir,
         menu_difficulty,
         choice,
-        &single_player::D2sCodec,
+        crate::kit_mod::character_codec().as_ref(),
     )
 }
 

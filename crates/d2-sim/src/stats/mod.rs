@@ -8,7 +8,9 @@
 //! [`StatTable::from_fixed`]. Nothing here is a hard-coded copy of a
 //! table.
 
+pub mod ids;
 pub mod lists;
+pub mod named;
 pub mod ops;
 pub mod states;
 
@@ -30,23 +32,23 @@ pub use states::StateTable;
 
 /// Stat ids the simulation names (base-game itemstatcost rows).
 pub mod stat {
-    pub const STRENGTH: u16 = 0;
-    pub const ENERGY: u16 = 1;
-    pub const DEXTERITY: u16 = 2;
-    pub const VITALITY: u16 = 3;
-    pub const HITPOINTS: u16 = 6;
-    pub const MAXHP: u16 = 7;
-    pub const MANA: u16 = 8;
-    pub const MAXMANA: u16 = 9;
-    pub const STAMINA: u16 = 10;
-    pub const MAXSTAMINA: u16 = 11;
-    pub const LEVEL: u16 = 12;
-    pub const MANARECOVERY: u16 = 26;
-    pub const MANARECOVERYBONUS: u16 = 27;
-    pub const STAMINARECOVERYBONUS: u16 = 28;
-    pub const HPREGEN: u16 = 74;
-    pub const ITEM_AURA: u16 = 151;
-    pub const LAST_SENT_HP_PCT: u16 = 352;
+    pub use crate::stats::ids::DEXTERITY;
+    pub use crate::stats::ids::ENERGY;
+    pub use crate::stats::ids::HITPOINTS;
+    pub use crate::stats::ids::HPREGEN;
+    pub use crate::stats::ids::ITEM_AURA;
+    pub use crate::stats::ids::LAST_SENT_HP_PCT;
+    pub use crate::stats::ids::LEVEL;
+    pub use crate::stats::ids::MANA;
+    pub use crate::stats::ids::MANARECOVERY;
+    pub use crate::stats::ids::MANARECOVERYBONUS;
+    pub use crate::stats::ids::MAXHP;
+    pub use crate::stats::ids::MAXMANA;
+    pub use crate::stats::ids::MAXSTAMINA;
+    pub use crate::stats::ids::STAMINA;
+    pub use crate::stats::ids::STAMINARECOVERYBONUS;
+    pub use crate::stats::ids::STRENGTH;
+    pub use crate::stats::ids::VITALITY;
 }
 
 /// "No stat" in op base / op stat cells and the op-base lists.
@@ -120,6 +122,31 @@ pub struct StatInfo {
 }
 
 impl StatInfo {
+    /// Plain saved custom stat; its behavior is supplied by the mod registry.
+    fn custom() -> Self {
+        Self {
+            damagerelated: false,
+            fmin: false,
+            minaccr: 0,
+            fcallback: true,
+            saved: true,
+            valshift: 0,
+            keepzero: false,
+            op: 0,
+            op_param: 0,
+            op_base: NO_STAT,
+            op_stats: [NO_STAT; 3],
+            itemevent1: -1,
+            itemevent2: -1,
+            itemeventfunc1: -1,
+            itemeventfunc2: -1,
+            a51: false,
+            a52: false,
+            a53: false,
+            deps: Vec::new(),
+            entries: Vec::new(),
+        }
+    }
     /// Entry `j` of entries(T), or [`UNUSED_ENTRY`].
     pub fn entry(&self, j: usize) -> OpEntry {
         self.entries.get(j).copied().unwrap_or(UNUSED_ENTRY)
@@ -130,6 +157,8 @@ impl StatInfo {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StatTable {
     stats: Vec<StatInfo>,
+    custom: std::collections::BTreeMap<u16, StatInfo>,
+    pub(crate) named: named::StatRules,
 }
 
 fn u16_at(r: &[u8], o: usize) -> u16 {
@@ -185,21 +214,31 @@ impl StatTable {
                 }
             })
             .collect();
-        Ok(Self { stats })
+        Ok(Self {
+            stats,
+            ..Self::default()
+        })
     }
 
-    /// Number of stats n.
+    /// Exclusive upper bound for stat ids (custom ids may leave gaps).
     pub fn len(&self) -> usize {
-        self.stats.len()
+        self.custom
+            .keys()
+            .next_back()
+            .map_or(self.stats.len(), |id| {
+                self.stats.len().max(usize::from(*id) + 1)
+            })
     }
 
     pub fn is_empty(&self) -> bool {
-        self.stats.is_empty()
+        self.stats.is_empty() && self.custom.is_empty()
     }
 
     /// The stat, when 0 ≤ s < n.
     pub fn get(&self, s: u16) -> Option<&StatInfo> {
-        self.stats.get(usize::from(s))
+        self.stats
+            .get(usize::from(s))
+            .or_else(|| self.custom.get(&s))
     }
 
     /// ValShift of a stat; 0 for an invalid id.

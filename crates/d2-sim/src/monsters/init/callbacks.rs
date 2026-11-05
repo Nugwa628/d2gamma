@@ -122,24 +122,24 @@ pub mod addr {
 
 /// Stat ids the callbacks read or write.
 pub mod stat {
-    pub const LEVEL: u16 = 12;
-    pub const TOHIT: u16 = 19;
-    pub const MINDAMAGE: u16 = 21;
-    pub const MAXDAMAGE: u16 = 22;
-    pub const SECONDARY_MINDAMAGE: u16 = 23;
-    pub const SECONDARY_MAXDAMAGE: u16 = 24;
-    pub const FIREMINDAM: u16 = 48;
-    pub const FIREMAXDAM: u16 = 49;
-    pub const LIGHTMINDAM: u16 = 50;
-    pub const LIGHTMAXDAM: u16 = 51;
-    pub const MAGICMINDAM: u16 = 52;
-    pub const MAGICMAXDAM: u16 = 53;
-    pub const COLDMINDAM: u16 = 54;
-    pub const COLDMAXDAM: u16 = 55;
-    pub const COLDLENGTH: u16 = 56;
-    pub const POISONMINDAM: u16 = 57;
-    pub const POISONMAXDAM: u16 = 58;
-    pub const POISONLENGTH: u16 = 59;
+    pub use crate::stats::ids::COLDLENGTH;
+    pub use crate::stats::ids::COLDMAXDAM;
+    pub use crate::stats::ids::COLDMINDAM;
+    pub use crate::stats::ids::FIREMAXDAM;
+    pub use crate::stats::ids::FIREMINDAM;
+    pub use crate::stats::ids::LEVEL;
+    pub use crate::stats::ids::LIGHTMAXDAM;
+    pub use crate::stats::ids::LIGHTMINDAM;
+    pub use crate::stats::ids::MAGICMAXDAM;
+    pub use crate::stats::ids::MAGICMINDAM;
+    pub use crate::stats::ids::MAXDAMAGE;
+    pub use crate::stats::ids::MINDAMAGE;
+    pub use crate::stats::ids::POISONLENGTH;
+    pub use crate::stats::ids::POISONMAXDAM;
+    pub use crate::stats::ids::POISONMINDAM;
+    pub use crate::stats::ids::SECONDARY_MAXDAMAGE;
+    pub use crate::stats::ids::SECONDARY_MINDAMAGE;
+    pub use crate::stats::ids::TOHIT;
 }
 
 /// Missile classes (`missiles.txt` `Id`).

@@ -56,6 +56,8 @@ const SKILL: i32 = 0;
 /// used skill, and the skill missile record fill (aim at `aim_at`).
 #[derive(Default)]
 pub(super) struct Open {
+    /// Enable a generated animation name for summon/setup fixtures.
+    pub(super) generated_anim: bool,
     pos: BTreeMap<UnitId, (i32, i32)>,
     dir: BTreeMap<UnitId, i32>,
     /// The path target point set at creation.
@@ -81,11 +83,42 @@ pub(super) struct Open {
     max_stacks: BTreeMap<UnitId, i32>,
     /// Alignment per unit (`Pending::alignment`; absent: evil, 0).
     pub(super) align: BTreeMap<UnitId, u8>,
+    /// Pairs of players in one party (`Pending::allied`).
+    pub(super) party: Vec<(UnitId, UnitId)>,
+    /// Every unit is within melee reach of every other
+    /// (`Pending::in_melee_range`); off: none is.
+    pub(super) in_reach: bool,
+    /// No box or pattern collides with anything (`Pending::box_collides`,
+    /// `Pending::pattern_collides`); off: every one does.
+    pub(super) open_ground: bool,
+    /// The parameters of a unit's used-skill entry (`Pending::entry_param`).
+    params: BTreeMap<(UnitId, u8), i32>,
 }
 
 impl Pending for Open {
+    fn anim_name(&self, _: UnitId, _: UnitType, _: u32, _: u32) -> Option<[u8; 8]> {
+        self.generated_anim.then_some(*b"GENANIM\0")
+    }
+    fn box_collides(&self, _: RoomId, _: (i32, i32), _: i32, _: u32) -> bool {
+        !self.open_ground
+    }
+    fn pattern_collides(&self, _: RoomId, _: (i32, i32), _: UnitId, _: u32) -> bool {
+        !self.open_ground
+    }
+    fn entry_param(&self, u: UnitId, _: &SkillEntry, i: u8) -> i32 {
+        self.params.get(&(u, i)).copied().unwrap_or(0)
+    }
+    fn set_entry_param_of(&mut self, u: UnitId, _: &SkillEntry, i: u8, v: i32) {
+        self.params.insert((u, i), v);
+    }
+    fn in_melee_range(&self, _: UnitId, _: UnitId, _: i32) -> bool {
+        self.in_reach
+    }
     fn alignment(&self, unit: UnitId) -> u8 {
         self.align.get(&unit).copied().unwrap_or(0)
+    }
+    fn allied(&self, a: UnitId, b: UnitId) -> bool {
+        a == b || self.party.contains(&(a, b)) || self.party.contains(&(b, a))
     }
     fn position(&self, unit: UnitId) -> (i32, i32) {
         self.pos.get(&unit).copied().unwrap_or((0, 0))
@@ -994,6 +1027,120 @@ fn inferno_frames_reach_the_missile_store() {
     assert_eq!((a, b), (32, 0x7FFF));
     let data = fx.sim.hooks().missile_store().get(m).unwrap().clone();
     assert_eq!((data.total, data.current), (0x7FFF, -0x8000));
+    fx.assert_clean();
+}
+
+/// A player, its pet (AI control owner: the player) and a wild monster.
+fn pet_and_wild(fx: &mut Fx) -> (UnitId, UnitId, UnitId) {
+    use crate::monsters::ai::{AiControl, AiStore, UnitRef};
+    let p = fx.spawn(UnitType::Player, 10, 10);
+    let pet = fx.spawn(UnitType::Monster, 11, 10);
+    let wild = fx.spawn(UnitType::Monster, 12, 10);
+    let guid = fx.sim.sys.units.get(p).unwrap().guid;
+    let mut ai = AiStore::new();
+    ai.entry(pet).control = Some(AiControl {
+        minion_owner: Some(UnitRef {
+            ty: UnitType::Player,
+            guid,
+        }),
+        ..AiControl::default()
+    });
+    ai.entry(wild).control = Some(AiControl::default());
+    fx.sim.sys.hooks.ai = Some(ai);
+    (p, pet, wild)
+}
+
+#[test]
+fn minion_owner_reads_the_ai_control() {
+    use crate::skills::use_::bodies::BodyWorld;
+    let mut fx = Fx::new();
+    let (p, pet, wild) = pet_and_wild(&mut fx);
+    let owners = fx.sim.skill_use(&mut fx.game, |w| {
+        [pet, wild, p].map(|u| BodyWorld::minion_owner(w, u))
+    });
+    assert_eq!(owners, [Some(p), None, None]);
+    fx.assert_clean();
+}
+
+#[test]
+fn pets_are_the_listed_monsters_and_unsummon_needs_the_bit() {
+    use crate::player::pets::{PetEntry, PetLists, PetNode};
+    use crate::skills::use_::bodies::{BodyTables, BodyWorld, PETTYPE_UNSUMMON};
+    use crate::skills::use_::UseWorld;
+    let mut fx = Fx::new();
+    let (p, pet, wild) = pet_and_wild(&mut fx);
+    let kept = fx.spawn(UnitType::Monster, 13, 10);
+    let guid = |fx: &Fx, u: UnitId| fx.sim.sys.units.get(u).unwrap().guid as i32;
+    let entry = |guid: i32| PetEntry {
+        nodes: vec![PetNode {
+            flags: 0,
+            guid,
+            extra: [0; 3],
+        }],
+        count: 1,
+        max: 1,
+    };
+    // Without the body tables: the host's answer (none).
+    let host = fx
+        .sim
+        .skill_use(&mut fx.game, |w| BodyWorld::pet_unsummonable(w, p, pet));
+    assert!(!host);
+    // Pet type 1 may be unsummoned, pet type 2 not.
+    fx.sim.sys.hooks.bodies = Some(Arc::new(BodyTables {
+        pettype_count: 3,
+        pettype_flags: vec![0, PETTYPE_UNSUMMON, 0x03],
+        ..BodyTables::default()
+    }));
+    let lists = PetLists {
+        entries: vec![
+            PetEntry::default(),
+            entry(guid(&fx, pet)),
+            entry(guid(&fx, kept)),
+        ],
+    };
+    fx.sim.sys.hooks.pet_lists.insert(p, lists);
+    let answers = fx.sim.skill_use(&mut fx.game, |w| {
+        [(p, pet), (p, kept), (p, wild), (pet, pet)]
+            .map(|(u, t)| BodyWorld::pet_unsummonable(w, u, t))
+    });
+    assert_eq!(answers, [true, false, false, false]);
+    // A pet is any listed monster, whatever its pet type.
+    let pets = fx.sim.skill_use(&mut fx.game, |w| {
+        [(p, pet), (p, kept), (p, wild), (pet, pet)].map(|(u, t)| UseWorld::is_pet(w, u, t))
+    });
+    assert_eq!(pets, [true, true, false, false]);
+    fx.assert_clean();
+}
+
+#[test]
+fn is_ally_is_the_party_after_the_minion_owners() {
+    use crate::skills::use_::UseWorld;
+    let mut fx = Fx::new();
+    let (p, pet, wild) = pet_and_wild(&mut fx);
+    let friend = fx.spawn(UnitType::Player, 14, 10);
+    let stranger = fx.spawn(UnitType::Player, 15, 10);
+    fx.sim.hooks().x.party.push((p, friend));
+    let answers = fx.sim.skill_use(&mut fx.game, |w| {
+        [
+            (friend, p),
+            (friend, pet),
+            (p, friend),
+            (p, pet),
+            (p, p),
+            (stranger, p),
+            (stranger, pet),
+            (wild, wild),
+            (p, wild),
+        ]
+        .map(|(a, b)| UseWorld::is_ally(w, a, b))
+    });
+    // A party member and the member's pet are allies; a unit's own pet
+    // and the unit itself are not (Unsummon's `TargetPet` start), nor a
+    // player out of the party or the monsters.
+    assert_eq!(
+        answers,
+        [true, true, true, false, false, false, false, false, false]
+    );
     fx.assert_clean();
 }
 

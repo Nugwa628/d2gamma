@@ -38,6 +38,10 @@ pub enum SkillEvent {
         skill: u32,
         level: i32,
     },
+    /// A tick a mod's block skill scheduled is due (event 14, the mod tick
+    /// callback); `job` is the number the tick was kept under
+    /// ([`crate::wiring::action::ActionHooks::mod_ticks`]).
+    ModTick { unit: UnitId, job: u32 },
     /// The remove callback `cb` of a list the expiry walk freed whose body
     /// is a skill body: Confuse, Attract, Conversion or Mind Blast (called
     /// with the unit and the state).
@@ -161,6 +165,9 @@ pub const KEY_USE_MARK: u8 = 0xF4;
 /// game that will own them.
 #[allow(unused_variables)]
 pub trait Pending {
+    fn script_error(&mut self, _message: &str) {}
+    fn script_message(&mut self, _unit: UnitId, _message: &str) {}
+    fn script_ui_variable(&mut self, _unit: UnitId, _name: &str, _value: i32) {}
     /// How many messages the host holds unsent, `None` when it cannot say
     /// (see `ActionHooks::pet_follow_mark`).
     fn sent_len(&self) -> Option<usize> {

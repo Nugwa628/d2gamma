@@ -1,0 +1,7 @@
+id = "ai-lift-skeleton-bow"
+name = "AI 37 SkeletonBow, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "A skeleton archer as a graph: AI 37 (SkeletonBow)."
+api = 1
+kind = "full"

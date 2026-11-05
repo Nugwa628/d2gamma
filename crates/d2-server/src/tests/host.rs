@@ -608,3 +608,23 @@ fn same_messages_same_result_regardless_of_timing() {
     let b = play(&[1000, 1041, 1095, 1121, 1170]);
     assert_eq!(a, b);
 }
+
+#[test]
+fn network_version_kick_closes_the_host_record_but_delivers_its_reason_without_a_tick() {
+    let mut h = host();
+    h.set_wire(d2_proto::envelope::Wire::Mod);
+    h.game
+        .mod_kicks
+        .push((0, "This mod needs updating: server alpha 2.0.0".into()));
+    assert!(!h.frame().unwrap().ticked);
+    assert!(h.record(0).is_none());
+    let messages = h.receive(0);
+    assert_eq!(messages.len(), 1);
+    let payload =
+        d2_proto::envelope::payload(d2_proto::envelope::Direction::ToClient, &messages[0]).unwrap();
+    assert_eq!(
+        d2_proto::mod_ui::read_net_rejection(payload),
+        Some("This mod needs updating: server alpha 2.0.0")
+    );
+    assert!(h.receive(0).is_empty());
+}

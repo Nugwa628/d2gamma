@@ -30,12 +30,12 @@ pub const JUST_PORTALED_FRAMES: i32 = 75;
 
 /// Stat ids the well heal reads (§11 rule 2; `combat/vitals.md`).
 pub mod stat {
-    pub const LIFE: u16 = 6;
-    pub const MAX_LIFE: u16 = 7;
-    pub const MANA: u16 = 8;
-    pub const MAX_MANA: u16 = 9;
-    pub const STAMINA: u16 = 10;
-    pub const MAX_STAMINA: u16 = 11;
+    pub use crate::stats::ids::HITPOINTS as LIFE;
+    pub use crate::stats::ids::MANA;
+    pub use crate::stats::ids::MAXHP as MAX_LIFE;
+    pub use crate::stats::ids::MAXMANA as MAX_MANA;
+    pub use crate::stats::ids::MAXSTAMINA as MAX_STAMINA;
+    pub use crate::stats::ids::STAMINA;
 }
 
 /// States the well heal removes (§11 rule 2), in order.

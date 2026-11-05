@@ -11,7 +11,6 @@
 //! the player's interact info is the unit record's
 //! ([`crate::units::record::InteractInfo`]).
 
-use crate::drlg::act_of_level;
 use crate::game::Game;
 use crate::tick::events::event;
 use crate::units::{RoomId, UnitId, UnitType};
@@ -200,7 +199,7 @@ impl<X: Pending> WaypointWorld for WaypointView<'_, X> {
     /// is run as is (it streams the room). An act without a DRLG gives
     /// none.
     fn spawn_room(&mut self, level: u32, tile_code: u8) -> Option<RoomId> {
-        let act = act_of_level(level);
+        let act = self.v.h.rules.act_of_level(level);
         let r = self
             .v
             .h

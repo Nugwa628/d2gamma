@@ -1,0 +1,48 @@
+version = 1
+
+# Skill 393 "Opportunist" is a passive skill; all three triggers live
+# while the unit has it, and its level is `lvl`.
+
+# 1. 8% of melee attacks (hit or miss) open a one-second reaction window.
+[[trigger]]
+name = "Open the window"
+on = "attack"
+while_skill = 393
+chance = 8
+[[trigger.condition]]
+kind = "lacks_state"
+state = 190
+[[trigger.action]]
+kind = "apply_state"
+state = 190
+
+# 2. Using skill 390, 391 or 392 while the window is open: +1 charge. The
+#    window is used up. (The cast that earns the charge does not get it.)
+[[trigger]]
+name = "Use a skill in the window"
+on = "skill_used"
+skills = [390, 391, 392]
+while_skill = 393
+[[trigger.condition]]
+kind = "has_state"
+state = 190
+[[trigger.action]]
+kind = "add_stack"
+state = 191
+[[trigger.action]]
+kind = "remove_state"
+state = 190
+
+# 3. The window ran out unused: lose a charge. Only a window that runs out
+#    sets this off; the trigger above ending it is not an end.
+[[trigger]]
+name = "Missed the window"
+on = "state_end"
+state = 190
+while_skill = 393
+[[trigger.condition]]
+kind = "has_state"
+state = 191
+[[trigger.action]]
+kind = "remove_stack"
+state = 191

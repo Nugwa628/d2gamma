@@ -33,6 +33,8 @@ mod front_host_real;
 mod front_host_screens;
 #[path = "../front_host_wide_images.rs"]
 mod front_host_wide_images;
+#[path = "../front_realm_link.rs"]
+mod front_realm_link;
 #[path = "../front_session.rs"]
 mod front_session;
 #[path = "../front_start.rs"]

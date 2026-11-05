@@ -1,0 +1,7 @@
+id = "ai-lift-panther-javelin"
+name = "AI 95 PantherJavelin, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "PantherJavelin as a graph: AI 95 (PantherJavelin)."
+api = 1
+kind = "full"

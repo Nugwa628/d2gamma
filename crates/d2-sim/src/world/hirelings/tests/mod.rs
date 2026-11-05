@@ -7,5 +7,6 @@ mod game;
 mod items;
 mod level;
 mod life;
+mod mod_merc;
 mod pets;
 mod rows;

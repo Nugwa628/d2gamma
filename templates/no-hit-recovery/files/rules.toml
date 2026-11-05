@@ -1,0 +1,9 @@
+# No hit recovery: a hit never makes a character or a monster flinch.
+# Damage, knockback, stun and freeze are not touched.
+version = 1
+
+[players.hit_recovery]
+enabled = false
+
+[monsters.hit_recovery]
+enabled = false

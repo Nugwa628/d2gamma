@@ -10,7 +10,7 @@
 //! - `check`: compile the patched cells and compare (C).
 //!
 //! Statements: `table`, `set`, `check`, `add`, `addcol`, `stradd` and
-//! `strset`.
+//! `strset`, `remove` and `disable`.
 //! `addcol <name> <type> [<default>]` appends an extension column to the
 //! current table, so a mod game can carry its own data on base tables
 //! (an item stat's new property, a level's new flag). The type is `int`
@@ -23,6 +23,17 @@
 //! code reads the values through [`crate::schema::ExtStore`]
 //! ([`PatchedCompile::ext`], [`PatchData::ext_store`]). A layer without
 //! `addcol` patches exactly as before, and the format stays `d2patch 1`.
+//!
+//! Under [`DataRules::Mod`] ([`rules_for`]) `addcol` may also name a
+//! field of one of the table's lists that the base text has no column
+//! for (a level's `mon11`..`mon25`, an affix's `etype4`, `etype5`): the
+//! column joins the header as a real column, the compiler binds it, and
+//! the game reads it as it reads the base columns. Cells are written like
+//! any column's (the field's own syntax, e.g. a monster id name for a
+//! link); the type word is `text`, and `int` is accepted too, neither
+//! checks cells; the default (empty when none) fills the rows, and every
+//! later `add` without `like`. An empty cell compiles like a missing
+//! column. Under [`DataRules::Original`] such a name is A16 as before.
 //!
 //! Inside a bracketed token `\xHH` (two hex digits) is the byte `HH`, so
 //! a value holding bytes outside printable ASCII, `[` or `]` (a mod's
@@ -47,6 +58,7 @@ mod check;
 mod diff;
 #[cfg(test)]
 mod gaps_numbered_tests;
+mod references;
 #[cfg(test)]
 mod robust_tests;
 mod syntax;
@@ -68,6 +80,7 @@ use crate::txt::{bind, TxtTable};
 pub use apply::apply_stack;
 pub use check::{compile_patched, PatchedCompile};
 pub use diff::{diff_tables, DiffError};
+pub use references::{check_references, references};
 pub use syntax::{
     escape, load_stack, parse_layer, parse_stack, unescape, Layer, Sel, StackEntry, Stmt, StmtLine,
     Tok,
@@ -124,6 +137,8 @@ pub enum Code {
     A19,
     A20,
     A21,
+    A22,
+    A23,
     N01,
     N02,
     N03,
@@ -195,6 +210,8 @@ impl Code {
             Code::A18 => "string key already exists",
             Code::A19 => "no string has this key",
             Code::A20 => "no string id left",
+            Code::A22 => "row is disabled or reserved column was named",
+            Code::A23 => "table id space exhausted",
             Code::A21 => "table value holds a tab, line break or NUL byte",
             Code::N01 => "replaces an earlier layer's value",
             Code::N02 => "no list binds this column",
@@ -413,6 +430,11 @@ pub struct TableRules {
     pub scope: String,
     /// Field column names of each list compiled from this txt.
     pub lists: Vec<Vec<Vec<u8>>>,
+    /// A layer's `addcol` may name a field of a list that the base
+    /// text has no column for: the column joins the header as a column
+    /// the compiler binds, so the field takes the cells (a mod game's
+    /// `levels` `mon11`). Only [`DataRules::Mod`] sets it.
+    pub adopt: bool,
 }
 
 /// Tables whose row count the loader's record-count check pins.
@@ -450,6 +472,7 @@ pub fn rules_from_schema(schema: &Schema) -> Vec<TableRules> {
             fixed: FIXED.contains(&name.as_str()),
             scope: name,
             lists: vec![lists],
+            adopt: false,
         });
     }
     // The key: the first list with a key(code4)/key(name16)/key(name32)
@@ -483,20 +506,46 @@ pub fn rules_from_schema(schema: &Schema) -> Vec<TableRules> {
     out
 }
 
-/// The 85 patchable tables of the game's data set.
+/// The 86 patchable tables of the game's data set.
 pub fn rules() -> Vec<TableRules> {
-    rules_from_schema(schema())
+    let mut rules = rules_from_schema(schema());
+    if let Some(sounds) = rules.iter_mut().find(|r| r.name == "sounds") {
+        sounds.lists.push(
+            crate::sounds::sound_fields()
+                .into_iter()
+                .map(|f| f.column)
+                .collect(),
+        );
+    }
+    rules.push(TableRules {
+        name: "soundenviron".into(),
+        txt_name: "soundenviron.txt".into(),
+        key_field: None,
+        kind: KeyKind::Exact,
+        unique: false,
+        fixed: false,
+        scope: "soundenviron".into(),
+        lists: vec![crate::sounds::soundenviron_fields()
+            .into_iter()
+            .map(|f| f.column)
+            .collect()],
+        adopt: false,
+    });
+    rules
 }
 
 /// The patchable tables under `data_rules`: [`rules`], except that a
 /// table the data rules let grow ([`DataRules::grows`]) is not fixed, so
-/// a mod's layer can add rows to it.
+/// a mod's layer can add rows to it, and that under [`DataRules::Mod`] a
+/// layer can add the columns a table's fields have but its base text
+/// lacks ([`TableRules::adopt`]).
 pub fn rules_for(data_rules: DataRules) -> Vec<TableRules> {
     let mut out = rules();
     for r in &mut out {
         if data_rules.grows(&r.name) {
             r.fixed = false;
         }
+        r.adopt = data_rules == DataRules::Mod;
     }
     out
 }
@@ -568,6 +617,10 @@ pub struct PatchTable {
     /// Extension columns added by `addcol`, in order (empty for a base
     /// table).
     pub ext: Vec<AddedColumn>,
+    /// Columns a layer's `addcol` joined to the header that the
+    /// compiler binds ([`TableRules::adopt`]), in order. They are table
+    /// columns, not extension columns: no [`ExtStore`] holds them.
+    pub adopted: Vec<AddedColumn>,
 }
 
 /// An extension column a layer appended with `addcol`.
@@ -585,7 +638,18 @@ pub struct AddedColumn {
     pub loc: Loc,
 }
 
+/// Reserved patch metadata column; keys still reserve their linker slots.
+pub const DISABLED_COLUMN: &[u8] = b"__d2_disabled";
+
 impl PatchTable {
+    /// Whether this slot was disabled by a patch.
+    pub fn disabled(&self, row: usize) -> bool {
+        self.header
+            .iter()
+            .position(|h| h == DISABLED_COLUMN)
+            .is_some_and(|c| self.rows[row].cells[c] == b"1")
+    }
+
     /// Builds a table from its base file (B02, B03 on failure).
     pub fn from_base(
         rules: &TableRules,
@@ -663,6 +727,7 @@ impl PatchTable {
             key_col,
             bound,
             ext: Vec::new(),
+            adopted: Vec::new(),
         })
     }
 

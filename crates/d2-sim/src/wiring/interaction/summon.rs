@@ -289,20 +289,25 @@ impl<X: Pending + UseRest> UseView<'_, X> {
         let BodyEffect::PetAdd { owner, pet, t, max } = e else {
             return Some(e);
         };
-        if let Err(err) = pets::add(&mut PetView { u: self }, Some(owner), Some(pet), t, max) {
-            self.cv
+        match pets::add(&mut PetView { u: self }, Some(owner), Some(pet), t, max) {
+            Err(err) => self
+                .cv
                 .v
                 .h
                 .errors
-                .push(crate::wiring::action::WiringError::Pet(err));
-        } else if self.cv.v.h.rules.events().is_some() {
-            // A mod game's pet setup, once the pet is on its owner's list.
-            use crate::rules::EventHost;
-            if self.cv.owner(pet) == Some(owner) {
-                crate::wiring::action::mod_events::fire(&mut self.cv, |e, h| {
-                    e.pet_created(h, owner, pet, t)
-                });
+                .push(crate::wiring::action::WiringError::Pet(err)),
+            Ok(()) if self.cv.v.h.rules.events().is_some() => {
+                // A mod game's pet setup, once the pet is on its owner's list.
+                use crate::rules::EventHost;
+                if self.cv.owner(pet) == Some(owner) {
+                    crate::wiring::action::mod_events::fire(&mut self.cv, |e, h| {
+                        e.pet_created(h, owner, pet, t)
+                    });
+                }
+                // The event hooks also hear of the pet after the skill.
+                self.cv.v.h.mod_pets.push((owner, pet));
             }
+            Ok(()) => {}
         }
         None
     }
@@ -405,6 +410,41 @@ impl<X: Pending> View<'_, X> {
                     self.h.x.send(c, &msg);
                 }
             }
+        }
+    }
+}
+
+impl<X: Pending> View<'_, X> {
+    /// Each summoned pet's life percent, sent to its owner (S→C 0x7F, not a
+    /// player) when it is new or changed since the last send; the owner's
+    /// pet icon row draws it. A pet that left its list is forgotten.
+    pub fn pet_life_updates(&mut self, game: &Game) {
+        let mut now = std::collections::BTreeMap::new();
+        let mut out = Vec::new();
+        for (&owner, lists) in &self.h.pet_lists {
+            for n in lists.entries.iter().flat_map(|e| e.nodes.iter()) {
+                let Some(m) = game.lists.find_unit(UnitType::Monster, n.guid as u32) else {
+                    continue;
+                };
+                let max = i64::from(self.stats.max_life(m));
+                let pct = if max > 0 {
+                    let life = i64::from(self.stats.unit_total(m, crate::stats::ids::HITPOINTS, 0));
+                    (life.max(0) * 100 / max).clamp(0, 100) as u16
+                } else {
+                    0
+                };
+                if self.h.pet_life_sent.get(&n.guid) != Some(&pct) {
+                    out.push((
+                        owner,
+                        crate::world::hirelings::life::ally_life_message(n.guid as u32, pct),
+                    ));
+                }
+                now.insert(n.guid, pct);
+            }
+        }
+        self.h.pet_life_sent = now;
+        for (owner, msg) in out {
+            self.h.x.send(owner, &msg);
         }
     }
 }

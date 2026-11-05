@@ -452,6 +452,68 @@ fn hiring_over_a_hireling_asks_first() {
     assert!(ui.npc_waiting_note());
 }
 
+// A hire's reply comes back before the next poll: the play frame polls the
+// UI, routes the click (C→S 0x36 leaves that frame) and the server's next
+// pump delivers S→C 0x2A result 5 before the next frame's poll. The reply
+// still closes the waiting (no note is left up), Kashya's menu is built
+// again, Esc ends the interaction and a second Esc opens the game menu.
+#[test]
+fn a_hire_reply_before_the_next_poll_clears_the_wait_and_esc_still_works() {
+    let (mut ui, mut root) = setup();
+    let mut w = world(KASHYA, 10);
+    w.expansion = 1;
+    w.units.get_mut(&ME).unwrap().mode = 1;
+    open(&mut ui, &mut root, &w, KASHYA, 10);
+    root.take_intents();
+    ui.apply_output(&Output::HireListReset, &w).unwrap();
+    ui.apply_output(
+        &Output::HireOffer {
+            name: 3000,
+            seed: 5,
+        },
+        &w,
+    )
+    .unwrap();
+    let p = ui.npc_menu_row_point(1).unwrap();
+    click(&mut ui, &mut root, &w, p);
+    assert_eq!(ui.hire_list().up, Some(NPC));
+    click(&mut ui, &mut root, &w, Point::new(200, 120 + 8));
+    assert_eq!(
+        root.take_intents().iter().map(bytes).collect::<Vec<_>>(),
+        vec![crate::ui::hire_list::hire_intent(NPC, 3000).0]
+    );
+    // The server's reply to the hire: the list again, then 0x2A result 5,
+    // all before the next poll.
+    ui.apply_output(&Output::HireListReset, &w).unwrap();
+    let mut b = [0u8; 15];
+    b[0] = 0x2A;
+    b[2] = 5;
+    ui.apply_output(&Output::NpcTransaction { bytes: b, gold: 0 }, &w)
+        .unwrap();
+    ui.npc_menu_poll(&w, &mut root, &Strs::new());
+    assert!(!ui.npc_waiting_note(), "the reply closed the waiting");
+    assert_ne!(ui.npc_menu_state(), MENU_WAITING);
+    assert!(ui.npc_menu_box().is_some(), "Kashya's menu is up again");
+    assert_eq!(ui.hire_list().up, None, "the list stays shut");
+    // The rebuild asks for the hire list again, as the first build did.
+    let sent = root.take_intents();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(&sent[0].0[..2], &[0x38, 3]);
+    let esc = UiEvent::Action(ActionId(Action::GameMenu.index() as u16));
+    send(&mut ui, &mut root, &w, esc);
+    let mut want = vec![0x30, 1, 0, 0, 0];
+    want.extend_from_slice(&NPC.to_le_bytes());
+    assert_eq!(
+        root.take_intents().iter().map(bytes).collect::<Vec<_>>(),
+        vec![want],
+        "Esc ends the interaction"
+    );
+    assert!(!ui.is_open(8));
+    ui.npc_menu_poll(&w, &mut root, &Strs::new());
+    send(&mut ui, &mut root, &w, esc);
+    assert!(ui.is_open(9), "the next Esc opens the game menu");
+}
+
 // The box background is the rectangle `(x, y, w, h, 0, 1)`: the sink's
 // rectangle over the box, color 0, mode 1 (no cel).
 #[test]
@@ -724,4 +786,179 @@ fn an_open_interaction_includes_the_b2_greeting() {
     }
     assert!(!ui.npc_menu_up(), "the greeting is not the built menu");
     assert!(ui.npc_interaction_up(), "the interaction is still open");
+}
+
+/// A mod panel that draws nothing: its presence makes the client fill
+/// the mod panels' reads.
+struct ModBox;
+
+impl Panel for ModBox {
+    fn id(&self) -> PanelId {
+        PanelId(crate::mods::MOD_PANEL_IDS)
+    }
+    fn rect(&self) -> Rect {
+        Rect::new(0, 0, 0, 0)
+    }
+    fn draw(&self, _ctx: &UiCtx, _out: &mut dyn UiDrawSink) {}
+    fn hit(&self, _p: Point) -> Option<WidgetId> {
+        None
+    }
+    fn event(&mut self, _e: UiEvent, _ctx: &UiCtx) -> UiResponse {
+        UiResponse::Ignored
+    }
+}
+
+impl crate::mods::PanelFactory for ModBox {
+    fn make(&self, _files: &crate::ui::panels::UiFiles) -> Box<dyn Panel> {
+        Box::new(ModBox)
+    }
+}
+
+/// The play UI of a mod game that draws the NPC menu's box itself.
+fn setup_mod_box() -> (OriginalUi, UiRoot) {
+    let config = UiConfig {
+        screen: Screen::R800,
+        expansion_installed: true,
+    };
+    let mut ui = OriginalUi::new(config, None).unwrap();
+    ui.set_mods(
+        crate::mods::ClientMods::new()
+            .with_panel(crate::mods::PanelPlace::Add { open: true }, ModBox)
+            .without_npc_menu_box(),
+    );
+    let mut root = UiRoot::new(Box::new(NoPanelRules));
+    ui.install(&mut root).unwrap();
+    (ui, root)
+}
+
+/// A mod panel's choice of row `n`, as the client carries it out.
+fn choose_row(ui: &mut OriginalUi, root: &mut UiRoot, w: &ClientWorld, n: usize) {
+    let s = Strs::new();
+    let ctx = UiCtx {
+        tick: 0,
+        world: w,
+        strings: &s,
+    };
+    ctx.request(crate::ui::mod_io::ModRequest::NpcRow(n));
+    ui.apply_mod_requests(root).unwrap();
+    ui.npc_menu_poll(w, root, &s);
+}
+
+fn texts_drawn(root: &UiRoot, w: &ClientWorld) -> Vec<String> {
+    let s = Strs::new();
+    let ctx = UiCtx {
+        tick: 0,
+        world: w,
+        strings: &s,
+    };
+    let mut out: Vec<UiDraw> = Vec::new();
+    root.draw(&ctx, &mut out);
+    out.iter()
+        .filter_map(|d| match d {
+            UiDraw::Text(t) => Some(utf(&t.text)),
+            _ => None,
+        })
+        .collect()
+}
+
+// The mod game draws the box: the game's NPC panel draws none of it and
+// exposes no row; the mod panel reads the box's items and rows as the
+// game built them.
+#[test]
+fn a_mod_game_reads_the_npc_menu_and_the_game_draws_no_box() {
+    let (mut ui, mut root) = setup_mod_box();
+    let w = world(KASHYA, 10);
+    open(&mut ui, &mut root, &w, KASHYA, 10);
+    ui.refresh_mod_io();
+    let s = Strs::new();
+    let ctx = UiCtx {
+        tick: 0,
+        world: &w,
+        strings: &s,
+    };
+    let m = ctx.npc_menu().expect("the menu is up");
+    assert_eq!(
+        (m.guid, m.class, m.talking, m.waiting),
+        (NPC, KASHYA, false, false)
+    );
+    let items: Vec<(String, Option<usize>)> =
+        m.items.iter().map(|i| (utf(&i.text), i.row)).collect();
+    assert_eq!(
+        items,
+        vec![
+            (String::new(), None),
+            ("Talk".into(), Some(0)),
+            ("Hire".into(), Some(1)),
+            ("cancel".into(), Some(2)),
+        ]
+    );
+    let kinds: Vec<_> = m.rows.iter().map(|r| r.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![Some(OptionKind::Talk), Some(OptionKind::Hire), None]
+    );
+    let drawn = texts_drawn(&root, &w);
+    assert!(!drawn.contains(&"Talk".to_string()), "{drawn:?}");
+    assert!(root
+        .ui_elements(&ctx)
+        .iter()
+        .all(|e| !e.id.starts_with("npc.menu")));
+    // D2Gamma's own UI still draws it.
+    let (mut ui, mut root) = setup();
+    open(&mut ui, &mut root, &w, KASHYA, 10);
+    assert!(texts_drawn(&root, &w).contains(&"Talk".to_string()));
+}
+
+// A row the mod panel chooses runs as a click on it: Talk opens the talk,
+// Trade asks for the shop, Cancel ends the chat.
+#[test]
+fn a_mod_panels_row_runs_the_games_option() {
+    let (mut ui, mut root) = setup_mod_box();
+    let w = world(AKARA, 1);
+    open(&mut ui, &mut root, &w, AKARA, 1);
+    root.take_intents();
+    choose_row(&mut ui, &mut root, &w, 0);
+    assert!(ui.npc_menu().unwrap().talking, "talk");
+    assert!(root.take_intents().is_empty(), "talk sends nothing");
+
+    let (mut ui, mut root) = setup_mod_box();
+    open(&mut ui, &mut root, &w, AKARA, 1);
+    let trade = ui
+        .npc_menu()
+        .unwrap()
+        .rows
+        .iter()
+        .position(|r| r.kind == Some(OptionKind::Trade))
+        .expect("Akara trades");
+    choose_row(&mut ui, &mut root, &w, trade);
+    assert_eq!(ui.npcm.borrow().shop_request, Some((NPC, AKARA)));
+
+    let (mut ui, mut root) = setup_mod_box();
+    open(&mut ui, &mut root, &w, AKARA, 1);
+    root.take_intents();
+    let cancel = ui.npc_menu().unwrap().rows.len() - 1;
+    choose_row(&mut ui, &mut root, &w, cancel);
+    let mut want = vec![0x30, 1, 0, 0, 0];
+    want.extend_from_slice(&NPC.to_le_bytes());
+    assert_eq!(
+        root.take_intents().iter().map(bytes).collect::<Vec<_>>(),
+        vec![want]
+    );
+    assert!(!ui.is_open(8));
+}
+
+// With the box the mod game's, a press that reaches the game's NPC panel
+// is outside the menu, even where the game's box would be: the chat ends
+// and no option runs.
+#[test]
+fn a_press_that_reaches_the_hidden_box_ends_the_chat() {
+    let (mut ui, mut root) = setup_mod_box();
+    let w = world(AKARA, 1);
+    open(&mut ui, &mut root, &w, AKARA, 1);
+    root.take_intents();
+    let p = ui.npc_menu_row_point(0).unwrap();
+    click(&mut ui, &mut root, &w, p);
+    assert_eq!(root.take_intents()[0].0[0], 0x30);
+    assert!(!ui.is_open(8));
+    assert!(ui.npc_menu().is_none(), "Talk did not run");
 }

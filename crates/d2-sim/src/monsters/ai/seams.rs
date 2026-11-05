@@ -29,6 +29,17 @@ pub trait AiUnits {
     /// Animation mode (unit +0x10).
     fn anim_mode(&self, unit: UnitId) -> u8;
     fn has_state(&self, unit: UnitId, state: u16) -> bool;
+    /// Puts `state` on the unit for `ticks` base ticks (25 a second);
+    /// `false` when the game cannot (default: it cannot).
+    fn timed_state(&mut self, game: &mut Game, unit: UnitId, state: u16, ticks: i32) -> bool {
+        let _ = (game, unit, state, ticks);
+        false
+    }
+    /// The stack count of `state` on the unit: 0 when it is off, 1 for a
+    /// state that is on without stack rules. Default: that.
+    fn state_stacks(&self, unit: UnitId, state: u16) -> u16 {
+        u16::from(self.has_state(unit, state))
+    }
     /// The rules the game runs under: a mod game's AI table rows and
     /// bodies come from them. Default: D2RUST's own.
     fn rules(&self) -> &crate::rules::Ruleset {

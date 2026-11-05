@@ -1,8 +1,9 @@
 //! d2-client entry point.
 //!
 //! Usage:
-//!   d2-client [play]     [--game-dir DIR] [--res 1280x720|800x600|640x480|1068x600] [--anim-dir DIR] [--seed N] [--frames N] [--difficulty normal|nightmare|hell] [--save FILE.d2s | --new CLASS NAME [--save-dir DIR]] [--native DIR] [--source native|mpq]
+//!   d2-client [play]     [--game-dir DIR] [--res 1280x720|800x600|640x480|1068x600] [--anim-dir DIR] [--seed N] [--frames N] [--difficulty normal|nightmare|hell] [--save FILE.d2s | --new CLASS NAME [--save-dir DIR]] [--native DIR] [--source native|mpq] [--mod ID | --mod-dir FOLDER]
 //!   d2-client view       [--ds1 PATH] [--wall-base N] [--frames N]
+//!   d2-client check-mod  <folder | pack | --base> --native DIR [--out DIR] [--jobs N]
 //!   d2-client verify     [--case NAME]... [--cases DIR] [--perturb N]
 //!   d2-client verify     [--ds1 PATH] [--wall-base N] [--view L,T,W,H] [--out DIR] [--perturb N]
 //!   d2-client cpu-render [--ds1 PATH] [--wall-base N] [--view L,T,W,H] [--out FILE]
@@ -16,7 +17,7 @@
 //!                        (online play, builds with the `online` feature:
 //!                        the servers come from `servers.toml` next to the exe)
 //!   d2-client animation-proof --out LOCAL_DIR [--game-dir DIR] [--class 0..6]
-//!   d2-client bake-anims --game-dir DIR --out DIR [--jobs N] [--plan] [--limit N]
+//!   d2-client bake-anims (--game-dir DIR | --native DIR [--mod NAME|PACK.d2pack]...) [--out DIR] [--jobs N] [--plan] [--limit N] [--data-rules original|mod]
 //!   d2-client animation-build --source-pack FILE --palette FILE --ramps FILE --out DIR [--loop]
 //!   d2-client facts-compare BASE_DIR D2RUST_DIR [--ignore COL,...]
 //!   d2-client sweep FAMILY [--filter TEXT] [--jobs N] [--out DIR] [--game-dir DIR | --native DIR [--mod NAME]] [--save-failures DIR]
@@ -725,14 +726,23 @@ fn select_data(
         _ => None,
     };
     let dir = std::env::var_os("D2_GAME_DIR").map(PathBuf::from);
-    // D2RUST plays its own rules on the `base/` layer alone: it never reads
-    // `mods/order.toml`. A mod game is its own binary and opens its own
-    // layers (`docs/mods/mod-game.md`).
+    // D2Gamma plays its own rules on the `base/` layer alone: it never reads
+    // `mods/order.toml`. `--mod` / `--mod-dir` (`kit_mod`) adds the picked
+    // mod-kit mod and the mods it builds on over `base/`; a mod game is its
+    // own binary and opens its own layers (`docs/mods/mod-game.md`).
+    // A kit mod's tables load under its data rules (rows past the vanilla
+    // counts); D2Gamma's own play is `Ruleset::Original` and unchanged.
     let data = match &native {
-        Some(dir) => single_player::GameData::open(&single_player::GameSource::Native(
-            dir.clone(),
-            single_player::Layers::base(),
-        ))?,
+        Some(dir) => single_player::GameData::open_with(
+            &single_player::GameSource::Native(
+                dir.clone(),
+                single_player::Layers::List(d2_client::kit_mod::layers_for(dir)?),
+            ),
+            d2_client::kit_mod::ruleset().data_rules(),
+        )?,
+        None if d2_client::kit_mod::active().is_some() => bail!(
+            "a mod needs the converted native game folder (--native DIR or the default native folder); it cannot be started from the game archives"
+        ),
         None => single_player::GameData::select(dir.as_deref())?,
     };
     let origin = match &native {
@@ -750,6 +760,14 @@ fn select_data(
 /// One process, one window and one event loop for the whole session; the front end and each game are
 /// states of one app (`app::session`), the game data is read once.
 fn play(o: Options) -> Result<()> {
+    play_inner(o)?;
+    if let Some(code) = d2_client::app::dev::reload::finish_restart()? {
+        std::process::exit(i32::from(code));
+    }
+    Ok(())
+}
+
+fn play_inner(mut o: Options) -> Result<()> {
     if o.online {
         check_online(&o)?;
     }
@@ -758,6 +776,20 @@ fn play(o: Options) -> Result<()> {
         println!("play: frame {} x {}", res.width, res.height);
     }
     let (data, dir, origin) = select_data(&o)?;
+    if let d2_client::assets::SourceChoice::Native(native) = d2_client::assets::choose_source(
+        o.native.as_deref(),
+        o.source.as_deref(),
+        |k| std::env::var(k).ok(),
+        d2_client::assets::default_native_dir(),
+    )
+    .map_err(anyhow::Error::msg)?
+    {
+        d2_client::app::dev::reload::configure(
+            &std::env::args().skip(1).collect::<Vec<_>>(),
+            &native,
+            o.online,
+        );
+    }
     if o.save.is_some()
         || o.new.is_some()
         || o.frames.is_some()
@@ -765,7 +797,19 @@ fn play(o: Options) -> Result<()> {
         || o.dump_loading.is_some()
         || o.offscreen
     {
-        let config = game_config(&o, data, dir, &origin, None, None, None)?;
+        let config = match game_config(&o, data.clone(), dir.clone(), &origin, None, None, None) {
+            Ok(config) => config,
+            Err(error) if d2_client::app::dev::reload::is_reload_slot(o.dev_start.as_deref()) => {
+                let message = format!("Mod reload: the dev snapshot cannot be restored: {error:#}. Starting a fresh unsaved game; the slot is kept.");
+                d2_client::launch::note(&message);
+                d2_client::app::dev::reload::restore_failed(message);
+                o.save = None;
+                o.new = None;
+                o.dev_start = None;
+                game_config(&o, data, dir, &origin, None, None, None)?
+            }
+            Err(error) => return Err(error),
+        };
         let save = config.save_path.clone();
         let end = d2_client::app::play::run(config)?;
         if let bevy::app::AppExit::Error(code) = end.exit {
@@ -980,8 +1024,10 @@ fn game_config(
     Ok(play::PlayConfig {
         data,
         seed,
-        // D2Gamma's own game: its rules, its saves, no client hooks.
-        rules: d2_sim::rules::Ruleset::Original,
+        // D2Gamma's own game: its rules, its saves, no client hooks. With a
+        // `--mod`, the mod's data host (the local server decides; an online
+        // game takes the server's rules and never this copy).
+        rules: d2_client::kit_mod::ruleset(),
         saves: single_player::Saves::d2rust(),
         mods: d2_client::mods::ClientMods::default(),
         character: start.character,
@@ -1157,6 +1203,47 @@ fn state_dump(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// `ai-arena ...`: one monster against a test character, headless; the
+/// trace of what its AI did.
+fn ai_arena(args: &[String]) -> Result<()> {
+    use d2_client::app::ai_arena;
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("{}", ai_arena::USAGE);
+        return Ok(());
+    }
+    let a = ai_arena::parse_args(args)?;
+    let trace = ai_arena::run(&a)?;
+    print!("{}", trace.summary_text());
+    if let Some(out) = &a.out {
+        println!("ai-arena: trace -> {}", out.display());
+    } else {
+        print!("{}", trace.write());
+    }
+    Ok(())
+}
+
+/// `ai-closeness ...`: a mod's data copy of an AI against the Rust body, over
+/// several seeds; a report.
+fn ai_closeness(args: &[String]) -> Result<()> {
+    use d2_client::app::ai_closeness;
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("{}", ai_closeness::USAGE);
+        return Ok(());
+    }
+    let a = ai_closeness::parse_args(args)?;
+    let text: String = ai_closeness::run(&a)?
+        .iter()
+        .map(|r| r.text())
+        .collect::<Vec<_>>()
+        .join("\n");
+    print!("{text}");
+    if let Some(out) = &a.arena.out {
+        std::fs::write(out, &text).with_context(|| format!("writing {}", out.display()))?;
+        println!("ai-closeness: report -> {}", out.display());
+    }
+    Ok(())
+}
+
 /// The game's allocator (see the `mimalloc` feature): a long session of
 /// games in one app stays flat in memory instead of rising by what the
 /// system allocator's per-thread arenas keep.
@@ -1167,6 +1254,8 @@ static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 fn main() -> std::process::ExitCode {
     use d2_client::launch;
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // The command line as given, for starting the game again.
+    let started_with = args.clone();
     // `--version`: one line on stdout for the launcher, nothing else runs.
     if matches!(
         args.first().map(String::as_str),
@@ -1178,6 +1267,14 @@ fn main() -> std::process::ExitCode {
     if let Some(path) = launch::take_error_file(&mut args) {
         launch::set_error_file(path);
     }
+    // Validation is an offline tool: no user-folder migration, game log,
+    // window, audio device or Windows error dialog.
+    if args.first().map(String::as_str) == Some("check-mod") {
+        return std::process::ExitCode::from(d2_client::app::check_mod::main(&args[1..]));
+    }
+    if args.first().is_some_and(|a| a == "package-mod") {
+        return std::process::ExitCode::from(d2_client::app::package_mod::main(&args[1..]));
+    }
     // `--mute` / `D2RUST_MUTE=1` / an offscreen run: no sound device.
     let muted = d2_client::mute::init(&mut args);
     // The lobby's stills bake, started by a running client: it keeps out
@@ -1188,6 +1285,14 @@ fn main() -> std::process::ExitCode {
             Ok(()) => std::process::ExitCode::SUCCESS,
             Err(_) => std::process::ExitCode::FAILURE,
         };
+    }
+    // `--mod ID` / `--mod-dir FOLDER`: this run plays a mod-kit mod, which
+    // takes the game's identity and user folder, so it is settled before
+    // either is read.
+    if starts_play(&args) {
+        if let Err(code) = start_mod(&mut args) {
+            return code;
+        }
     }
     // The player's D2Gamma folder (saves, settings, controls, logs), moving
     // an old `Documents\D2RUST` (or `d2rs`) into it on the first start;
@@ -1213,6 +1318,19 @@ fn main() -> std::process::ExitCode {
     // The coverage hook (a no-op in D2RUST).
     d2_sim::debug::coverage::flush();
     d2_client::app::perf::write_report();
+    // A mod (or plain D2Gamma) picked in the menus: the game starts again
+    // as picked, and this one ends with its exit code.
+    if result.is_ok() {
+        if let Some(started) = d2_client::mod_menu::restart_if_asked(&started_with) {
+            return match started {
+                Ok(code) => std::process::ExitCode::from(code),
+                Err(e) => {
+                    d2_client::say_err!("Error: the picked game did not start: {e}");
+                    std::process::ExitCode::FAILURE
+                }
+            };
+        }
+    }
     match &result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
@@ -1221,6 +1339,91 @@ fn main() -> std::process::ExitCode {
             launch::write_error(e);
             pause_if_console();
             std::process::ExitCode::from(launch::exit_code(e))
+        }
+    }
+}
+
+/// Whether the command line is a `play` (the default command) or an `ai-arena`
+/// run, the only ones that take `--mod` (`map` has a `--mod NAME` of its own).
+fn starts_play(args: &[String]) -> bool {
+    match args.first().map(String::as_str) {
+        None => true,
+        Some(first) => {
+            first == "play"
+                || first == "ai-arena"
+                || first == "ai-closeness"
+                || first.starts_with("--")
+        }
+    }
+}
+
+/// Takes `--mod` / `--mod-dir` / `--no-mod` out of `args` and makes this run
+/// the game they ask for: a mod-kit mod, or plain D2Gamma. With none of them
+/// a front-end session opens the mod played last (`mod_menu`), falling back
+/// to plain D2Gamma when that mod cannot start. The exit code to end with when
+/// the asked-for mod cannot be started.
+fn start_mod(args: &mut Vec<String>) -> Result<(), std::process::ExitCode> {
+    use d2_client::kit_mod::Plain;
+    use d2_client::{kit_mod, launch, mod_menu, user_dir};
+    let refused = |message: String| {
+        let e = anyhow::Error::from(launch::Usage(message));
+        d2_client::say_err!("Error: {e}");
+        launch::write_error(&e);
+        pause_if_console();
+        std::process::ExitCode::from(launch::exit_code(&e))
+    };
+    d2_client::app::dev::reload::take_window_arg(args).map_err(refused)?;
+    // What this run was, for the next plain start to open.
+    let remember = |id: Option<&str>| {
+        if let Err(e) = mod_menu::write_last(&user_dir::mods_dir(), id) {
+            launch::note(format!("last played mod not saved: {e}"));
+        }
+    };
+    let plain = kit_mod::take_plain(args).map_err(refused)?;
+    let spec = kit_mod::take_args(args).map_err(refused)?;
+    match (plain, spec) {
+        (Some(_), Some(_)) => Err(refused(format!(
+            "{} and {} / {} ask for different games; give one",
+            kit_mod::NO_MOD_FLAG,
+            kit_mod::MOD_FLAG,
+            kit_mod::MOD_DIR_FLAG
+        ))),
+        // `--no-mod` is a way in when a mod will not start: it changes
+        // nothing that is remembered. `--mod none` is a choice.
+        (Some(Plain::Once), None) => {
+            kit_mod::skip_addons();
+            Ok(())
+        }
+        (Some(Plain::Chosen), None) => {
+            remember(None);
+            Ok(())
+        }
+        (None, Some(spec)) => {
+            let stack = kit_mod::activate(&spec).map_err(|e| refused(e.to_string()))?;
+            if matches!(spec, d2_modkit::ModSpec::Id(_)) {
+                remember(Some(&stack.picked().manifest.id));
+            }
+            Ok(())
+        }
+        // The arena plays plain D2Gamma unless a mod is asked for: it never
+        // opens the mod played last.
+        (None, None)
+            if matches!(
+                args.first().map(String::as_str),
+                Some("ai-arena" | "ai-closeness")
+            ) =>
+        {
+            Ok(())
+        }
+        (None, None) => {
+            if let Some(spec) = mod_menu::start_choice(args, &user_dir::mods_dir()) {
+                if let Err(e) = kit_mod::activate(&spec) {
+                    // Never trap the player in a mod that will not start.
+                    d2_client::say_err!("{e}; starting plain D2Gamma instead");
+                    launch::note(format!("last played mod not started: {e}"));
+                }
+            }
+            Ok(())
         }
     }
 }
@@ -1239,14 +1442,16 @@ fn run(args: Vec<String>) -> Result<()> {
     use d2_client::launch;
     launch::note(format!("command: {}", args.join(" ")));
     // The install folder (`launch::game_dir`): `--game-dir`, $D2_GAME_DIR,
-    // then the exe's or the current folder when it holds d2data.mpq. Set
-    // as $D2_GAME_DIR before any thread starts, for every reader of it.
+    // then the exe's or the current folder when it holds d2data.mpq; a
+    // `--game-dir` that is not an install is an error. Set as $D2_GAME_DIR
+    // before any thread starts, for every reader of it.
     let arg_dir = args
         .windows(2)
         .find(|w| w[0] == "--game-dir")
         .map(|w| PathBuf::from(&w[1]));
     let env_dir = std::env::var_os("D2_GAME_DIR").map(PathBuf::from);
-    if let Some(dir) = launch::game_dir(arg_dir.as_deref(), env_dir, &launch::candidates()) {
+    if let Some(dir) = launch::checked_game_dir(arg_dir.as_deref(), env_dir, &launch::candidates())?
+    {
         d2_client::say!("game folder: {}", dir.display());
         launch::note(format!("game folder: {}", dir.display()));
         std::env::set_var("D2_GAME_DIR", &dir);
@@ -1264,6 +1469,8 @@ fn run(args: Vec<String>) -> Result<()> {
         Some("audio-mix") => audio_mix(&args[1..]),
         Some("front-music") => front_music(parse_options(&args[1..])?),
         Some("state-dump") => state_dump(&args[1..]),
+        Some("ai-arena") => ai_arena(&args[1..]),
+        Some("ai-closeness") => ai_closeness(&args[1..]),
         Some("soak") => {
             let a = d2_client::app::soak::parse_args(&args[1..])?;
             std::process::exit(d2_client::app::soak::run(&a)?)
@@ -1289,7 +1496,7 @@ fn run(args: Vec<String>) -> Result<()> {
         Some("view") => view(parse_options(&args[1..])?),
         // Proves the crash log (`launch`, windows-build.yml smoke step).
         Some("crash-test") => panic!("crash-test: a deliberate panic to check D2Gamma-crash.log"),
-        _ => Err(launch::Usage("usage: D2Gamma-Game [--version] [--error-file FILE] [--mute | --sound] [view|verify|cpu-render|map|play|bake-backdrops|facts-compare|perf-summary|audio-mix|front-music|state-dump|soak|autoplay-host|explore|repro|sweep] [--ds1 PATH] [--wall-base N] [--view L,T,W,H] [--out PATH] [--case NAME] [--cases DIR] [--perturb N] [--seed N] [--frames N] [--difficulty normal|nightmare|hell] [--save FILE.d2s | --new CLASS NAME [--save-dir DIR]] [--native DIR] [--source native|mpq] [--game-dir DIR] [--dump-draws DIR [--at-tick N[,M...]] [--dump-image]] [--sound-log FILE] [--audio-dump FILE [--audio-ticks N]] [--res 1280x720|800x600|640x480|1068x600] [--input SCRIPT] [--poke \"F DIRECTIVE ARGS\"]... [--poke-file FILE] [--no-dev] [--dev-start SLOT]".into()).into()),
+        _ => Err(launch::Usage("usage: D2Gamma-Game [--version] [--error-file FILE] [--mute | --sound] [view|verify|cpu-render|map|play|bake-backdrops|facts-compare|perf-summary|audio-mix|front-music|state-dump|soak|autoplay-host|explore|repro|sweep] [--ds1 PATH] [--wall-base N] [--view L,T,W,H] [--out PATH] [--case NAME] [--cases DIR] [--perturb N] [--seed N] [--frames N] [--difficulty normal|nightmare|hell] [--save FILE.d2s | --new CLASS NAME [--save-dir DIR]] [--native DIR] [--source native|mpq] [--mod ID | --mod-dir FOLDER] [--game-dir DIR] [--dump-draws DIR [--at-tick N[,M...]] [--dump-image]] [--sound-log FILE] [--audio-dump FILE [--audio-ticks N]] [--res 1280x720|800x600|640x480|1068x600] [--input SCRIPT] [--poke \"F DIRECTIVE ARGS\"]... [--poke-file FILE] [--no-dev] [--dev-start SLOT]".into()).into()),
     }
 }
 

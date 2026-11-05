@@ -995,10 +995,11 @@ impl Drlg {
 }
 
 /// The acts of a game, each DRLG created on first need.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Dungeon {
     /// One slot per act.
-    pub acts: [Option<Drlg>; 5],
+    pub acts: Vec<Option<Drlg>>,
+    pub layout: crate::rules::acts::Acts,
     /// The game's view gap given to each act's DRLG at creation; 0 means
     /// the near gap (a 4:3 game).
     pub view_gap: i32,
@@ -1006,7 +1007,22 @@ pub struct Dungeon {
     pub towns: TownLevels,
 }
 
+impl Default for Dungeon {
+    fn default() -> Self {
+        Self {
+            acts: vec![None; 5],
+            layout: Default::default(),
+            view_gap: 0,
+            towns: Default::default(),
+        }
+    }
+}
 impl Dungeon {
+    pub fn set_layout(&mut self, layout: crate::rules::acts::Acts) {
+        self.acts.resize_with(layout.count(), || None);
+        self.set_towns(layout.towns());
+        self.layout = layout;
+    }
     /// Sets the game's view gap (0: the near gap, a 4:3 game) for the acts
     /// created from now on and the acts that exist already.
     pub fn set_view_gap(&mut self, gap: i32) {
@@ -1041,9 +1057,14 @@ impl Dungeon {
         data: &DrlgData,
         types: &mut dyn LevelTypes,
     ) -> Result<&mut Drlg, DrlgError> {
-        let slot = &mut self.acts[act as usize];
+        let town = arena_level
+            .or_else(|| self.layout.town(act))
+            .ok_or(DrlgError::UnknownAct(act))?;
+        let slot = self
+            .acts
+            .get_mut(act as usize)
+            .ok_or(DrlgError::UnknownAct(act))?;
         if slot.is_none() {
-            let town = arena_level.unwrap_or(super::TOWN_LEVELS[act as usize]);
             let mut drlg = Drlg::create_with_towns(
                 act,
                 init_seed,

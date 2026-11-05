@@ -196,11 +196,53 @@ impl SaveData {
 }
 
 impl d2s::SaveTables for SaveData {
+    fn wide_stats(&self) -> bool {
+        self.items.rules.wide_stat_ids()
+    }
     fn stat_save(&self, id: u16) -> Option<StatSave> {
-        self.stats.get(usize::from(id)).copied()
+        if self
+            .items
+            .rules
+            .stat_rules()
+            .is_some_and(|r| r.custom_stats().any(|(_, stat)| stat == id))
+        {
+            Some(StatSave {
+                bits: 32,
+                param: 16,
+                signed: true,
+            })
+        } else {
+            self.stats.get(usize::from(id)).copied()
+        }
     }
     fn item_entry_len(&self, buf: &[u8]) -> Result<usize, String> {
         read_save_entry(buf, &self.items)
+            .map(|e| e.len)
+            .map_err(|e| e.to_string())
+    }
+    fn wide_item_entry_len(&self, buf: &[u8], custom: &[u16]) -> Result<usize, String> {
+        use d2_sim::items::bitstream::{read::read_entry_with_stats, Isc, IscTable};
+        struct Wide<'a>(&'a ItemTables, &'a [u16]);
+        impl IscTable for Wide<'_> {
+            fn wide_stats(&self) -> bool {
+                true
+            }
+            fn isc(&self, id: u16) -> Isc {
+                if self.1.contains(&id) {
+                    Isc {
+                        save_bits: 32,
+                        save_param_bits: 16,
+                        ..Isc::default()
+                    }
+                } else {
+                    self.0.isc(id)
+                }
+            }
+            fn has_row(&self, id: u16) -> bool {
+                self.1.contains(&id) || self.0.has_row(id)
+            }
+        }
+        read_entry_with_stats(buf, &self.items, &Wide(&self.items, custom))
             .map(|e| e.len)
             .map_err(|e| e.to_string())
     }

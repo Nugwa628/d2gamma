@@ -16,6 +16,11 @@
 //! ```
 //!
 //! The config file defaults to `d2rust-node.cfg` in the current folder.
+//! Before it runs, checks or probes, it finds its game data
+//! ([`d2_base_data::resolve`]): with `diablo2` set (or a Diablo II found on
+//! the machine) the machine's shared base, converted from Diablo II once
+//! per engine format and checked with a probe game first, with the
+//! config's `game_data` layer (a mod's `mods/`) over it.
 //! Running, it reads its bundle, hashes its game data, listens on its UDP
 //! port, links to the main server and, once welcomed, prints one line
 //! `ready program=node node=… listen=… cert_sha256=… realm=… linked=1
@@ -46,7 +51,9 @@
 //! data layers, rules and character format. Its games are built with the
 //! mod game's rules and save in its format; its hello names its game, and
 //! a main server of another game refuses it (`NodeGame`). D2Gamma's binary
-//! passes [`NodeGame::own`].
+//! passes [`NodeGame::own`]. A mod game whose rules read the game's tables
+//! gives [`NodeGame::rules_of`]: the game server makes the rules from the
+//! data it loaded, so the data is loaded once.
 //!
 //! ```no_run
 //! # use d2rust_node::NodeGame;
@@ -114,6 +121,29 @@ pub struct NodeGame {
     /// The rules every game is built with, and the characters' save
     /// format.
     pub rules: GameRules,
+    /// Builds the rules from the game data once the game server loaded it,
+    /// in place of `rules`: for a mod game whose rules read the game's
+    /// tables, so the data is loaded once. `None`: `rules`.
+    pub rules_of: Option<RulesOf>,
+}
+
+/// Makes a game's rules from its loaded game data ([`NodeGame::rules_of`]).
+#[derive(Clone)]
+pub struct RulesOf(pub Arc<MakeRules>);
+
+/// The function behind [`RulesOf`].
+pub type MakeRules = dyn Fn(&GameData) -> Result<GameRules, String> + Send + Sync;
+
+impl RulesOf {
+    pub fn new(f: impl Fn(&GameData) -> Result<GameRules, String> + Send + Sync + 'static) -> Self {
+        Self(Arc::new(f))
+    }
+}
+
+impl std::fmt::Debug for RulesOf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RulesOf(..)")
+    }
 }
 
 impl NodeGame {
@@ -126,6 +156,27 @@ impl NodeGame {
             version: VERSION.into(),
             layers: Layers::base(),
             rules: GameRules::default(),
+            rules_of: None,
+        }
+    }
+
+    /// The rules the games on `data` are built with: [`NodeGame::rules_of`]
+    /// made from `data`, else [`NodeGame::rules`].
+    pub fn rules_for(&self, data: &GameData) -> Result<GameRules, String> {
+        match &self.rules_of {
+            Some(f) => (f.0)(data).map_err(|e| format!("the game's rules: {e}")),
+            None => Ok(self.rules.clone()),
+        }
+    }
+
+    /// Loads the game data in `dir` once and makes the games' rules from
+    /// it. Without data, or when its rules can't be made, the games can't
+    /// play: the error, and [`NodeGame::rules`].
+    fn load(&self, dir: &Path) -> (Result<GameData, String>, GameRules) {
+        let data = game_data(dir, &self.layers);
+        match data.and_then(|d| self.rules_for(&d).map(|r| (d, r))) {
+            Ok((d, r)) => (Ok(d), r),
+            Err(e) => (Err(e), self.rules.clone()),
         }
     }
 
@@ -233,8 +284,13 @@ fn usage(game: &NodeGame) -> ExitCode {
 }
 
 fn run(game: &NodeGame, path: &Path, command: Command) -> Result<ExitCode, String> {
-    let cfg = NodeConfig::load(path).map_err(|e| e.to_string())?;
+    let mut cfg = NodeConfig::load(path).map_err(|e| e.to_string())?;
     cfg.check_game(&game.game)?;
+    // Held while the program runs: no other server removes its base.
+    let _data = match command {
+        Command::Run | Command::Check | Command::Probe => Some(resolve_game_data(&mut cfg)?),
+        Command::NewIdentity | Command::Fingerprint => None,
+    };
     match command {
         Command::Run => serve(game, path, &cfg),
         Command::Check => check(game, path, &cfg),
@@ -258,21 +314,60 @@ fn run(game: &NodeGame, path: &Path, command: Command) -> Result<ExitCode, Strin
                 ServerLog::open_named(&cfg.logs, &game.log_file())
                     .map_err(|e| format!("opening the log in {}: {e}", cfg.logs.display()))?,
             );
-            let data = game_data(&cfg.game_data, &game.layers)?;
+            let (data, rules) = game.load(&cfg.game_data);
+            let data = data?;
             let games = GamesConfig {
                 grace: Duration::ZERO,
                 ..GamesConfig::from_server(&cfg)
             };
-            let rules = game.rules.clone();
             println!("{}", d2_games::probe::probe_with(data, games, rules, log)?);
             Ok(ExitCode::SUCCESS)
         }
     }
 }
 
+/// Finds the game data ([`d2_base_data::resolve`]) and points
+/// `cfg.game_data` at the folder to load. A base it converts is checked
+/// with the base game's probe (one game, a new character of every class
+/// joins and is saved) before any server uses it.
+fn resolve_game_data(cfg: &mut NodeConfig) -> Result<d2_base_data::Resolved, String> {
+    let view = cfg.folder.join("game-view");
+    let games = GamesConfig {
+        grace: Duration::ZERO,
+        ..GamesConfig::from_server(cfg)
+    };
+    let logs = cfg.logs.clone();
+    let check = move |dir: &Path| -> Result<(), String> {
+        let own = NodeGame::own();
+        let log = Arc::new(
+            ServerLog::open_named(&logs, "game-data-check.log")
+                .map_err(|e| format!("opening the log in {}: {e}", logs.display()))?,
+        );
+        let (data, rules) = own.load(dir);
+        let line = d2_games::probe::probe_with(data?, games.clone(), rules, log)?;
+        println!("game data: {line}");
+        Ok(())
+    };
+    let say = |line: &str| println!("{line}");
+    let req = d2_base_data::Request {
+        game_data: &cfg.game_data,
+        diablo2: cfg.diablo2.as_deref(),
+        base_home: cfg.base_data.as_deref(),
+        view: &view,
+    };
+    let r = d2_base_data::resolve(&req, &d2_base_data::Steps::real(&check, &say))
+        .map_err(|e| e.to_string())?;
+    if let Some(hint) = &r.hint {
+        println!("{hint}");
+    }
+    cfg.game_data = r.root.clone();
+    Ok(r)
+}
+
 /// `--check` (`server-ctl install` runs it before it switches): the
 /// config, the bundle (written for this game), the log and the game data
-/// folder, without the network.
+/// folder (converted here when the machine has none of this format, so
+/// the switched-to version starts at once), without the network.
 fn check(game: &NodeGame, path: &Path, cfg: &NodeConfig) -> Result<ExitCode, String> {
     let log = ServerLog::open_named(&cfg.logs, &game.log_file())
         .map_err(|e| format!("opening the log in {}: {e}", cfg.logs.display()))?;
@@ -388,7 +483,7 @@ fn serve(game: &NodeGame, path: &Path, cfg: &NodeConfig) -> Result<ExitCode, Str
         t.elapsed().as_millis()
     ));
     let t = Instant::now();
-    let data = game_data(&cfg.game_data, &game.layers);
+    let (data, rules) = game.load(&cfg.game_data);
     if data.is_ok() {
         log.line(&format!(
             "game data loaded in {} ms",
@@ -424,7 +519,7 @@ fn serve(game: &NodeGame, path: &Path, cfg: &NodeConfig) -> Result<ExitCode, Str
     let games = NodeGames::new(
         GamesConfig::from_server(cfg),
         data,
-        game.rules.clone(),
+        rules,
         (version.clone(), data_hash),
         tickets.clone(),
         log.clone(),

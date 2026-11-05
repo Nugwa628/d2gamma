@@ -11,6 +11,8 @@
 //! The runtime fields after the columns (group base, history, cache state) belong
 //! to the client (`d2-client::audio`), not to this crate.
 
+use std::ops::RangeInclusive;
+
 use crate::compile::{
     compile_table, CallbackError, Callbacks, Compiled, Diagnostic, FieldCall, Linkers,
 };
@@ -38,6 +40,56 @@ pub const SOUNDS_WITHOUT_AUDIO: [u32; 9] = [1595, 1596, 1597, 1598, 4255, 4306, 
 /// Whether `sounds.txt` row `id` is one of [`SOUNDS_WITHOUT_AUDIO`].
 pub fn has_no_audio(id: u32) -> bool {
     SOUNDS_WITHOUT_AUDIO.contains(&id)
+}
+
+/// Speech ids: their files are under `DATA\LOCAL`, not `DATA\GLOBAL`.
+/// Ranges are fixed in code, not taken from the data.
+pub const SPEECH: RangeInclusive<i32> = 2934..=4656;
+/// Ids whose files are under `\MUSIC\`, not `\SFX\`.
+pub const MUSIC_PATH: RangeInclusive<i32> = 4657..=4698;
+
+/// Whether `id` is a speech id (`id − 0xB76 < 0x6BB`, unsigned).
+pub fn is_speech(id: i32) -> bool {
+    (id.wrapping_sub(0xB76) as u32) < 0x6BB
+}
+
+/// Whether `id` takes the `\MUSIC\` path (`id − 0x1231 < 0x2A`).
+pub fn is_music_path(id: i32) -> bool {
+    (id.wrapping_sub(0x1231) as u32) < 0x2A
+}
+
+/// The archive path of sound `id` whose `FileName` is `file_name`: the
+/// folder by id range ([`is_speech`], [`is_music_path`]), then the name as
+/// written (each byte one character). The client loads this path; the
+/// asset converter follows it, because the sound archive's own listing
+/// names almost none of its files.
+pub fn sound_path(id: i32, file_name: &[u8]) -> String {
+    let mut p = String::from(if is_speech(id) {
+        "DATA\\LOCAL"
+    } else {
+        "DATA\\GLOBAL"
+    });
+    p.push_str(if is_music_path(id) {
+        "\\MUSIC\\"
+    } else {
+        "\\SFX\\"
+    });
+    p.extend(file_name.iter().map(|&b| char::from(b)));
+    p
+}
+
+/// The archive path of every `sounds.txt` row that names a file, in id
+/// order ([`sound_path`]). Rows without audio ([`has_no_audio`]) are
+/// left out.
+pub fn sound_paths(txt: &TxtTable) -> Result<Vec<String>, TxtError> {
+    let rows = compile_sounds("sounds.txt", txt)?;
+    Ok(rows
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(id, r)| !r.file_name.is_empty() && !has_no_audio(*id as u32))
+        .map(|(id, r)| sound_path(id as i32, &r.file_name))
+        .collect())
 }
 
 /// The `sounds.txt` field list, in list order.
@@ -324,6 +376,47 @@ mod tests {
         assert_eq!((r.solo, r.music_vol, r.blocks), (1, 1, [7, -1, 9]));
         assert_eq!(rows.rows[0].file_name, b"none.wav");
         assert_eq!(rows.rows[0].blocks, [-1, -1, -1]);
+    }
+
+    #[test]
+    fn sound_paths_take_the_folder_by_id_range() {
+        let p = |id| sound_path(id, b"a.wav");
+        assert_eq!(
+            sound_path(1, br"cursor\pass.wav"),
+            r"DATA\GLOBAL\SFX\cursor\pass.wav"
+        );
+        assert_eq!(p(2933), r"DATA\GLOBAL\SFX\a.wav");
+        assert_eq!(p(2934), r"DATA\LOCAL\SFX\a.wav");
+        assert_eq!(p(4656), r"DATA\LOCAL\SFX\a.wav");
+        assert_eq!(p(4657), r"DATA\GLOBAL\MUSIC\a.wav");
+        assert_eq!(p(4698), r"DATA\GLOBAL\MUSIC\a.wav");
+        assert_eq!(p(4699), r"DATA\GLOBAL\SFX\a.wav");
+        for id in [-1, 0, 2933, 2934, 4656, 4657, 4698, 4699] {
+            assert_eq!(is_speech(id), SPEECH.contains(&id), "{id}");
+            assert_eq!(is_music_path(id), MUSIC_PATH.contains(&id), "{id}");
+        }
+    }
+
+    #[test]
+    fn sound_paths_list_the_named_rows_with_audio() {
+        let mut lines: Vec<String> = (0..1600)
+            .map(|i| match i {
+                1 => "cursor_pass\t1\tcursor\\pass.wav".to_owned(),
+                1595 => "no_audio\t1595\tmonster\\x.wav".to_owned(),
+                1599 => "door\t1599\tobject\\door.wav".to_owned(),
+                _ => format!("r{i}\t{i}\t"),
+            })
+            .collect();
+        lines.insert(0, "Sound\tIndex\tFileName".to_owned());
+        let s = lines.join("\r\n") + "\r\n";
+        let t = TxtTable::parse("sounds.txt", s.as_bytes()).unwrap();
+        assert_eq!(
+            sound_paths(&t).unwrap(),
+            [
+                r"DATA\GLOBAL\SFX\cursor\pass.wav",
+                r"DATA\GLOBAL\SFX\object\door.wav",
+            ]
+        );
     }
 
     #[test]

@@ -381,6 +381,16 @@ fn control_frame(world: &mut World) {
                 if t.is_empty() || t.starts_with('#') {
                     continue;
                 }
+                if t == "reload" {
+                    let result = super::dev::reload::request(
+                        world.get_resource::<super::dev::reload::Watcher>(),
+                    );
+                    c.reply(match result {
+                        Ok(()) => json!({"k": "ok", "cmd": "reload", "status": "checking"}),
+                        Err(e) => json!({"k": "error", "error": e}),
+                    });
+                    continue;
+                }
                 let reply = match protocol::parse_command(t) {
                     Ok(cmd) => c.run(world, cmd, tick),
                     Err(e) => Some(json!({"k": "error", "error": e})),

@@ -77,6 +77,9 @@ pub fn read_indexed(file: &str, bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), Nat
         )));
     }
     let (w, h) = (info.width, info.height);
+    if info.palette.as_ref().is_none_or(|p| p.is_empty()) {
+        return Err(err("indexed PNG is missing its PLTE palette".into()));
+    }
     if w > MAX_SIDE || h > MAX_SIDE || u64::from(w) * u64::from(h) > MAX_PIXELS {
         return Err(err(format!("image size {w} x {h} too large")));
     }

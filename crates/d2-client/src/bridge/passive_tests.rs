@@ -2,11 +2,15 @@
 
 use std::sync::Arc;
 
+use d2_data::calc::{CalcRegistry, Family};
 use d2_data::tables::Record;
 use d2_data::tables::{Missiles, Skilldesc, Skills};
+use d2_sim::rules::{CalcProvider, ModRules, Ruleset};
+use d2_sim::skills::calc::CalcContext;
+use d2_sim::skills::levels::eval_skill;
 use d2_sim::skills::SkillTables;
 
-use super::passive::{apply, refresh, refresh_all};
+use super::passive::{apply, refresh, refresh_all, ClientSkills, RulesRef};
 use super::skills::{SkillEntry, SkillFx, SkillList, NATIVE};
 use super::world::{ClientUnit, ClientWorld, ModelInputs, SkillRow, UnitKey, PLAYER};
 
@@ -39,6 +43,7 @@ fn inputs() -> ModelInputs {
             miss_code: Vec::new(),
             level_cap: 99,
             stat_count: 359,
+            data_rules: d2_data::bin::DataRules::Original,
         })),
         ..ModelInputs::default()
     };
@@ -181,4 +186,52 @@ fn op_one_adds_the_percent_of_the_target_total() {
     // A zero target total gains nothing.
     w.units.get_mut(&P).unwrap().stats.insert(11, 0);
     assert_eq!(w.total(P, 11, 0), 0);
+}
+
+/// A mod game whose skills parameter 0x66 is 4321.
+#[derive(Debug)]
+struct Param;
+
+impl CalcProvider for Param {
+    fn registry(&self) -> &CalcRegistry {
+        static R: CalcRegistry = CalcRegistry::new();
+        &R
+    }
+    fn call(&self, _: Family, _: u8, _: &[i32], _: &mut dyn CalcContext) -> i32 {
+        unreachable!("nothing is registered")
+    }
+    fn param(&self, family: Family, code: u8, _: &mut dyn CalcContext) -> Option<i32> {
+        (family == Family::Skills && code == 0x66).then_some(4321)
+    }
+}
+
+impl ModRules for Param {
+    fn name(&self) -> &str {
+        "test-param"
+    }
+    fn calc(&self) -> Option<&dyn CalcProvider> {
+        Some(&Param)
+    }
+}
+
+/// The client's skills formulas run under the world's rules: a mod
+/// game's parameter answers once the bridge has its rules.
+#[test]
+fn skill_formulas_read_the_worlds_rules() {
+    let t = SkillTables {
+        skills: vec![blank::<Skills>(); 2],
+        skilldesc: vec![blank::<Skilldesc>()],
+        missiles: vec![blank::<Missiles>()],
+        skills_code: vec![0x04, 0x66, 0x00],
+        miss_code: Vec::new(),
+        level_cap: 99,
+        stat_count: 359,
+        data_rules: d2_data::bin::DataRules::Original,
+    };
+    let mut w = ClientWorld::default();
+    w.units.insert(P, ClientUnit::new(P));
+    let eval = |w: &ClientWorld| eval_skill(&mut ClientSkills::new(w, P), &t, Some(P), 0, 1, 5);
+    assert_ne!(eval(&w), 4321);
+    w.rules = RulesRef(Ruleset::Mod(Arc::new(Param)));
+    assert_eq!(eval(&w), 4321);
 }

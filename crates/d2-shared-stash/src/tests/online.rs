@@ -302,15 +302,18 @@ fn a_mod_realms_layout_and_renames() {
             shape: mod_shape,
             cap: 9_999_999,
             names: names.clone(),
+            gold_max: Some(4_000_000),
         },
         done(5000, 0),
     ]);
     assert_eq!(s.shape(), StashShape::DEFAULT);
+    assert_eq!(s.gold_max(), None, "not known before the layout");
     // D2Gamma's pages are never renamed: nothing is sent.
     assert!(s.rename_page(0, "Gear").is_err());
     assert!(s.link().sent.is_empty());
     assert_eq!(s.page_names().unwrap(), names);
     assert_eq!(s.shape(), mod_shape);
+    assert_eq!(s.gold_max(), Some(4_000_000));
     s.rename_page(3, "  Charms ").unwrap();
     assert!(s.rename_page(10, "Past").is_err());
     assert!(s.rename_page(1, "Thirteen long").is_err());

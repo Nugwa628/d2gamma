@@ -41,3 +41,36 @@ fn original_towns_are_unchanged() {
     assert_eq!(travel_tile(3, false), tile_code(3));
     assert_eq!(travel_tile(1, true), tile_code(1));
 }
+
+#[test]
+fn configured_town_waypoint_initializes_as_an_open_town_object() {
+    let d = data();
+    let mut f = fake();
+    f.towns = Some(TownLevels::new([3]));
+    let (object, mut facts) = f.objects[0];
+    facts.level = Some(3);
+    facts.mode = 0;
+    d.init_object(&mut f, &mut ArrivalList::default(), object, &facts);
+    assert!(
+        f.log
+            .iter()
+            .any(|l| l.contains("mode") && l.ends_with(" 2")),
+        "{:?}",
+        f.log
+    );
+}
+
+#[test]
+fn configured_waypoint_load_preserves_bits_without_granting_bit_zero() {
+    let mut bytes = [0; 16];
+    bytes[..2].copy_from_slice(&MAGIC.to_le_bytes());
+    bytes[15] = 0x80;
+    let r = WaypointRecord::load_mod_copy(&bytes).unwrap();
+    assert!(r.test(111).unwrap());
+    assert!(!r.test(0).unwrap());
+    assert!(WaypointRecord::load_copy(&bytes).unwrap().test(0).unwrap());
+    bytes[..2].copy_from_slice(&0x101u16.to_le_bytes());
+    assert_eq!(WaypointRecord::load_mod_copy(&bytes).unwrap().0, [0; 16]);
+    bytes[0] = 3;
+    assert!(WaypointRecord::load_mod_copy(&bytes).is_err());
+}

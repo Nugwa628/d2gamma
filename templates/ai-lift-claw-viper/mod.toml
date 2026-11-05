@@ -1,0 +1,7 @@
+id = "ai-lift-claw-viper"
+name = "AI 73 ClawViper, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "ClawViper as a graph: AI 73 (ClawViper)."
+api = 1
+kind = "full"

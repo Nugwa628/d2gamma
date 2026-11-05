@@ -1,0 +1,14 @@
+version = 1
+
+[[ai]]
+index = 32
+name = "Npc (lifted, idle part only)"
+target = "none"
+
+[[ai.state]]
+name = "stand"
+
+# The body's last step: idle 8 frames when nothing else is due.
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.32

@@ -1,0 +1,7 @@
+id = "ai-lift-npc"
+name = "AI 32 Npc, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "The idle part of the Npc AI (AI 32). Not for play: see the README."
+api = 1
+kind = "full"

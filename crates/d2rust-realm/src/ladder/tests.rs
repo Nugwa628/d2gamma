@@ -350,3 +350,32 @@ fn queries_are_limited_per_account() {
         assert!(end.wait_s >= 1);
     });
 }
+
+#[test]
+fn kit_mods_share_accounts_and_keep_independent_ladder_seasons() {
+    run(async {
+        let f = fixture("kit-mod-namespaces", true).await;
+        let dir = temp("kit-mod-ladder-logs");
+        let log = Arc::new(ServerLog::open_named(&dir, "test.log").unwrap());
+        let cfg = LadderConfig {
+            on: true,
+            refresh: Duration::ZERO,
+        };
+        let ghost = Ladder::new(
+            f.accounts.clone(),
+            "ghost-world",
+            cfg.clone(),
+            None,
+            log.clone(),
+        );
+        let ember = Ladder::new(f.accounts.clone(), "ember-world", cfg, None, log);
+        ghost.season_start("Ghost 1", false).await.unwrap();
+        assert_eq!(ghost.current_season().await.unwrap(), Some(1));
+        assert_eq!(ember.current_season().await.unwrap(), None);
+        assert_eq!(f.ladder.current_season().await.unwrap(), None);
+        ember.season_start("Ember 1", false).await.unwrap();
+        ghost.season_end().await.unwrap();
+        assert_eq!(ember.current_season().await.unwrap(), Some(1));
+        assert_eq!(ghost.current_season().await.unwrap(), None);
+    });
+}

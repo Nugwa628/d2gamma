@@ -118,6 +118,9 @@ impl Ruleset {
 /// Whether `entry` may happen under `rules` ([`WorldRules::may_enter`]);
 /// always under the engine's own rules.
 pub fn may_enter(rules: &Ruleset, h: &mut dyn EventHost, entry: &LevelEntry) -> bool {
+    if rules.acts().is_some_and(|a| a.find_act(entry.to).is_none()) {
+        return false;
+    }
     rules.world().is_none_or(|w| w.may_enter(h, entry))
 }
 
@@ -134,7 +137,7 @@ pub fn town_portal_level(
         return town;
     };
     match w.town_portal_level(h, player, from, town) {
-        Some(l) if crate::drlg::act_of_level(l) == crate::drlg::act_of_level(from) => l,
+        Some(l) if rules.act_of_level(l) == rules.act_of_level(from) => l,
         _ => town,
     }
 }

@@ -231,3 +231,77 @@ fn the_join_item_mark_waits_for_flag_0x10_to_clear() {
     mark.extend_from_slice(&g.to_le_bytes());
     assert_eq!(add(&mut fx, p, item), [mark]);
 }
+
+/// A state with stack rules is followed by its stack count in the wide
+/// state message (op 3); a state without rules, and any state under
+/// D2Gamma's own rules, sends no such message.
+#[test]
+fn a_state_with_stack_rules_sends_its_stack_count() {
+    use crate::rules::{DataMod, DataModFiles};
+    use crate::tick::TickHooks;
+    use crate::units::lists::client_state;
+    const STATE: u16 = 20;
+    const OTHER: u16 = 21;
+    let text = format!("[[state]]\nid = {STATE}\nmax_stacks = 5\nreapply = \"add_stack\"\n");
+    let run = |rules: crate::rules::Ruleset| {
+        let mut fx = Fx::new();
+        let a = fx.a;
+        let p = fx.spawn(UnitType::Player, 0, a, 20, 20);
+        let c = fx
+            .game
+            .lists
+            .add_client(Some(p), Some(a), client_state::IN_GAME);
+        fx.tick();
+        fx.sim.hooks().rules = rules;
+        fx.sim.with(&mut fx.game, |_, v| {
+            for (state, stacks) in [(STATE, 3), (OTHER, 0)] {
+                let l = v.stats.alloc(2, 0, 0, 0);
+                v.stats.set_state(l, u32::from(state));
+                v.stats.set_stacks(l, stacks);
+                v.stats.attach(&mut *v.h, p, l, true);
+                v.set_state(p, state, true);
+            }
+        });
+        fx.sim.hooks().x.sent.clear();
+        fx.sim.send_unit_update(&mut fx.game, c, p);
+        let guid = fx.game.lists.unit(p).unwrap().guid;
+        let sent: Vec<Vec<u8>> = std::mem::take(&mut fx.sim.hooks().x.sent)
+            .into_iter()
+            .map(|(_, b)| b)
+            .collect();
+        (sent, guid)
+    };
+    let files = DataModFiles {
+        states: Some(("states.toml", &text)),
+        ..DataModFiles::default()
+    };
+    let (sent, guid) = run(DataMod::from_files("stacks", &files)
+        .unwrap()
+        .into_ruleset());
+    let g = guid.to_le_bytes();
+    let counts: Vec<&Vec<u8>> = sent.iter().filter(|m| m[0] == 0xB7).collect();
+    assert_eq!(
+        counts,
+        [&vec![
+            0xB7,
+            0,
+            g[0],
+            g[1],
+            g[2],
+            g[3],
+            12,
+            3,
+            STATE as u8,
+            0,
+            3,
+            0
+        ]]
+    );
+    // The count follows the state's own 0xA8 / 0xA7.
+    let at = |id: u8| sent.iter().position(|m| m[0] == id);
+    assert!(at(0xA8).is_some() || at(0xA7).is_some());
+    assert!(sent.iter().position(|m| m[0] == 0xB7) > at(0xA8).or(at(0xA7)));
+    // D2Gamma's own rules: the same states send no count.
+    let (sent, _) = run(crate::rules::Ruleset::Original);
+    assert!(sent.iter().all(|m| m[0] != 0xB7), "{sent:?}");
+}

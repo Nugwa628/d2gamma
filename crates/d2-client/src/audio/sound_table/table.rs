@@ -4,7 +4,6 @@
 //! sample state), the song range read from `soundenviron.txt`,
 //! the archive path rule and the variant picker.
 
-use std::ops::RangeInclusive;
 use std::sync::Arc;
 
 use d2_data::sounds::{compile_soundenviron, compile_sounds, SoundEnvironRow, SoundRow};
@@ -12,21 +11,10 @@ use d2_data::txt::{TxtError, TxtTable};
 
 use crate::audio::{Sound, SoundId};
 
-/// Speech ids: `DATA\LOCAL` prefix, speech instance rule, speech stops.
-pub const SPEECH: RangeInclusive<i32> = 2934..=4656;
-/// Ids whose path takes `\MUSIC\`; also exempt from the state
-/// duck.
-pub const MUSIC_PATH: RangeInclusive<i32> = 4657..=4698;
-
-/// Whether `id` is a speech id (`id − 0xB76 < 0x6BB`, unsigned).
-pub fn is_speech(id: i32) -> bool {
-    (id.wrapping_sub(0xB76) as u32) < 0x6BB
-}
-
-/// Whether `id` takes the `\MUSIC\` path (`id − 0x1231 < 0x2A`).
-pub fn is_music_path(id: i32) -> bool {
-    (id.wrapping_sub(0x1231) as u32) < 0x2A
-}
+// Speech ids (`DATA\LOCAL` prefix, speech instance rule, speech stops) and
+// the ids whose path takes `\MUSIC\` (also exempt from the state duck): the
+// path rule is shared with the asset converter.
+pub use d2_data::sounds::{is_music_path, is_speech, MUSIC_PATH, SPEECH};
 
 /// A load or path error of the table.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -192,18 +180,7 @@ impl SoundTableData {
     /// table. Ranges are fixed in code, not taken from the data.
     pub fn path(&self, id: i32) -> Option<Result<String, SoundTableError>> {
         let e = self.get(id)?;
-        let mut p = String::from(if is_speech(id) {
-            "DATA\\LOCAL"
-        } else {
-            "DATA\\GLOBAL"
-        });
-        p.push_str(if is_music_path(id) {
-            "\\MUSIC\\"
-        } else {
-            "\\SFX\\"
-        });
-        // `FileName` as written; cells are bytes, live names are ASCII.
-        p.extend(e.row.file_name.iter().map(|&b| char::from(b)));
+        let p = d2_data::sounds::sound_path(id, &e.row.file_name);
         Some(if p.len() >= 0x50 {
             Err(SoundTableError::PathTooLong { id, len: p.len() })
         } else {

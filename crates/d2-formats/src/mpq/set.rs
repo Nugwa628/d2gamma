@@ -132,13 +132,26 @@ impl ArchiveSet {
     /// Opens every known archive present in `dir` (names matched
     /// case-insensitively). Archives that are absent are skipped.
     pub fn open_dir(dir: impl AsRef<Path>) -> Result<ArchiveSet, MpqError> {
+        Self::open_named(dir, None)
+    }
+
+    /// [`ArchiveSet::open_dir`] limited to the known archives named in
+    /// `only` (matched case-insensitively) when it is `Some`: the other
+    /// archives of `dir` are not opened, so a run that reads from them
+    /// gives the same result whether they are there or not.
+    pub fn open_named(
+        dir: impl AsRef<Path>,
+        only: Option<&[&str]>,
+    ) -> Result<ArchiveSet, MpqError> {
+        let wanted =
+            |name: &str| only.is_none_or(|o| o.iter().any(|w| w.eq_ignore_ascii_case(name)));
         let mut found: Vec<(usize, std::path::PathBuf)> = std::fs::read_dir(dir.as_ref())?
             .filter_map(Result::ok)
             .map(|e| e.path())
             .filter_map(|p| {
                 let name = p.file_name()?.to_str()?.to_owned();
                 let rank = priority(&name);
-                (rank < PRIORITY.len()).then_some((rank, p))
+                (rank < PRIORITY.len() && wanted(&name)).then_some((rank, p))
             })
             .collect();
         found.sort();

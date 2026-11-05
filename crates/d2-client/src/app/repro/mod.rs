@@ -93,6 +93,8 @@ pub mod exit {
 /// How a run is set up.
 #[derive(Clone, Debug, Default)]
 pub struct RunOpts {
+    /// Explicit rules for a checked mod; absent uses the selected game.
+    pub rules: Option<d2_sim::rules::Ruleset>,
     /// The artifacts folder.
     pub out: PathBuf,
     /// The game folder; `None`: `D2_GAME_DIR`.
@@ -861,8 +863,16 @@ impl Session {
             }
         };
         let base = super::save::base_save(&character);
-        let host =
-            Host::start_with_coverage(self.data.clone(), character, None, false, Some(s.seed))?;
+        let enabled = !std::env::var_os("D2_COVERAGE").is_some_and(|v| v == "0");
+        let host = Host::start_configured(
+            self.data.clone(),
+            character,
+            None,
+            false,
+            Some(s.seed),
+            enabled,
+            opts.rules.clone().unwrap_or_else(crate::kit_mod::ruleset),
+        )?;
         Ok((host, live, base))
     }
     /// Run a scenario with fresh mutable state and the retained data.
@@ -1317,6 +1327,7 @@ pub fn main(args: &[String]) -> u8 {
         }
     };
     let opts = RunOpts {
+        rules: None,
         out: a
             .out
             .clone()

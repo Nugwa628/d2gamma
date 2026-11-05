@@ -27,9 +27,7 @@ use std::collections::BTreeMap;
 use d2_formats::ds1::Ds1;
 use d2_formats::dt1::{Dt1, Dt1Tile};
 use d2_sim::drlg::outdoor::{OutdoorData, SubFile, SubFileMap, SubFiles, SubGroup};
-use d2_sim::drlg::preset::{
-    Ds1File, Ds1Input, Ds1ObjectInput, Ds1PathInput, Ds1Source, PresetData, PresetError,
-};
+use d2_sim::drlg::preset::{Ds1File, Ds1Input, Ds1Source, PresetData, PresetError};
 use d2_sim::drlg::tiles::{CellGrid, ACT_EDGE_TILE, FIXED_LIBRARY};
 use d2_sim::drlg::{DrlgData, TileInfo, TileSource};
 
@@ -105,37 +103,7 @@ pub fn ds1_input(path: &[u8], d: &Ds1) -> Result<Ds1Input, WorldDataError> {
             version: d.version,
         });
     }
-    Ok(Ds1Input {
-        version: d.version,
-        width: d.width.wrapping_sub(1),
-        height: d.height.wrapping_sub(1),
-        act: d.act as i32,
-        tag_type: d.tag_type,
-        walls: d.walls.clone(),
-        orientations: d.orientations.clone(),
-        floors: d.floors.clone(),
-        shadow: d.shadow.clone(),
-        objects: d
-            .objects
-            .iter()
-            .map(|o| Ds1ObjectInput {
-                kind: o.kind,
-                id: o.id,
-                x: o.x,
-                y: o.y,
-                flags: o.flags,
-            })
-            .collect(),
-        paths: d
-            .paths
-            .iter()
-            .map(|p| Ds1PathInput {
-                x: p.x,
-                y: p.y,
-                points: p.points.iter().map(|q| (q.x, q.y, q.action)).collect(),
-            })
-            .collect(),
-    })
+    Ok(Ds1Input::from(d))
 }
 
 /// A lvlsub DS1 as the outdoor seam takes it: the DS1 file record after the

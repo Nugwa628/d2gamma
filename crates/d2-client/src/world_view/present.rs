@@ -143,6 +143,8 @@ pub struct WorldViewState {
     pub corpse_clicks: super::corpse_click::CorpseClicks,
     /// Client missiles and cast / state overlays (`super::missiles`).
     pub missiles: super::missiles::Missiles,
+    pub mod_effects: super::mod_effects::ModEffects,
+    pub telegraphs: super::telegraphs::Telegraphs,
     /// The object mouse-over label (`super::object_label`).
     pub object_labels: super::object_label::ObjectLabels,
     pub monster_labels: super::monster_label::MonsterLabels,
@@ -240,7 +242,9 @@ fn hover_pointer(ui: &WorldViewUi, mouse: (i32, i32)) -> Option<(i32, i32)> {
 }
 
 /// The point the pick tests: none below H − 49 (the control panel at the
-/// bottom of the frame hides the world there), and none over an open game
+/// bottom of the frame hides the world there; a mod game's own HUD hides
+/// the rows it covers, [`crate::ui::ui_frame::world_click_limit`]), and
+/// none over an open game
 /// panel ([`crate::ui::original::covers_world`]: the inventory, character,
 /// stash, cube, shop, NPC windows, the control panel with a popped belt).
 /// Game panels cover the world, so the world under them is not hovered at
@@ -259,7 +263,7 @@ pub(crate) fn pick_point_in(
     pointer: Option<(i32, i32)>,
     root: &UiRoot,
 ) -> Option<(i32, i32)> {
-    let bottom = space.y_to_frame(space.ui.height - 49);
+    let bottom = crate::ui::ui_frame::world_click_limit(space);
     pointer.filter(|&(_, y)| y <= bottom).filter(|&(x, y)| {
         !root.open_panel_at(
             space.frame_to_box(crate::ui::Point::new(x, y)),
@@ -297,6 +301,8 @@ impl WorldViewState {
             ground_items: Default::default(),
             corpse_clicks: Default::default(),
             missiles: Default::default(),
+            mod_effects: Default::default(),
+            telegraphs: Default::default(),
             object_labels: Default::default(),
             monster_labels: Default::default(),
             rect_hover: None,
@@ -887,8 +893,18 @@ pub fn deliver_outputs(
     // The overlays the model creates for hits go to the effect layer with
     // the UI's calls.
     let mut state = state;
+    let visuals = bridge.0.take_visual_events();
+    let epoch = bridge.0.visual_epoch();
     let hits = bridge.0.take_hit_overlays();
     if let Some(s) = state.as_mut() {
+        let s = &mut **s;
+        s.telegraphs.update(
+            bridge.0.world(),
+            epoch,
+            visuals,
+            &mut s.mod_effects,
+            &mut s.missiles,
+        );
         if !hits.is_empty() {
             s.missiles.hit_overlays(hits);
         }
@@ -1336,6 +1352,11 @@ fn ui_input(
         o.set_shift(keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight));
         o.set_ctrl(keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight));
         o.set_alt(keys.any_pressed([KeyCode::AltLeft, KeyCode::AltRight]));
+        crate::ui::mod_io::set_keys(crate::ui::mod_io::Keys {
+            shift: o.shift_held(),
+            ctrl: o.ctrl_held(),
+            alt: keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight),
+        });
     }
     // Keys in `KEY_CODES` order, so one frame's actions are ordered the
     // same on every run.
@@ -2668,6 +2689,9 @@ fn world_view_frame(
     // the model between frames. A check run lights the frame with the
     // recorded light quality (it follows the host's wall clock and draw
     // rate; the schedule's `quality` column).
+    bridge
+        .0
+        .light_frame(|w, lights| state.mod_effects.prepare(w, lights, &mut state.missiles));
     let feed = &mut state.feed;
     feed.set_light_quality(
         schedule
@@ -2764,6 +2788,10 @@ fn world_view_frame(
     ) {
         bevy::log::warn!(target: "d2_asset_fallback", "{m}");
     }
+    state
+        .mod_effects
+        .add_particles(bridge.0.world(), &mut state.assets, &mut frame)
+        .map_err(anyhow::Error::msg)?;
     // The level background of pass 1 (the first thing drawn).
     if let (Some(v), Some((_, mode)), Some(at)) = (state.background_view.as_mut(), placed, anchor) {
         for m in v.add_to_frame(

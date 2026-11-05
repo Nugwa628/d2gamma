@@ -2,8 +2,9 @@
 //!
 //! Each mod is its own game: its own binary, built on the D2RUST crates,
 //! launched directly. That binary installs its overrides by building its
-//! games under [`Ruleset::Mod`]. The D2RUST exe never loads or selects a
-//! mod; it always builds [`Ruleset::Original`].
+//! games under [`Ruleset::Mod`]. D2Gamma's exe builds [`Ruleset::Original`]
+//! unless it was started with a mod-kit mod (`--mod`), whose files-only
+//! rules the built-in [`DataMod`] hosts.
 //!
 //! [`Ruleset::Original`] is D2RUST's own rules: the seams change nothing,
 //! so behaviour, frame hashes, determinism and save formats are D2RUST's.
@@ -32,6 +33,7 @@ use crate::monsters::init::{GameInfo, PlayerBonus};
 pub use crate::monsters::provider::MonsterProvider;
 use crate::rng::Seed;
 use crate::skills::calc::CalcContext;
+pub use crate::skills::use_::form::{FormSkill, UnitForm};
 pub use crate::skills::use_::table::Kind as SkillFn;
 use crate::units::{UnitId, UnitType};
 pub use crate::world::cube::CubeProvider;
@@ -40,7 +42,17 @@ pub use crate::world::objects::ObjectProvider;
 pub use crate::world::quests::QuestProvider;
 pub use crate::world::vendors::StoreProvider;
 
+pub mod acts;
+pub mod data_mod;
+pub mod difficulties;
 mod events;
+pub mod global;
+pub mod scripts;
+pub use data_mod::{
+    DataMod, DataModError, DataModFiles, Decay, Formula, Reapply, SkillDef, SkillRules,
+    SkillsError, StackEffect, StateDef, StateRules, StatesError, TriggerDef, TriggerRules,
+    TriggersError, BLOCK_SLOT, MAX_DEPTH,
+};
 pub use events::{Entry, EventHooks, EventHost, MonsterType};
 mod saves;
 pub use saves::{ModSection, SaveHooks};
@@ -51,9 +63,9 @@ mod skill_bar;
 mod skill_pets;
 mod skill_respec;
 mod skill_search;
-pub use skill_actions::{AuraPulse, SkillActions};
+pub use skill_actions::{AuraPulse, BuffPulse, CursePulse, SkillActions};
 pub use skill_bar::{SkillBar, SkillCharge};
-pub use skill_pets::{SkillPets, Summon};
+pub use skill_pets::{SentrySetup, SkillPets, Summon};
 pub use skill_respec::SkillRespec;
 pub use skill_search::SkillSearch;
 mod formulas;
@@ -79,8 +91,51 @@ pub use stash::{Credit, ItemHost, StashHooks};
 /// deterministic: no floats in game state, no I/O, no RNG other than the
 /// game's own.
 pub trait ModRules: Send + Sync + Debug {
+    /// Curated game-wide settings, fixed by the host before the game starts.
+    fn global_rules(&self) -> &global::GlobalRules {
+        &global::DEFAULT
+    }
+
+    /// Named stat definitions and transformations; absent for base play.
+    /// Use the versioned mod stat codec; default Rust mods keep their codec.
+    fn difficulties(&self) -> Option<&difficulties::Difficulties> {
+        None
+    }
+
+    fn wide_stat_ids(&self) -> bool {
+        false
+    }
+
+    fn stat_rules(&self) -> Option<&crate::stats::named::StatRules> {
+        None
+    }
+
+    /// Referenced script exports, checked before a game starts.
+    fn script_calls(&self) -> Vec<&scripts::CallSpec> {
+        Vec::new()
+    }
     /// The mod game's short name, for logs, reports and the dev console.
     fn name(&self) -> &str;
+
+    /// The rules of the mod's states (duration, stacks, what the stacks
+    /// do), `None` when the mod defines none: every state then plays as
+    /// the `states` table and the applying skill say.
+    fn state_rules(&self) -> Option<&data_mod::StateRules> {
+        None
+    }
+
+    /// The crowd control a hit's `source` declares (see `combat::cc`): empty
+    /// when the mod declares none for it.
+    fn declared_cc(&self, source: crate::combat::cc::CcSource) -> Vec<crate::combat::cc::CcEffect> {
+        let _ = source;
+        Vec::new()
+    }
+
+    /// The state that makes its holder immune to stun, freeze, interrupt and
+    /// knockback ([`crate::rules::data_mod::CcRules::immune_state`]); `None`: no such state.
+    fn cc_immune_state(&self) -> Option<u16> {
+        None
+    }
 
     /// The mod game's skill bodies (MS1); `None`: D2RUST's.
     fn skills(&self) -> Option<&dyn SkillProvider> {
@@ -136,6 +191,10 @@ pub trait ModRules: Send + Sync + Debug {
 
     /// The mod game's town levels (read from its own data); `None`:
     /// D2RUST's five act towns.
+    fn acts(&self) -> Option<&acts::Acts> {
+        None
+    }
+
     fn town_levels(&self) -> Option<&TownLevels> {
         None
     }
@@ -231,9 +290,50 @@ pub enum Ruleset {
 }
 
 impl Ruleset {
+    /// The host's game-wide settings. No client message can install overrides.
+    pub fn global_rules(&self) -> &global::GlobalRules {
+        self.mod_rules()
+            .map_or(&global::DEFAULT, ModRules::global_rules)
+    }
+
     /// `true` under [`Ruleset::Original`].
     pub fn is_original(&self) -> bool {
         matches!(self, Ruleset::Original)
+    }
+
+    /// The authoritative mod's named stat registry.
+    pub fn difficulties(&self) -> Option<&difficulties::Difficulties> {
+        self.mod_rules()?.difficulties()
+    }
+
+    pub fn wide_stat_ids(&self) -> bool {
+        self.mod_rules().is_some_and(|m| m.wide_stat_ids())
+    }
+
+    pub fn stat_rules(&self) -> Option<&crate::stats::named::StatRules> {
+        self.mod_rules()?.stat_rules()
+    }
+
+    /// The mod's state rules ([`ModRules::state_rules`]); `None` for
+    /// D2Gamma's own rules and a mod without any.
+    pub fn state_rules(&self) -> Option<&data_mod::StateRules> {
+        self.mod_rules()?.state_rules()
+    }
+
+    /// The crowd control a hit's `source` declares ([`ModRules::declared_cc`]);
+    /// empty for D2Gamma's own rules.
+    pub fn declared_cc(
+        &self,
+        source: crate::combat::cc::CcSource,
+    ) -> Vec<crate::combat::cc::CcEffect> {
+        self.mod_rules()
+            .map_or_else(Vec::new, |m| m.declared_cc(source))
+    }
+
+    /// The state that makes its holder immune to crowd control
+    /// ([`ModRules::cc_immune_state`]); `None` for D2Gamma's own rules.
+    pub fn cc_immune_state(&self) -> Option<u16> {
+        self.mod_rules()?.cc_immune_state()
     }
 
     /// The mod game's overrides, `None` under [`Ruleset::Original`].
@@ -318,11 +418,32 @@ impl Ruleset {
         self.mod_rules()?.quests()
     }
 
-    /// The game's town levels: the mod game's, else D2RUST's act towns.
+    /// The optional mod act registry; built-in acts apply when absent.
+    pub fn acts(&self) -> Option<&acts::Acts> {
+        self.mod_rules()?.acts()
+    }
+    pub fn act_of_level(&self, level: u32) -> u8 {
+        self.acts().map_or_else(
+            || crate::drlg::act_of_level(level),
+            |a| a.act_of_level(level),
+        )
+    }
+    pub fn act_town(&self, act: u8) -> Option<u32> {
+        self.acts().map_or_else(
+            || crate::drlg::TOWN_LEVELS.get(act as usize).copied(),
+            |a| a.town(act),
+        )
+    }
+    pub fn act_count(&self) -> usize {
+        self.acts().map_or(5, |a| a.count())
+    }
+
+    /// The game's town levels: an explicit provider, act data, or built-in towns.
     pub fn town_levels(&self) -> TownLevels {
         self.mod_rules()
             .and_then(|m| m.town_levels())
             .cloned()
+            .or_else(|| self.acts().map(|a| a.towns()))
             .unwrap_or_default()
     }
 
@@ -330,7 +451,10 @@ impl Ruleset {
     pub fn is_town(&self, level: u32) -> bool {
         match self.mod_rules().and_then(|m| m.town_levels()) {
             Some(t) => t.is_town(level),
-            None => crate::drlg::is_town(level),
+            None => self.acts().map_or_else(
+                || crate::drlg::is_town(level),
+                |a| a.rows().iter().any(|a| a.town == level),
+            ),
         }
     }
 
@@ -580,6 +704,23 @@ pub trait SkillHost:
     + SkillPets
     + SkillRespec
 {
+    /// Run a reusable script block; zero means no action, nonzero means acted.
+    fn call_script(
+        &mut self,
+        _spec: &scripts::CallSpec,
+        _context: scripts::CallContext,
+    ) -> Result<i32, String> {
+        Err("script runtime is not installed".into())
+    }
+    /// Script diagnostics and player messages. Hosts without scripts do nothing.
+    fn script_error(&mut self, _message: &str) {}
+    fn script_message(&mut self, _unit: UnitId, _message: &str) {}
+    /// Publish a transient, namespaced integer to this player's mod HUD.
+    fn script_ui_variable(&mut self, _unit: UnitId, _name: &str, _value: i32) {}
+    /// Validate table IDs before a script passes them to engine capabilities.
+    fn script_id_valid(&self, _kind: &str, _id: u16) -> bool {
+        false
+    }
     /// Game frame.
     fn frame(&self) -> i32;
     /// The unit's class (monstats or player class row).
@@ -596,6 +737,27 @@ pub trait SkillHost:
     fn seed(&mut self, u: UnitId) -> &mut Seed;
 }
 
+/// What happened to a unit that a mod game's skill provider is told about
+/// ([`SkillProvider::unit_event`]); the unit is the one it happened to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnitEvent {
+    /// The unit swung at something in melee.
+    Attack,
+    /// The unit dealt damage.
+    Hit,
+    /// The unit took damage.
+    BeingHit,
+    /// The unit used skill `.0` (a skill a provider's own trigger cast is
+    /// not told).
+    SkillUsed(i32),
+    /// The unit killed something.
+    Kill,
+    /// State `.0` came on for the unit (a state with stack rules).
+    StateStart(u16),
+    /// State `.0` ran out on the unit (a state with stack rules).
+    StateEnd(u16),
+}
+
 /// A mod game's skill start and do bodies, by slot (MS1).
 ///
 /// The skill use core calls a slot the provider
@@ -604,6 +766,27 @@ pub trait SkillHost:
 /// keeps what D2RUST does for that slot (its own body, or nothing for
 /// an empty slot).
 pub trait SkillProvider: Send + Sync + Debug {
+    /// Handle a learned skill's passive refresh; false keeps its table behavior.
+    fn refresh_passive(&self, w: &mut dyn SkillHost, u: UnitId, skill: i32) -> bool {
+        let _ = (w, u, skill);
+        false
+    }
+    /// A data form ended; its stat list may already have been freed.
+    fn form_removed(&self, w: &mut dyn SkillHost, u: UnitId, state: u16) {
+        let _ = (w, u, state);
+    }
+    /// Data effects of a warcry missile hit. None retains the table body's effect.
+    fn warcry_hit(
+        &self,
+        w: &mut dyn SkillHost,
+        source: UnitId,
+        target: UnitId,
+        skill: i32,
+        level: i32,
+    ) -> Option<bool> {
+        let _ = (w, source, target, skill, level);
+        None
+    }
     /// The provider answers slot `index` of the `kind` table.
     fn has(&self, kind: SkillFn, index: u16) -> bool;
     /// `srvst[index]`; 0 refuses.
@@ -634,6 +817,16 @@ pub trait SkillProvider: Send + Sync + Debug {
         let _ = (w, index, u, skill, lvl, charge, item, aim);
         None
     }
+    /// `true` when the provider wants [`Self::unit_event`] calls.
+    fn wants_unit_events(&self) -> bool {
+        false
+    }
+    /// `ev` happened to `u`; `other` is the other unit of the event (the
+    /// one hit, the attacker, the victim). Runs after D2RUST's own handlers
+    /// of the event.
+    fn unit_event(&self, w: &mut dyn SkillHost, ev: UnitEvent, u: UnitId, other: Option<UnitId>) {
+        let _ = (w, ev, u, other);
+    }
     /// The unit's stat list of `state` that a mod body applied with
     /// [`StateRemove::Mod`] was removed (expired, cleared or replaced);
     /// the state is still on, for the mod to switch off.
@@ -647,10 +840,24 @@ pub trait SkillProvider: Send + Sync + Debug {
         let _ = (w, player);
         false
     }
+    /// A tick the provider asked for with [`HostTimers::schedule_tick`] is
+    /// due for `u`. The tick is spent: the provider schedules the next one
+    /// itself.
+    fn tick(&self, w: &mut dyn SkillHost, u: UnitId, tick: &Tick) {
+        let _ = (w, u, tick);
+    }
     /// Called after D2RUST resurrected `player` (passive states back on,
     /// life, mana and stamina full, in town), for the mod's own part.
     fn resurrected(&self, w: &mut dyn SkillHost, player: UnitId) {
         let _ = (w, player);
+    }
+    /// The form test of a skill use (`use_state` test 7, the skill's
+    /// `restrict` column) on the server and the client: `Some` answers
+    /// in place of D2RUST's own rule
+    /// ([`crate::skills::use_::form::form_ok`]), `None` keeps it.
+    fn form_ok(&self, skill: &FormSkill, unit: &dyn UnitForm) -> Option<bool> {
+        let _ = (skill, unit);
+        None
     }
 }
 

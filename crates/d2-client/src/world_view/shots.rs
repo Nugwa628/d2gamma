@@ -187,9 +187,11 @@ impl Shots {
 }
 
 /// Adds the shot system for `plan` to a play app whose window is `size`.
+/// It runs before the leave, so the leave sees the `AppExit` of a plan
+/// that ends the run, and the character is saved as on any other exit.
 pub fn add(app: &mut App, plan: &ShotPlan, size: (u32, u32)) -> std::io::Result<()> {
     app.insert_resource(Shots::new(plan, size)?)
-        .add_systems(Last, take_shots);
+        .add_systems(Last, take_shots.before(crate::app::play::leave_on_exit));
     Ok(())
 }
 
@@ -385,5 +387,35 @@ mod tests {
         assert_eq!(write_png(&image, &path, None), Ok((2, 2)));
         assert!(path.is_file());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A shot run that ends by itself leaves the game like a `--frames`
+    /// run: the leave sees the frame carrying the shots' `AppExit`, so the
+    /// character is saved, whichever order the two systems were added in.
+    #[test]
+    fn the_last_shot_ends_the_run_through_the_leave() {
+        use crate::app::play::{leave_on_exit, ExitReport};
+        let dir = std::env::temp_dir().join(format!("d2-shot-leave-{}", std::process::id()));
+        let mut app = App::new();
+        let report = ExitReport::default();
+        app.insert_resource(report.clone())
+            .add_systems(Last, leave_on_exit);
+        add(
+            &mut app,
+            &ShotPlan {
+                dir: dir.clone(),
+                ..plan(&[0], None)
+            },
+            (8, 8),
+        )
+        .unwrap();
+        // The plan's one tick is taken: the next frame ends the run.
+        assert!(app.world_mut().resource_mut::<Shots>().clock.take(0));
+        app.update();
+        let exits = app.world().resource::<Messages<AppExit>>();
+        assert!(!exits.is_empty(), "the finished plan ends the run");
+        let out = report.0.lock().unwrap().clone();
+        assert!(out.is_some(), "the leave ran on the exit frame");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

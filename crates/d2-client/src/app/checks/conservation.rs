@@ -40,13 +40,22 @@ pub struct Snapshot {
     pub expiring: BTreeSet<u32>,
     pub dead: BTreeSet<(u8, u32)>,
     pub replenishing: BTreeSet<u32>,
+    /// Successful mod-hook inventory operations, cumulative in this game.
+    pub mod_item_balance: BTreeMap<usize, i64>,
 }
 
 pub fn snapshot(sim: &Sim) -> Snapshot {
     let mut out = Snapshot::default();
     let sys = &sim.events.action.sys;
     let gold = sim.world.tables.find_code(*b"gld ");
-    for act in 0..5u8 {
+    if let Some(events) = sim.rules.events() {
+        for (code, quantity) in events.item_balance() {
+            if let Some(row) = sim.world.tables.find_code(code) {
+                out.mod_item_balance.insert(row, quantity);
+            }
+        }
+    }
+    for act in 0..sim.game.lists.act_count() as u8 {
         for room in sim.game.lists.active_rooms(act) {
             out.active_rooms.insert(room.0);
             if sim
@@ -489,8 +498,14 @@ impl Conservation {
             let source = before
                 + population.get(&row).copied().unwrap_or(0)
                 + refilled.get(&row).copied().unwrap_or(0);
+            let mod_delta = now.mod_item_balance.get(&row).copied().unwrap_or(0)
+                - previous.mod_item_balance.get(&row).copied().unwrap_or(0);
+            let source = source + mod_delta.max(0);
             if (after > source && !events.creates && !replenish)
-                || (after < before - expiry - unloaded_items.get(&row).copied().unwrap_or(0)
+                || (after
+                    < before + mod_delta.min(0)
+                        - expiry
+                        - unloaded_items.get(&row).copied().unwrap_or(0)
                     && !events.destroys)
             {
                 let units = previous
@@ -545,6 +560,34 @@ mod tests {
             assert!(ledger.observe(state.clone(), Events::default()).is_empty());
         }
     }
+    #[test]
+    fn mod_inventory_audit_covers_only_the_recorded_row_quantity_and_direction() {
+        let mut ledger = Conservation::default();
+        let before = state(7, 10, 0);
+        pass_grace(&mut ledger, before.clone());
+        let mut reward = state(7, 12, 0);
+        reward.mod_item_balance.insert(1, 2);
+        assert!(ledger.observe(reward.clone(), Events::default()).is_empty());
+        let mut consumed = state(7, 9, 0);
+        consumed.mod_item_balance.insert(1, -1);
+        assert!(ledger
+            .observe(consumed.clone(), Events::default())
+            .is_empty());
+        // A cumulative total grants no allowance a second time.
+        let mut extra = consumed.clone();
+        extra.items.insert(7, (1, 10));
+        assert_eq!(ledger.observe(extra, Events::default()).len(), 1);
+        let mut other = state(7, 10, 0);
+        other.mod_item_balance.insert(1, 4);
+        other.items.insert(8, (2, 1));
+        assert_eq!(ledger.observe(other, Events::default()).len(), 1);
+        // Neither a positive entry nor another row excuses a lost item.
+        let mut loss = consumed;
+        loss.items.clear();
+        loss.mod_item_balance.insert(1, 100);
+        assert_eq!(ledger.observe(loss, Events::default()).len(), 2);
+    }
+
     #[test]
     fn a_pure_transfer_conserves_items_and_gold() {
         let mut ledger = Conservation::default();

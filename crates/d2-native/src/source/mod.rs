@@ -14,6 +14,7 @@
 //!
 //! The game tables come through [`NativeTables`] (see its module).
 
+mod asset_refs;
 mod tables;
 
 use std::collections::BTreeMap;
@@ -49,11 +50,12 @@ pub const KNOWN_KINDS: &[(&str, u32)] = &[
     ("animdata", 1),
     ("cof", 1),
     ("colormap", 1),
+    ("colortxt", 1),
     ("dc6", 1),
     ("dcc", 1),
     ("ds1", 1),
     ("dt1", 1),
-    ("excel", 1),
+    ("excel", 2),
     ("expfield", 1),
     ("font", 1),
     ("pal", 1),
@@ -94,6 +96,8 @@ pub enum AssetKind {
     Excel,
     /// An item colour map (see [`is_colormap`]).
     ColorMap,
+    /// The green-blood switch file (`data/local/color.txt`, see [`COLOR_TXT`]).
+    ColorTxt,
     /// A monster palette shift file (see [`is_palshift`]).
     PalShift,
     /// The animation data file (`data/global/animdata.d2`).
@@ -123,6 +127,7 @@ impl AssetKind {
             "tbl" if p.starts_with("data/local/font/") => AssetKind::Font,
             "tbl" => AssetKind::Tbl,
             "txt" if p.starts_with("data/global/excel/") => AssetKind::Excel,
+            "txt" if p == COLOR_TXT => AssetKind::ColorTxt,
             _ => return None,
         })
     }
@@ -133,15 +138,20 @@ impl AssetKind {
     /// halves never mix.
     pub fn primary(self, p: &str) -> String {
         match self {
-            AssetKind::Wav | AssetKind::Excel | AssetKind::ColorMap | AssetKind::PalShift => {
-                p.to_owned()
-            }
+            AssetKind::Wav
+            | AssetKind::Excel
+            | AssetKind::ColorMap
+            | AssetKind::PalShift
+            | AssetKind::ColorTxt => p.to_owned(),
             AssetKind::Pal => format!("{p}.pal"),
             AssetKind::Tbl | AssetKind::AnimData => format!("{p}.tsv"),
             _ => format!("{p}.toml"),
         }
     }
 }
+
+/// Canonical path of the green-blood switch file.
+pub const COLOR_TXT: &str = "data/local/color.txt";
 
 /// An item colour map: a `.dat` directly under `data/global/items/palette/`
 /// (see [`NativeAsset::ColorMap`]).
@@ -192,6 +202,8 @@ pub enum NativeAsset {
     Excel(Vec<u8>),
     /// An item colour map's bytes, 21 rows of 256 indices.
     ColorMap(Vec<u8>),
+    /// The green-blood switch file's bytes.
+    ColorTxt(Vec<u8>),
     /// A monster palette shift file's bytes: maps of 256 indices.
     PalShift(Vec<u8>),
     /// The animation data.
@@ -219,6 +231,7 @@ pub fn decode_original(p: &str, bytes: &[u8]) -> Option<Result<NativeAsset, Stri
         AssetKind::Wav => Wav::parse(bytes).map(NativeAsset::Wav).map_err(e),
         AssetKind::Excel => Ok(NativeAsset::Excel(bytes.to_vec())),
         AssetKind::ColorMap => Ok(NativeAsset::ColorMap(bytes.to_vec())),
+        AssetKind::ColorTxt => Ok(NativeAsset::ColorTxt(bytes.to_vec())),
         AssetKind::PalShift => Ok(NativeAsset::PalShift(bytes.to_vec())),
         AssetKind::AnimData => AnimData::parse(bytes).map(NativeAsset::AnimData).map_err(e),
         AssetKind::ExpField => ExpFieldData::from_bytes(bytes)
@@ -329,11 +342,16 @@ impl LayerStore<'_> {
             AssetKind::AnimData => animdata::read_animdata(p, &self.text(format!("{p}.tsv"))?)
                 .map(NativeAsset::AnimData)
                 .map_err(t),
-            AssetKind::Wav => wav::read_wav(p, &self.copy(p)?)
-                .map(NativeAsset::Wav)
-                .map_err(t),
+            AssetKind::Wav => {
+                let sound = wav::read_wav(p, &self.copy(p)?).map_err(t)?;
+                if self.layer.info.is_some() {
+                    wav::check_playable(p, &sound).map_err(t)?;
+                }
+                Ok(NativeAsset::Wav(sound))
+            }
             AssetKind::Excel => self.copy(p).map(NativeAsset::Excel),
             AssetKind::ColorMap => self.copy(p).map(NativeAsset::ColorMap),
+            AssetKind::ColorTxt => self.copy(p).map(NativeAsset::ColorTxt),
             AssetKind::PalShift => self.copy(p).map(NativeAsset::PalShift),
         }
     }
@@ -407,12 +425,29 @@ impl NativeSource {
             stack: &self.layers,
             layer,
         };
-        Some(store.decode(kind, p))
+        Some(
+            store
+                .decode(kind, p)
+                .map_err(|e| format!("layer `{}`: {e}", layer.name)),
+        )
     }
 
     /// The table source for `language` (`eng`).
     pub fn tables(&self, language: &str) -> Result<NativeTables, d2_data::bin::LoadError> {
-        NativeTables::build(self, language)
+        self.tables_with(language, d2_data::bin::DataRules::Original)
+    }
+
+    /// [`NativeSource::tables`] under the data `rules` of the game: under
+    /// `DataRules::Mod` the mods' patches may add rows to the tables that
+    /// grow (`d2_data::patch::rules_for`), the compile clamps out-of-range
+    /// cells, and the loader checks the tables under the same rules
+    /// (`TableFiles::data_rules`).
+    pub fn tables_with(
+        &self,
+        language: &str,
+        rules: d2_data::bin::DataRules,
+    ) -> Result<NativeTables, d2_data::bin::LoadError> {
+        NativeTables::build(self, language, rules)
     }
 }
 

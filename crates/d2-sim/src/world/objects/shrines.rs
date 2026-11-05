@@ -16,18 +16,18 @@ use super::{
 #[cfg(test)]
 mod tests;
 
-/// Stat ids read or written here (`sim/stats.md`; §9.2).
+/// Shared stat ids read or written by shrines.
 pub mod stat {
-    pub const LIFE: u16 = 6;
-    pub const MANA: u16 = 8;
-    pub const STAMINA: u16 = 10;
-    pub const MAX_STAMINA: u16 = 11;
-    pub const TO_HIT: u16 = 19;
-    pub const MIN_DAMAGE: u16 = 21;
-    pub const ITEM_ARMOR_PERCENT: u16 = 25;
-    pub const STAMINA_RECOVERY: u16 = 28;
-    pub const MIN_DAMAGE_2H: u16 = 23;
-    pub const STAMINA_BONUS: u16 = 162;
+    pub use crate::stats::ids::DAMAGEPERCENT as ITEM_ARMOR_PERCENT;
+    pub use crate::stats::ids::HITPOINTS as LIFE;
+    pub use crate::stats::ids::MANA;
+    pub use crate::stats::ids::MAXSTAMINA as MAX_STAMINA;
+    pub use crate::stats::ids::MINDAMAGE as MIN_DAMAGE;
+    pub use crate::stats::ids::SECONDARY_MINDAMAGE as MIN_DAMAGE_2H;
+    pub use crate::stats::ids::STAMINA;
+    pub use crate::stats::ids::STAMINARECOVERYBONUS as STAMINA_RECOVERY;
+    pub use crate::stats::ids::STAMINA_BONUS;
+    pub use crate::stats::ids::TOHIT as TO_HIT;
 }
 
 /// The hover string of shrine id `id`: `"%d"`(3683 + id) (§9.1 rule 3).

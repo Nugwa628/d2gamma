@@ -158,6 +158,54 @@ fn anim_edge_cases() {
     assert!(schedule(MAIN, 0, -1, 256, 0, ev).is_err());
 }
 
+#[test]
+fn the_charge_sequence_restarts_at_frame_0_and_reads_the_record_before_it() {
+    // Charge (`seqnum` 4, hand to hand): 15 frames, RN 0–7 then A1;
+    // events 1 on frames 0–7 and 11, 3 on frame 10.
+    let frames = crate::skills::sequences::lookup(4, 0).expect("charge sequence");
+    let events: Vec<u8> = frames.iter().map(|f| f.event).collect();
+    assert_eq!(events.len(), 15);
+    let ev = Events::Sequence {
+        before: Some(crate::skills::sequences::PLAYER_EVENT_BEFORE),
+        events: &events,
+    };
+    // The do's loop restart (animation from frame 0) starts at index −1:
+    // the record before the list, event 0, schedules nothing.
+    let got: Vec<_> = schedule(Form::StartFrame(0), 100, 256, 15 * 256, 0, ev)
+        .expect("schedule")
+        .expect("some")
+        .events
+        .iter()
+        .map(|e| (e.event, e.expire, e.a1, e.a2))
+        .collect();
+    let mut want: Vec<_> = [101, 101, 102, 103, 104, 105, 106, 107]
+        .map(|n| (0, n, 1, 0))
+        .to_vec();
+    want.extend([(0, 110, 3, 0), (0, 111, 1, 0), (1, 115, 0, 0)]);
+    assert_eq!(got, want);
+    // The hit (animation from frame 7, the do's hit frame) starts at
+    // frame 6 of the list.
+    let s = schedule(Form::StartFrame(7), 100, 256, 15 * 256, 0, ev)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        s.events[0],
+        Scheduled {
+            event: 0,
+            expire: 101,
+            a1: 1,
+            a2: 0
+        }
+    );
+    assert_eq!(s.frame, Some(93 * 256));
+    // A record before the list that is not known is an error, not a guess.
+    let unknown = Events::Sequence {
+        before: None,
+        events: &events,
+    };
+    assert!(schedule(Form::StartFrame(0), 100, 256, 15 * 256, 0, unknown).is_err());
+}
+
 // ---- TSV checks -----------------------------------------------------------
 
 const HANDLERS_TSV: &str = include_str!("../../../../tables/sim/unit-handlers.tsv");
@@ -1425,6 +1473,7 @@ fn the_sequence_advance_counts_down_and_reads_the_crossed_event_bytes() {
             speed: 256,
             pos: 0,
             events: vec![0, 0, 1, 0],
+            event_before: None,
             drawn: Vec::new(),
         }),
         frame_count: 4 * 256,
@@ -1475,6 +1524,7 @@ fn the_sequence_advance_stores_the_drawn_frame() {
             speed: 256,
             pos: 0,
             events: vec![0, 0, 0],
+            event_before: None,
             drawn: vec![0, 5, 9],
         }),
         frame_count: 3 * 256,

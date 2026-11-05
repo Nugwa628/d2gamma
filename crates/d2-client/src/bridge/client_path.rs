@@ -519,7 +519,7 @@ impl PathWorld for Ctx<'_> {
             return false;
         };
         let d = self.rooms.drlg;
-        d2_sim::drlg::is_town(d.level(d.room(r).level).id)
+        d.towns.is_town(d.level(d.room(r).level).id)
     }
     fn remove_footprint(&mut self, unit: UnitId, force: bool) -> bool {
         let Some(fp) = self.path.as_ref().filter(|_| unit == ME).map(footprint_of) else {

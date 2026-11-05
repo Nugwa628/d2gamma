@@ -40,14 +40,113 @@ fn data() -> &'static (GameData, u16) {
                 ("saved", "1"),
             ],
         );
-        test_fixtures::install::build(&dir, &synth).unwrap_or_else(|e| panic!("{e}"));
-        let data = GameData::select(Some(&dir)).expect("the playable install loads");
+        synth.tables.row(
+            "difficultylevels",
+            &[("MonsterSkillBonus", "27"), ("ResistPenalty", "-150")],
+        );
+        // A sixth town uses another instance of the generated town preset.
+        // Its map bytes are synthetic and shared with the fixture's first town.
+        let levels = synth.tables.files.get_mut("levels.txt").unwrap();
+        let column = |name: &str| {
+            levels
+                .columns
+                .iter()
+                .position(|c| c.eq_ignore_ascii_case(name))
+                .unwrap()
+        };
+        let level_id = column("Id");
+        let mut town = levels
+            .rows
+            .iter()
+            .find(|r| r[level_id] == "1")
+            .unwrap()
+            .clone();
+        for (name, value) in [
+            ("Id", "137"),
+            ("Act", "5"),
+            ("Vis0", "0"),
+            ("Warp0", "-1"),
+            ("Waypoint", "111"),
+        ] {
+            town[column(name)] = value.into();
+        }
+        levels
+            .rows
+            .resize_with(138, || vec![String::new(); levels.columns.len()]);
+        levels.rows[137] = town;
+        let presets = synth.tables.files.get_mut("lvlprest.txt").unwrap();
+        let level = presets
+            .columns
+            .iter()
+            .position(|c| c.eq_ignore_ascii_case("LevelId"))
+            .unwrap();
+        let def = presets
+            .columns
+            .iter()
+            .position(|c| c.eq_ignore_ascii_case("Def"))
+            .unwrap();
+        let mut town = presets
+            .rows
+            .iter()
+            .find(|r| r[level] == "1")
+            .unwrap()
+            .clone();
+        town[level] = "137".into();
+        town[def] = presets.rows.len().to_string();
+        presets.rows.push(town);
+        test_fixtures::install::write_text_install(&dir, &synth).unwrap();
+        test_fixtures::install::compile_and_pack(&dir, &synth).unwrap();
+        let data = GameData::open_with(
+            &d2_server::game::GameSource::Archives(dir),
+            d2_data::bin::DataRules::Mod,
+        )
+        .expect("the playable mod install loads");
         (data, id)
     })
 }
 
 fn counters() -> u16 {
     data().1
+}
+
+#[test]
+fn acts_single_registry_runs_and_saves_with_one_act() {
+    use d2_server::game::{CharacterCodec, ModCodec};
+    use d2_sim::rules::{DataMod, DataModFiles};
+    let rules = DataMod::from_files("one", &DataModFiles {
+        acts: Some(("acts.toml", "version=1\n[[acts]]\nname='Home'\nstart=1\nend=40\ntown=1\nwaypoints=[{id=111,level=1}]")),
+        difficulties: Some(("difficulties.toml", "version=1\nnames=['A','B','C','D']")),
+        ..Default::default()
+    }).unwrap().into_ruleset();
+    let mut g = Game::start(
+        new_character("amazon", "Home").unwrap().with_difficulty(3),
+        rules.clone(),
+    );
+    assert_eq!(g.host.game.game.lists.act_count(), 1);
+    for _ in 0..20 {
+        g.frame();
+    }
+    let save = g.save();
+    let records =
+        d2_formats::d2m::progress::read(save.body.as_ref().unwrap(), save.header.towns).unwrap();
+    assert_eq!(records.len(), 4);
+    assert_eq!(records[3].town, 0x80);
+    for r in &records {
+        let wp = WaypointRecord::load_mod_copy(&r.waypoints).unwrap();
+        assert!(wp.test(111).unwrap());
+        assert!(!wp.test(0).unwrap());
+    }
+    let codec = ModCodec(rules.clone());
+    let GameData::Live(data) = &data().0;
+    let back = codec
+        .read(data, &codec.write(&save, &data.save).unwrap(), 3)
+        .unwrap();
+    let mut g = Game::start(loaded(&back).with_difficulty(3), rules);
+    let again = g.save();
+    assert_eq!(
+        d2_formats::d2m::progress::read(again.body.as_ref().unwrap(), again.header.towns).unwrap(),
+        records
+    );
 }
 
 struct NoSession;
@@ -316,6 +415,59 @@ fn every_saved_stat_is_saved_with_its_params() {
     assert_eq!(entries(&second, id), [e(0, 5), e(9, 90), e(0x2004, -1)]);
 }
 
+#[test]
+fn named_stats_survive_the_live_character_mod_codec_and_reload() {
+    use d2_server::game::{CharacterCodec, ModCodec};
+    use d2_sim::rules::{DataMod, DataModFiles};
+    let rules = DataMod::from_files(
+        "wide",
+        &DataModFiles {
+            stats: Some((
+                "stats.toml",
+                "version = 1\n[[stat]]\nname = 'focus'\nid = 40000\n",
+            )),
+            ..DataModFiles::default()
+        },
+    )
+    .unwrap()
+    .into_ruleset();
+    let mut g = Game::start(new_character("amazon", "Wide").unwrap(), rules.clone());
+    g.host.set_wire(d2_proto::envelope::Wire::Mod);
+    g.set_stat(40000, 0, i32::MAX);
+    g.set_stat(40000, 65535, i32::MIN);
+    let messages = g.frame();
+    assert!(messages
+        .iter()
+        .flat_map(|b| b.windows(d2_proto::wide_stat::SIZE))
+        .filter_map(d2_proto::wide_stat::decode)
+        .any(|m| m.stat == 40000 && m.value == i32::MAX));
+    g.set_stat(40000, 0, 0);
+    assert!(g
+        .frame()
+        .iter()
+        .flat_map(|b| b.windows(d2_proto::wide_stat::SIZE))
+        .filter_map(d2_proto::wide_stat::decode)
+        .any(|m| m.stat == 40000 && m.value == 0));
+    assert!(!g
+        .frame()
+        .iter()
+        .flat_map(|b| b.windows(d2_proto::wide_stat::SIZE))
+        .filter_map(d2_proto::wide_stat::decode)
+        .any(|m| m.stat == 40000));
+    g.set_stat(40000, 0, i32::MAX);
+    let first = g.save();
+    let codec = ModCodec(rules.clone());
+    let GameData::Live(data) = &data().0;
+    let bytes = codec.write(&first, &data.save).unwrap();
+    assert_eq!(codec.extension(), "d2m");
+    assert!(d2s::read(&bytes, &d2s::ReadOptions::default(), &data.save).is_err());
+    let back = codec.read(data, &bytes, 0).unwrap();
+    assert_eq!(entries(&back, 40000), entries(&first, 40000));
+    let mut reloaded = Game::start(loaded(&back), rules);
+    assert_eq!(reloaded.base_stat(40000, 0), i32::MAX);
+    assert_eq!(reloaded.base_stat(40000, 65535), i32::MIN);
+}
+
 /// The JM flags of every record of the player's items.
 fn flags(save: &D2s) -> Vec<u32> {
     let items: &[ItemEntry] = &save.body.as_ref().expect("a body").items;
@@ -357,4 +509,300 @@ fn the_in_store_flag_goes_at_the_first_reload() {
         .rev()
         .take(2)
         .all(|f| f & d2s::ITEM_FLAG_INSTORE != 0));
+}
+
+#[test]
+fn fourth_difficulty_progress_survives_mod_codec_and_rejoin_independently() {
+    use d2_formats::d2m::progress;
+    use d2_server::game::{CharacterCodec, ModCodec};
+    use d2_sim::rules::{DataMod, DataModFiles};
+    let rules = DataMod::from_files(
+        "four",
+        &DataModFiles {
+            difficulties: Some((
+                "difficulties.toml",
+                "version=1\nnames=['Dawn','Day','Dusk','Night']",
+            )),
+            ..DataModFiles::default()
+        },
+    )
+    .unwrap()
+    .into_ruleset();
+    assert!(GameBuilder::new(data().0.clone())
+        .character(
+            new_character("amazon", "Invalid")
+                .unwrap()
+                .with_difficulty(3)
+        )
+        .build()
+        .is_err());
+    assert_eq!(
+        d2_server::game::parse_difficulty_for("Night", &rules),
+        Some(3)
+    );
+    assert_eq!(d2_server::game::parse_difficulty_for("3", &rules), Some(3));
+    assert_eq!(d2_server::game::parse_difficulty_for("4", &rules), None);
+    assert_eq!(
+        d2_server::game::parse_difficulty_for("3", &Ruleset::Original),
+        None
+    );
+    let mut g = Game::start(
+        new_character("amazon", "Fourth")
+            .unwrap()
+            .with_difficulty(3),
+        rules.clone(),
+    );
+    let p = g.player();
+    assert_eq!(g.host.game.events.action.hooks().ai_info.difficulty, 3);
+    assert!(g
+        .host
+        .game
+        .events
+        .action
+        .hooks()
+        .drlg
+        .dungeon
+        .acts
+        .iter()
+        .flatten()
+        .all(|d| d.difficulty == 2));
+    let q = g.host.game.world.rest.quests.get_mut(&p).unwrap();
+    assert_eq!(q.flags.len(), 4);
+    q.flags[3].set(0, 2);
+    q.hear(3, 148);
+    q.intro[3].insert(148);
+    g.host
+        .game
+        .events
+        .action
+        .hooks()
+        .waypoints
+        .get_mut(&p)
+        .unwrap()
+        .get_mut(3)
+        .set(7)
+        .unwrap();
+    let save = g.save();
+    let before = progress::read(save.body.as_ref().unwrap(), save.header.towns).unwrap();
+    assert_eq!(before.len(), 4);
+    assert_ne!(before[3].quests, before[2].quests);
+    assert_ne!(before[3].npc_a, before[2].npc_a);
+    assert_ne!(before[3].npc_b, before[2].npc_b);
+    assert_ne!(before[3].waypoints, before[2].waypoints);
+    assert_ne!(before[3].town & 0x80, 0);
+    let GameData::Live(data) = &data().0;
+    let codec = ModCodec(rules.clone());
+    let bytes = codec.write(&save, &data.save).unwrap();
+    let back = codec.read(data, &bytes, 3).unwrap();
+    assert!(codec.read(data, &bytes, 4).is_err());
+    let mut g = Game::start(loaded(&back).with_difficulty(3), rules);
+    let p = g.player();
+    let q = &g.host.game.world.rest.quests[&p];
+    assert!(q.flags[3].get(0, 2));
+    assert!(!q.flags[2].get(0, 2));
+    assert!(q.heard(3, 148));
+    assert!(q.intro[3].contains(&148));
+    assert!(g.host.game.events.action.hooks().waypoints[&p].0[3]
+        .test(7)
+        .unwrap());
+    let again = g.save();
+    assert_eq!(
+        progress::read(again.body.as_ref().unwrap(), again.header.towns).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn difficulty_names_require_matching_rows_and_keep_base_count_fixed() {
+    use d2_sim::rules::{DataMod, DataModFiles};
+    let rules = DataMod::from_files(
+        "too-many",
+        &DataModFiles {
+            difficulties: Some((
+                "difficulties.toml",
+                "version=1\nnames=['A','B','C','D','E']",
+            )),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .into_ruleset();
+    assert!(GameBuilder::new(data().0.clone())
+        .rules(rules)
+        .build()
+        .is_err());
+    // The same fixture has four rows; D2Gamma still rejects the fourth id.
+    assert!(GameBuilder::new(data().0.clone())
+        .character(
+            new_character("amazon", "Fourth")
+                .unwrap()
+                .with_difficulty(3)
+        )
+        .build()
+        .is_err());
+}
+
+#[test]
+fn sixth_act_town_rejoins_from_mod_progress_and_reaches_its_waypoint() {
+    use d2_formats::d2m::progress;
+    use d2_server::adapters::handlers::world::{NpcCall, WorldHost};
+    use d2_server::game::{CharacterCodec, ModCodec};
+    use d2_sim::rules::{DataMod, DataModFiles};
+    use d2_sim::world::npc::{NpcControl, NpcVendors, NpcWorld};
+    struct Travel(UnitId);
+    impl NpcCall for Travel {
+        type Out = (bool, bool);
+        fn call<W: NpcWorld + NpcVendors>(self, _: &mut NpcControl, w: &mut W) -> Self::Out {
+            (
+                w.data_act_travel(self.0, 155, 0),
+                w.data_act_travel(self.0, 155, 9),
+            )
+        }
+    }
+    let mut text = String::from("version=1\n");
+    for (i, (start, end)) in [
+        (1, 40),
+        (40, 75),
+        (75, 103),
+        (103, 109),
+        (109, 137),
+        (137, 138),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        use std::fmt::Write;
+        writeln!(text,"[[acts]]\nname='Act {}'\nstart={start}\nend={end}\ntown={start}\nwaypoints=[{{id={i},level={start}}}]",i+1).unwrap();
+        if i == 0 {
+            writeln!(text, "travel=[{{npc=155,action=0,to=137,text=5000}}]").unwrap();
+        }
+    }
+    let rules = DataMod::from_files(
+        "six",
+        &DataModFiles {
+            acts: Some(("acts.toml", &text)),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .into_ruleset();
+    let mut g = Game::start(new_character("amazon", "Beyond").unwrap(), rules.clone());
+    assert_eq!(g.host.game.game.lists.act_count(), 6);
+    let p = g.player();
+    let s = &mut g.host.game;
+    assert_eq!(
+        s.world.npc(&mut s.game, &mut s.events, Travel(p)),
+        Some((true, false))
+    );
+    for _ in 0..20 {
+        g.frame();
+    }
+    let room = g.host.game.game.lists.unit(p).unwrap().room().unwrap();
+    assert_eq!(g.host.game.game.lists.room(room).unwrap().act, 5);
+    let save = g.save();
+    let progress = progress::read(save.body.as_ref().unwrap(), save.header.towns).unwrap();
+    assert_eq!(progress[0].town, 0x85);
+    let GameData::Live(data) = &data().0;
+    let codec = ModCodec(rules.clone());
+    let bytes = codec.write(&save, &data.save).unwrap();
+    let back = codec.read(data, &bytes, 0).unwrap();
+    let mut g = Game::start(loaded(&back), rules);
+    let p = g.player();
+    let room = g.host.game.game.lists.unit(p).unwrap().room().unwrap();
+    assert_eq!(g.host.game.game.lists.room(room).unwrap().act, 5);
+    let h = g.host.game.events.action.hooks();
+    assert_eq!(h.drlg.level_id(&g.host.game.game, room), Some(137));
+    assert_eq!(
+        h.waypoint_init.as_ref().unwrap().map.index_of_level(137),
+        Some(5)
+    );
+    let again = g.save();
+    let progress = progress::read(again.body.as_ref().unwrap(), again.header.towns).unwrap();
+    assert_eq!(progress[0].town, 0x85);
+}
+
+#[test]
+fn character_copy_transcodes_wide_items_in_inventory_corpses_hireling_and_golem() {
+    use d2_server::game::{CharacterCodec, ModCodec};
+    use d2_sim::items::bitstream::{read::read_save_entry, write_save};
+    let mut game = Game::start(
+        new_character("amazon", "CopyHero").unwrap(),
+        Ruleset::Original,
+    );
+    game.give("sb1");
+    let mut save = game.save();
+    let GameData::Live(live) = &data().0;
+    let body = save.body.as_mut().unwrap();
+    let entry = body.items.last().unwrap().clone();
+    let mut parent = read_save_entry(&entry.bytes, &live.save.items)
+        .unwrap()
+        .item
+        .item;
+    let mut child = parent.clone();
+    child.mode = 6;
+    child.page = 0xff;
+    child.children.clear();
+    child.filled = 0;
+    parent.flags |= 0x800;
+    parent.base_sockets = 1;
+    parent.filled = 1;
+    parent.children = vec![child];
+    let entry = ItemEntry {
+        bytes: write_save(&parent, &live.save.items).unwrap().0,
+    };
+    body.items = vec![entry.clone()];
+    body.corpses = vec![d2s::Corpse {
+        items: vec![entry.clone()],
+        ..Default::default()
+    }];
+    body.hireling_items = Some(Some(vec![entry.clone()]));
+    body.golem = Some(d2s::Golem {
+        flag: 1,
+        item: Some(entry.clone()),
+    });
+    // Make the hireling present so the format's conditional list is read.
+    save.header.hireling.seed = 1;
+    save.header.hireling.id = live
+        .save
+        .hirelings
+        .rows
+        .iter()
+        .map(|r| r.id)
+        .find(|&id| live.save.hirelings.row_at(true, id, 1).is_some())
+        .unwrap() as u16;
+    let source = d2s::write(&save, &live.save).unwrap();
+    let before = source.clone();
+    let converted = d2_server::game::copy_d2gamma_character(&source, &live.save).unwrap();
+    assert_eq!(source, before);
+    assert!(d2s::read(
+        &converted,
+        &d2s::ReadOptions {
+            expansion: true,
+            game: None
+        },
+        &live.save
+    )
+    .is_err());
+    let rules = d2_sim::rules::DataMod::new("copy").into_ruleset();
+    let copied = ModCodec(rules.clone()).read(live, &converted, 0).unwrap();
+    assert_eq!(copied.header.name, save.header.name);
+    let body = copied.body.unwrap();
+    let entries = [
+        &body.items[0],
+        &body.corpses[0].items[0],
+        &body.hireling_items.as_ref().unwrap().as_ref().unwrap()[0],
+        body.golem.as_ref().unwrap().item.as_ref().unwrap(),
+    ];
+    let mut wide = live.save.items.clone();
+    wide.rules = rules;
+    let expected = read_save_entry(&entry.bytes, &live.save.items).unwrap();
+    for item in entries {
+        let decoded = read_save_entry(&item.bytes, &wide).unwrap();
+        assert_eq!(decoded.item.item, expected.item.item);
+        assert_eq!(decoded.children.len(), 1);
+        assert_eq!(
+            decoded.children[0].item.item,
+            expected.children[0].item.item
+        );
+    }
 }

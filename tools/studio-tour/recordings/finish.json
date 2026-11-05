@@ -1,0 +1,26 @@
+{
+  "steps": [
+    {"do": "click", "text": "Tools & install paths"},
+    {"do": "fill", "text": "D2Gamma-Game executable", "value": "@GAME@", "offset": [175, 0]},
+    {"do": "click", "text": "Save paths"},
+    {"do": "click", "text": "Tools & install paths"},
+    {"do": "click", "text": "Check"},
+    {"do": "wait_text", "text": "Problems · Check passed", "seconds": 1200},
+    {"do": "capture", "name": "33-check"},
+    {"do": "click", "text": "Package"},
+    {"do": "wait_text", "text": "Package ready", "seconds": 1200},
+    {"do": "capture", "name": "34-package"},
+    {"do": "click", "text": "Play"},
+    {"do": "wait_text", "text": "Stop game", "seconds": 30},
+    {"do": "capture", "name": "35-play"},
+    {"do": "wait", "frames": 1800},
+    {"do": "click", "text": "Stop game"},
+    {"do": "wait_text", "text": "Game stopped.", "seconds": 60},
+    {"do": "click", "text": "Start page"},
+    {"do": "fill", "text": "Project folder", "value": "@HOME@/mods/showcase-notes", "offset": [150, 0]},
+    {"do": "click", "text": "Open folder"},
+    {"do": "click", "text": "Package"},
+    {"do": "wait_text", "text": "Package ready", "seconds": 1200},
+    {"do": "capture", "name": "36-addon-package"}
+  ]
+}

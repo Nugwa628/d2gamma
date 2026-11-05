@@ -95,7 +95,7 @@ fn equipment<'a>(catalog: &'a Catalog, skill: &Skills) -> Option<Vec<(&'a Item, 
     None
 }
 
-pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
+pub(super) fn generate(live: &LiveData, g: &mut Generated, world: &World<'_>) -> Result<()> {
     let catalog = Catalog::load(live)?;
     let classes = live.tables.rows::<Charstats>()?;
     let monsters = live.tables.rows::<Monstats>()?;
@@ -107,7 +107,7 @@ pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
         .iter()
         .enumerate()
         .find(|(id, r)| {
-            *id > 1 && live.waypoints.levels.get(*id).is_some_and(|l| l.act == 0) && r.drlgtype > 0
+            *id > 0 && world.act(*id) == Some(0) && !world.is_town(*id) && r.drlgtype > 0
         })
         .map(|(id, _)| id);
     let skills = live.tables.rows::<Skills>()?;

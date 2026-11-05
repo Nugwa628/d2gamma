@@ -65,7 +65,13 @@ fn holy_bolt_costs_mana_and_creates_the_missile() {
     let errors = r.errors();
     assert!(r.mana() < mana0, "mana spent; errors: {errors}");
     assert!(server > 0, "the server made the missile; errors: {errors}");
-    assert!(r.s2c_contains_since(mark, 0x4D), "{errors}");
+    // The caster's own client hears nothing of its cast: it starts the
+    // cast at its own click, so the server sends it no skill message
+    // (S→C 0x4C / 0x4D) for a skill without the dodge flag.
+    assert!(
+        !r.s2c_since(mark, 0x4D) && !r.s2c_since(mark, 0x4C),
+        "{errors}"
+    );
 }
 
 #[test]
@@ -84,7 +90,13 @@ fn blessed_hammer_spawns_its_missile_through_the_do_step() {
         server > 0,
         "the hammer exists on the server; errors: {errors}"
     );
-    assert!(r.s2c_contains_since(mark, 0x4D), "{errors}");
+    // The caster's own client hears nothing of its cast: it starts the
+    // cast at its own click, so the server sends it no skill message
+    // (S→C 0x4C / 0x4D) for a skill without the dodge flag.
+    assert!(
+        !r.s2c_since(mark, 0x4D) && !r.s2c_since(mark, 0x4C),
+        "{errors}"
+    );
 }
 
 #[test]

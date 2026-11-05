@@ -70,6 +70,10 @@ pub struct Ds1Input {
 /// resolves them under `DATA\GLOBAL\TILES\`.
 pub trait Ds1Source {
     fn ds1(&self, path: &[u8]) -> Option<&Ds1Input>;
+    /// Authored units already resolved to runtime classes; native DS1 remapping is skipped.
+    fn extra_units(&self, _path: &[u8]) -> &[PresetUnit] {
+        &[]
+    }
 }
 
 /// The DS1 file record (0x5C bytes) after the parser rules.
@@ -329,10 +333,12 @@ impl Ds1Cache {
         let input = src
             .ds1(path)
             .ok_or_else(|| PresetError::MissingDs1(String::from_utf8_lossy(path).into_owned()))?;
+        let mut file = Ds1File::from_input(input, pd)?;
+        file.units.extend_from_slice(src.extra_units(path));
         let entry = CacheEntry {
             path: path.to_vec(),
             refs: 1,
-            file: Ds1File::from_input(input, pd)?,
+            file,
         };
         let i = match self.entries.iter().position(Option::is_none) {
             Some(i) => {
@@ -373,5 +379,41 @@ impl Ds1Cache {
             .flatten()
             .find(|e| e.path == path)
             .map_or(0, |e| e.refs)
+    }
+}
+
+impl From<&d2_formats::ds1::Ds1> for Ds1Input {
+    fn from(d: &d2_formats::ds1::Ds1) -> Self {
+        Self {
+            version: d.version,
+            width: d.width.wrapping_sub(1),
+            height: d.height.wrapping_sub(1),
+            act: d.act as i32,
+            tag_type: d.tag_type,
+            walls: d.walls.clone(),
+            orientations: d.orientations.clone(),
+            floors: d.floors.clone(),
+            shadow: d.shadow.clone(),
+            objects: d
+                .objects
+                .iter()
+                .map(|o| Ds1ObjectInput {
+                    kind: o.kind,
+                    id: o.id,
+                    x: o.x,
+                    y: o.y,
+                    flags: o.flags,
+                })
+                .collect(),
+            paths: d
+                .paths
+                .iter()
+                .map(|p| Ds1PathInput {
+                    x: p.x,
+                    y: p.y,
+                    points: p.points.iter().map(|q| (q.x, q.y, q.action)).collect(),
+                })
+                .collect(),
+        }
     }
 }

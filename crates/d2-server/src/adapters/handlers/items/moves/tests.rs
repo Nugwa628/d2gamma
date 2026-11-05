@@ -473,6 +473,7 @@ fn action_tables() -> ActionTables {
             miss_code: Vec::new(),
             level_cap: 0,
             stat_count: 0,
+            data_rules: d2_data::bin::DataRules::Original,
         },
         combat: CombatTables {
             charstats: Vec::new(),
@@ -2309,6 +2310,88 @@ fn the_socket_restore_mark_links_the_child_into_the_parent() {
     assert_eq!(t.inv().state.inventories[&pu].items(), [cu]);
     assert_eq!(t.data(child).mode, 6);
     t.no_errors();
+}
+
+// ---- a mod game's item rules ----------------------------------------------------------
+
+/// A mod's item rules: a unit with strength 5 meets every requirement;
+/// pickups to the cursor only in town.
+#[derive(Debug)]
+struct ModItems;
+
+impl d2_sim::items::provider::ItemProvider for ModItems {
+    fn requirements(
+        &self,
+        h: &dyn d2_sim::items::item_rules::RequirementView,
+        req: &d2_sim::items::item_rules::Requirement,
+    ) -> Option<bool> {
+        Some(h.unit_stat(req.unit, 0) >= 5)
+    }
+    fn may_move(
+        &self,
+        h: &mut dyn d2_sim::items::item_rules::MoveView,
+        mv: &d2_sim::items::item_rules::ItemMove<'_>,
+    ) -> bool {
+        mv.id != 0x16 || h.in_town(mv.player)
+    }
+}
+
+impl d2_sim::rules::ModRules for ModItems {
+    fn name(&self) -> &str {
+        "item-moves-test"
+    }
+    fn items(&self) -> Option<&dyn d2_sim::items::provider::ItemProvider> {
+        Some(self)
+    }
+}
+
+fn with_mod_items(t: &mut T) {
+    t.sim().world.tables.rules = d2_sim::rules::Ruleset::Mod(Arc::new(ModItems));
+}
+
+/// The cap's strength requirement (50) the engine refuses
+/// (`equip_over_strength_requirement_is_refused`) is the mod's to decide.
+#[test]
+fn a_mod_decides_the_equip_requirements() {
+    let mut t = setup();
+    t.inv().tables.items[CAP].reqstr = 50;
+    let c = t.cursor_item(CAP);
+    with_mod_items(&mut t);
+    let u = t.unit(c);
+    assert_eq!(t.frame(&body(0x1A, c, 1)).0, Done);
+    assert_eq!(t.mode(c), 1);
+    assert_eq!(t.inventory().body_item(1), u);
+}
+
+/// The mod refuses a pickup to the cursor outside town: nothing moves
+/// and nothing is sent; in town the engine's pickup runs.
+#[test]
+fn a_mod_vetoes_an_item_move() {
+    let mut t = setup();
+    with_mod_items(&mut t);
+    let k = t.ground_item(KEY, 12, 11);
+    assert_eq!(t.frame(&pick(k, 1)), (Done, NO_BYTES));
+    assert_eq!(t.mode(k), 3);
+    assert!(t.in_room(k));
+    t.rest.with(|r| r.in_town = true);
+    assert_eq!(t.frame(&pick(k, 1)).0, Done);
+    assert_eq!(t.mode(k), 4);
+}
+
+/// A pickup a mod's event hook queued (`EventHost::pick_up`) runs the
+/// engine's own gold pickup in the next tick.
+#[test]
+fn a_mod_pickup_runs_the_engines_pickup() {
+    let mut t = setup_preview();
+    let p = t.player;
+    t.set_stat(p, stat::GOLD, 100);
+    let g = gold_pile(&mut t, 250);
+    let u = t.unit(g).unwrap();
+    t.sim().events.sys.hooks.mod_pickups.push((p, u));
+    t.idle();
+    assert_eq!(t.stat(p, stat::GOLD), 350);
+    assert_eq!(t.unit(g), None, "the pile is freed");
+    assert!(t.sim().events.sys.hooks.mod_pickups.is_empty());
 }
 
 #[cfg(test)]

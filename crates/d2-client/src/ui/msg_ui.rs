@@ -539,9 +539,18 @@ impl OriginalUi {
                 a => crate::ui::panels::waypoint::set_tab(a as u8, &gate),
             },
         };
+        let tab = crate::kit_mod::ruleset()
+            .acts()
+            .and_then(|a| world.player_level().and_then(|l| a.find_act(u32::from(l))))
+            .unwrap_or(tab);
         // r2.4–r2.6: the row rebuild before and after the store.
         self.skip(skip::WAYPOINT_ROWS);
-        let record = WaypointRecord::load_copy(record).map_err(OriginalUiError::Waypoint)?;
+        let record = if crate::kit_mod::ruleset().acts().is_some() {
+            WaypointRecord::load_mod_copy(record)
+        } else {
+            WaypointRecord::load_copy(record)
+        }
+        .map_err(OriginalUiError::Waypoint)?;
         self.msg.waypoint = Some(WaypointMenuState {
             guid,
             record,

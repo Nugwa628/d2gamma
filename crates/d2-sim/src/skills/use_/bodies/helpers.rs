@@ -18,23 +18,23 @@ pub const FLAG_40: u32 = 0x40;
 
 /// Stats the bodies name.
 pub mod stat {
-    pub const MANA: u16 = 8;
-    pub const LIFE: u16 = 6;
-    pub const STAMINA: u16 = 10;
-    pub const TOHIT: u16 = 19;
-    pub const VELOCITYPERCENT: i32 = 67;
-    pub const ATTACKRATE: i32 = 68;
-    pub const OTHER_ANIMRATE: i32 = 69;
-    pub const QUANTITY: u16 = 70;
-    pub const DURABILITY: u16 = 72;
-    pub const CURSE_RESISTANCE: u16 = 109;
-    pub const POISONLENGTHRESIST: i32 = 110;
-    pub const ITEM_THROWABLE: u16 = 125;
-    pub const MAGICARROW: u16 = 157;
-    pub const EXPLOSIVEARROW: u16 = 158;
-    pub const PROGRESSIVE_TOHIT: u16 = 325;
-    pub const MODIFIERLIST_SKILL: i32 = 350;
-    pub const MODIFIERLIST_LEVEL: i32 = 351;
+    pub use crate::stats::ids::HITPOINTS as LIFE;
+    pub use crate::stats::ids::MANA;
+    pub use crate::stats::ids::STAMINA;
+    pub use crate::stats::ids::TOHIT;
+    pub const VELOCITYPERCENT: i32 = crate::stats::ids::VELOCITYPERCENT as i32;
+    pub const ATTACKRATE: i32 = crate::stats::ids::ATTACKRATE as i32;
+    pub const OTHER_ANIMRATE: i32 = crate::stats::ids::OTHER_ANIMRATE as i32;
+    pub use crate::stats::ids::CURSE_RESISTANCE;
+    pub use crate::stats::ids::DURABILITY;
+    pub use crate::stats::ids::QUANTITY;
+    pub const POISONLENGTHRESIST: i32 = crate::stats::ids::POISONLENGTHRESIST as i32;
+    pub use crate::stats::ids::EXPLOSIVEARROW;
+    pub use crate::stats::ids::ITEM_THROWABLE;
+    pub use crate::stats::ids::MAGICARROW;
+    pub use crate::stats::ids::PROGRESSIVE_TOHIT;
+    pub const MODIFIERLIST_SKILL: i32 = crate::stats::ids::MODIFIERLIST_SKILL as i32;
+    pub const MODIFIERLIST_LEVEL: i32 = crate::stats::ids::MODIFIERLIST_LEVEL as i32;
 }
 
 /// States the bodies name.
@@ -443,6 +443,9 @@ pub fn apply_state_ticks<W: BodyWorld>(
         if !ct.monstats2(class).is_some_and(|m| m.isatt) {
             return None;
         }
+    }
+    if let Some(def) = w.state_def(s) {
+        return super::stack_state::apply_stacked(w, &def, q);
     }
     let mut dur = q.duration;
     let (old, mut flags) = if w.state_flag(s, group::CURSE) {

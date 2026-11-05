@@ -1,0 +1,42 @@
+version = 1
+
+# monstats aip1..aip3 of the vile dog rows and the pain worms (Normal): 80, 10, 80.
+[[ai]]
+index = 69
+name = "VileDog (lifted)"
+target = "enemy"
+
+# The first think only stands (5 frames); the body marks it in its AI params.
+[[ai.state]]
+name = "wake"
+
+[[ai.state.transition]]
+to = "hunt"
+when = [{ kind = "in_state_for", seconds = 0.2 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.2
+
+[[ai.state]]
+name = "hunt"
+
+# In reach: aip1 = 80% swing, else stand aip2 = 10 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 80 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4
+when = [{ kind = "in_melee" }]
+
+# Out of reach: aip3 = 80% walk toward the target, else stand 10 frames.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 80 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4

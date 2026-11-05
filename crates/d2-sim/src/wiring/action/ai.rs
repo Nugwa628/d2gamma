@@ -103,6 +103,24 @@ impl<X: Pending> AiUnits for View<'_, X> {
     fn has_state(&self, unit: UnitId, s: u16) -> bool {
         self.stats.has_state(unit, u32::from(s))
     }
+    fn timed_state(&mut self, game: &mut Game, unit: UnitId, s: u16, ticks: i32) -> bool {
+        crate::missiles::MissileBodies::apply_state(
+            self,
+            game,
+            unit,
+            unit,
+            0,
+            0,
+            ticks,
+            i32::from(s),
+        )
+    }
+    fn state_stacks(&self, unit: UnitId, s: u16) -> u16 {
+        match self.state_list(unit, s) {
+            Some(l) => self.stats.stacks(l).max(1),
+            None => 0,
+        }
+    }
     fn clear_uninterruptable(&mut self, game: &mut Game, unit: UnitId) {
         clear_uninterruptable(self, game, unit);
     }

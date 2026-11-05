@@ -31,6 +31,7 @@ pub mod level;
 /// Logical rooms: coordinate lists and their lookups.
 pub mod logic;
 /// The maze level-type generator.
+pub mod maps;
 pub mod maze;
 /// The outdoor level-type generator.
 pub mod outdoor;
@@ -166,6 +167,8 @@ pub fn is_town(id: u32) -> bool {
 /// Invalid generation states (returned instead of aborting) and D2RUST API misuse.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum DrlgError {
+    #[error("unknown act {0}")]
+    UnknownAct(u8),
     #[error("level id {0} has no leveldefs row")]
     UnknownLevel(u32),
     #[error("unknown DRLG room {0:?}")]

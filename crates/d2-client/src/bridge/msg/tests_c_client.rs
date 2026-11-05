@@ -39,7 +39,7 @@ fn model(difficulty: u8, expansion: u32) -> Model {
     };
     m.inputs.tables.monsters = vec![Some(row); 155];
     m.inputs.tables.skills = vec![SkillRow::default(); 5];
-    m.inputs.tables.monster_skill_bonus = [0, 1, 2];
+    m.inputs.tables.monster_skill_bonus = vec![0, 1, 2];
     m.w.difficulty = difficulty;
     m.w.expansion = expansion;
     m

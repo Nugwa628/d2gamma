@@ -2,9 +2,9 @@
 use super::*;
 use crate::ui::{layout::OptionKind, panels::npc::NpcMenus};
 use d2_data::tables::{Leveldefs, Monstats};
-use d2_sim::world::{npc, vendors};
+use d2_sim::world::npc;
 
-pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
+pub(super) fn generate(live: &LiveData, g: &mut Generated, world: &World<'_>) -> Result<()> {
     let catalog = super::content::Catalog::load(live)?;
     let actors = live.tables.rows::<Monstats>()?;
     let areas = live.tables.rows::<Leveldefs>()?;
@@ -26,8 +26,11 @@ pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
             .iter()
             .find(|r| usize::from(r.class) == class)
             .map_or(0, |r| r.act);
-        let town = vendors::TOWNS[usize::from(act)];
-        if areas.get(usize::from(town)).is_none_or(|a| a.drlgtype == 0) {
+        let Some(town) = world.town(act) else {
+            g.skip("npcs:missing-town");
+            continue;
+        };
+        if areas.get(town as usize).is_none_or(|a| a.drlgtype == 0) {
             g.skip("npcs:missing-town");
             continue;
         }
@@ -66,6 +69,7 @@ pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
             let expectation = match option.kind {
                 OptionKind::Trade | OptionKind::Gamble => "at 108 check ui.open(npc_shop) == true",
                 OptionKind::Identify => "by 108 check sent(0x34) > 0",
+                OptionKind::DataTravel(_) => "by 108 check sent(0x38) > 0",
                 OptionKind::Talk | OptionKind::Hire => "at 108 check ui.open(npc_menu) == true",
                 OptionKind::Resurrect => {
                     g.skip("npcs:resurrection-needs-dead-hireling");
@@ -118,7 +122,7 @@ pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
                     g.skip("npcs:hire-needs-loaded-offer");
                 } else {
                     g.add("npcs",format!("npc-{class}-hire-first-offer"),&header,
-                        &format!("{open}at 92 input click ui:npc.menu({slot})\nat 100 input click ui:hire.offer(0)\nby 108 check sent(0x36) > 0\nby 108 check hud.gold < 100000\nat 112 msg TerminateEntityChat id=@1:{class}"),124)?;
+                        &format!("{open}at 92 input click ui:npc.menu({slot})\nat 100 input click ui:hire.offer(0)\nby 108 check sent(0x36) > 0\nby 108 check hud.gold < 100000\nat 112 check client.npc_waiting == false\nat 112 check ui.open(npc_menu) == true\nat 114 input key ESC\nby 120 check ui.open(npc_menu) == false"),124)?;
                 }
             }
             g.add(

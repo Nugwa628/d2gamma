@@ -796,6 +796,22 @@ mod host {
         h
     }
 
+    /// A mod game's screens reach the session the online screens and the
+    /// game start share: the visit's `FrontStart` holds the handle the
+    /// registry made.
+    #[test]
+    fn a_mod_screen_gets_the_online_session_of_the_visit() {
+        use d2_client::mods::front_hand_back::FrontStart;
+        let server = SharedFake(std::rc::Rc::new(std::cell::RefCell::new(
+            FakeServer::default(),
+        )));
+        let h = fake_handles(&server, servers());
+        let start = FrontStart::new(&save_dir("realm"), &h, true);
+        let realm = start.realm().expect("an online build has a realm link");
+        let online = h.online.borrow().clone().unwrap();
+        assert!(std::rc::Rc::ptr_eq(realm.session(), &online));
+    }
+
     /// Rule (contracts 9): `play --online --server ID` opens the login
     /// screen on that server, past the main menu.
     #[test]

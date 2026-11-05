@@ -1,0 +1,7 @@
+id = "ai-lift-death-mauler"
+name = "AI 130 DeathMauler, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "DeathMauler as a graph: AI 130 (DeathMauler)."
+api = 1
+kind = "full"

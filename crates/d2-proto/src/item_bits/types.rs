@@ -41,6 +41,10 @@ pub struct CodeFacts {
 
 /// The tables the reader needs.
 pub trait ItemLookup {
+    /// The mod item codec uses sixteen-bit stat ids.
+    fn wide_stats(&self) -> bool {
+        false
+    }
     /// Facts of an item code; `None`: unknown code (a decode error).
     fn code(&self, code: [u8; 4]) -> Option<CodeFacts>;
     /// Save columns of a stat; `None`: no row (the list ends there, with no

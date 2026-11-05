@@ -50,7 +50,7 @@ use d2_sim::world::hirelings::HirelingTables;
 use d2_sim::world::npc::HireRow;
 use d2_sim::world::objects::ObjectTables;
 use d2_sim::world::quests::{PlayerQuests, QuestFlags, QuestTables};
-use d2_sim::world::vendors::VendorTables;
+use d2_sim::world::vendors::{GlobalLists, VendorTables};
 use d2_sim::world::waypoints::WaypointData;
 
 use d2_sim::drlg::outdoor::{SubFile, SubFiles};
@@ -67,7 +67,9 @@ mod builder;
 pub mod character_save;
 pub mod client_tables;
 pub mod composite_names;
+mod difficulty_progress;
 mod live_data;
+mod mod_codec;
 pub mod realm;
 pub mod rows;
 pub mod save_full;
@@ -76,6 +78,7 @@ mod save_load;
 pub use builder::*;
 use client_tables::fixed_objects;
 pub use live_data::*;
+pub use mod_codec::{copy_d2gamma_character, ModCodec};
 pub use save_load::*;
 pub type Sim = SimGame<WorldSim<LocalSeams>, World>;
 pub type World = WiredWorld<AppRest, WiredSkills>;
@@ -160,7 +163,18 @@ pub fn game_seed_or(character: &Character, fixed: Option<u32>, drawn: u32) -> u3
     }
     match character {
         Character::Save(save, ctx) => {
-            let t = save.header.towns[usize::from(ctx.difficulty).min(2)];
+            let t = save
+                .body
+                .as_ref()
+                .and_then(|b| d2_formats::d2m::progress::read(b, save.header.towns).ok())
+                .and_then(|r| r.get(usize::from(ctx.difficulty)).map(|r| r.town))
+                .unwrap_or_else(|| {
+                    save.header
+                        .towns
+                        .get(usize::from(ctx.difficulty))
+                        .copied()
+                        .unwrap_or(0)
+                });
             if t & 0x80 != 0 {
                 save.header.map_seed
             } else {
@@ -378,6 +392,18 @@ pub fn parse_difficulty(s: &str) -> Option<u8> {
         "hell" | "2" => Some(2),
         _ => None,
     }
+}
+
+/// Configured mod names or numeric row ids; base parsing stays unchanged.
+pub fn parse_difficulty_for(s: &str, rules: &Ruleset) -> Option<u8> {
+    let Some(d) = rules.difficulties() else {
+        return parse_difficulty(s);
+    };
+    d.names()
+        .iter()
+        .position(|name| name.eq_ignore_ascii_case(s))
+        .and_then(|n| u8::try_from(n).ok())
+        .or_else(|| s.parse::<u8>().ok().filter(|&n| d.contains(n)))
 }
 
 /// The class names of `play --new` in class-id order (`charstats` rows
@@ -602,10 +628,56 @@ pub(super) fn build_game(
         expansion: GAME_SETUP.expansion,
     });
     let wp_tables = data.tables();
-    let (mut levels, mut parts) = (LevelSource::live(d, seed), GameParts::live(d)?);
+    let (mut levels, mut parts) = (
+        LevelSource::live_with_acts(d, seed, rules.acts()),
+        GameParts::live(d)?,
+    );
     parts.set_rules(&rules);
+    let count = rules.difficulties().map_or(3, |d| d.count());
+    if usize::from(character.difficulty()) >= count
+        || (rules.difficulties().is_some() && parts.action.combat.difficultylevels.len() < count)
+    {
+        return Err(BuildError::Tables(
+            "difficulty outside configured names or difficultylevels rows missing".into(),
+        ));
+    }
+    if let Some(stats) = rules.stat_rules() {
+        stats
+            .install(&mut parts.stats.stats)
+            .map_err(|e| BuildError::Tables(e.to_string()))?;
+        if let Some(bodies) = parts.bodies.as_mut() {
+            let bodies = Arc::make_mut(bodies);
+            if let Some(last) = stats.custom_stats().map(|(_, id)| usize::from(id)).max() {
+                bodies
+                    .stats
+                    .resize_with(bodies.stats.len().max(last + 1), || {
+                        d2_sim::skills::use_::bodies::BodyStat {
+                            maxstat: -1,
+                            ..Default::default()
+                        }
+                    });
+            }
+        }
+    }
+    if let Some(acts) = rules.acts() {
+        for a in acts.rows() {
+            for id in std::iter::once(a.town)
+                .chain(a.waypoints.iter().map(|w| w.level))
+                .chain(a.travel.iter().map(|t| t.to))
+            {
+                if !levels.data.level(id).is_ok_and(|l| l.drlg_type != 0) {
+                    return Err(BuildError::Tables(format!(
+                        "acts.toml level {id} needs a generated leveldefs row"
+                    )));
+                }
+            }
+        }
+    }
     let shared_types = levels.shared.clone();
     let mut dungeon = Dungeon::default();
+    if let Some(a) = rules.acts() {
+        dungeon.set_layout(a.clone());
+    }
     // The game's town levels (a mod game's own) shape the acts from creation.
     let towns = rules.town_levels();
     for (act, init_seed, town) in levels.acts.iter().copied() {
@@ -613,7 +685,11 @@ pub(super) fn build_game(
             Drlg::create_with_towns(
                 act,
                 init_seed,
-                0,
+                if rules.difficulties().is_some() {
+                    character.difficulty().min(2)
+                } else {
+                    0
+                },
                 town,
                 false,
                 &towns,
@@ -648,7 +724,11 @@ pub(super) fn build_game(
     // Init function 17 of the waypoint objects (`waypoints.md` initialization) on
     // the game's tables.
     let wp_objects = fixed_objects(d);
-    hooks.waypoint_init = Some(Arc::new(WaypointData::new(&wp_tables.levels, &wp_objects)));
+    let mut waypoint_data = WaypointData::new(&wp_tables.levels, &wp_objects);
+    if let Some(a) = rules.acts() {
+        waypoint_data.map.apply_acts(a);
+    }
+    hooks.waypoint_init = Some(Arc::new(waypoint_data));
     hooks.vitals = parts.vitals;
     hooks.bodies = parts.bodies;
     // The hireling calls (save restore; join follow; act change) run on the
@@ -720,7 +800,17 @@ pub(super) fn build_game(
     });
     let mut game = Game::new();
     game.tick_rate = d2_sim::tick::TickRate::GAME;
-    let start_levels = [(0u8, ACT1_TOWN), (0, COLD_PLAINS), (1, ACT2_TOWN)];
+    game.lists.set_act_count(rules.act_count());
+    let start_levels = rules
+        .acts()
+        .map(|a| {
+            a.rows()
+                .iter()
+                .enumerate()
+                .map(|(i, a)| (i as u8, a.town))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| vec![(0u8, ACT1_TOWN), (0, COLD_PLAINS), (1, ACT2_TOWN)]);
     for (act, level) in start_levels {
         game.lists
             .ensure_act(act)
@@ -789,6 +879,12 @@ pub(super) fn build_game(
         0,
     );
     world.state.hireling_tables = parts.hirelings;
+    // The vendor records follow the game's rules: a mod's traders and
+    // store roles (D2Gamma's own game keeps the records `new` made).
+    if !rules.is_original() {
+        let globals = GlobalLists::build_for(&world.vendor_tables, &rules);
+        world.state.use_rules(&rules, &world.npc, &globals);
+    }
     // Monster init does not embed the interaction lists yet: the host
     // registers the `interact` NPC units (D2RUST's own, unverified).
     world.interact_classes = interact_classes;

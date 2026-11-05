@@ -1139,3 +1139,78 @@ fn cast_effects_play_in_real_time_at_every_rate() {
     assert!(!flat_at_end(11, 3, 256, 6, r60));
     assert!(flat_at_end(11, 3, 256, 7, r60));
 }
+
+#[test]
+fn mod_effects_spawn_uses_existing_missile_and_overlay_art_and_order() {
+    let mut r = Run::new();
+    let mut w = world();
+    let point = (100 << 16, 100 << 16);
+    let missile =
+        r.m.spawn_visual(1, false, point, Some(PLAYER), 0, 10)
+            .unwrap();
+    let overlay =
+        r.m.spawn_visual(1, true, point, Some(PLAYER), 0, 10)
+            .unwrap();
+    assert_eq!(r.frame(&mut w, 1).len(), 2);
+    r.m.remove_visual(missile);
+    assert_eq!(r.frame(&mut w, 2).len(), 1);
+    r.m.remove_visual(overlay);
+    assert!(r.frame(&mut w, 3).is_empty());
+    assert!(r.m.spawn_visual(0, false, point, None, 3, 10).is_none());
+    assert!(r.m.spawn_visual(1, false, point, None, 3, 0).is_none());
+    r.m.spawn_visual(1, false, point, None, 3, 2).unwrap();
+    assert_eq!(r.frame(&mut w, 4).len(), 1);
+    assert!(r.frame(&mut w, 5).is_empty());
+}
+
+#[test]
+fn telegraph_named_event_draws_existing_sprites_light_and_particles_then_cancels() {
+    use crate::rules::lighting::records::LightList;
+    use crate::world_view::{
+        mod_effects::{ModEffects, Recipe},
+        telegraphs::Telegraphs,
+    };
+    let mut r = Run::new();
+    let mut w = world();
+    let mut e = ModEffects::default();
+    let definition=d2_modkit::effects::parse("version=1\n[[effects]]\nname='windup'\nmissile='firebolt'\noverlay='cast'\n[effects.light]\n[effects.particles]\ncount=16\nspread=0").unwrap().remove(0);
+    e.recipes.insert(
+        "windup".into(),
+        Recipe {
+            definition,
+            missile: Some(1),
+            overlay: Some(1),
+        },
+    );
+    let mut t = Telegraphs::default();
+    let mut lights = LightList::new();
+    let event = d2_proto::mod_ui::VisualEvent {
+        name: "windup".into(),
+        source_type: CASTER.unit_type,
+        source_guid: CASTER.guid,
+        x: 100,
+        y: 100,
+        duration: 25,
+        follow: false,
+    };
+    let event = d2_proto::mod_ui::read_visual(&d2_proto::mod_ui::visual(&event).unwrap()).unwrap();
+    t.update(&w, 0, vec![event.clone()], &mut e, &mut r.m);
+    e.prepare(&w, &mut lights, &mut r.m);
+    assert_eq!(lights.len(), 1);
+    let mut frame = framed(&w);
+    assert!(r
+        .m
+        .add_to_frame(&w, &r.feed, &mut r.a, &mut frame)
+        .is_empty());
+    assert_eq!(frame.items.len(), 2);
+    e.add_particles(&w, &mut r.a, &mut frame).unwrap();
+    assert_eq!(frame.items.len(), 18);
+    w.units.get_mut(&CASTER).unwrap().mode = 0;
+    t.update(&w, 0, vec![], &mut e, &mut r.m);
+    e.prepare(&w, &mut lights, &mut r.m);
+    assert!(lights.is_empty());
+    assert_eq!(r.m.live(), 0);
+    let mut frame = framed(&w);
+    e.add_particles(&w, &mut r.a, &mut frame).unwrap();
+    assert!(frame.items.is_empty());
+}

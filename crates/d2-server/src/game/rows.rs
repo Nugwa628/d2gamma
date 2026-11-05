@@ -229,7 +229,7 @@ pub struct StatSend {
 pub struct UnitRows {
     pub monsters: Vec<Option<MonsterClass>>,
     /// `difficultylevels` `MonsterSkillBonus` by difficulty.
-    pub monster_skill_bonus: [i32; 3],
+    pub monster_skill_bonus: Vec<i32>,
     pub stats: Vec<StatSend>,
     pub objects: Vec<ObjectRow>,
     pub shrines: Vec<u8>,

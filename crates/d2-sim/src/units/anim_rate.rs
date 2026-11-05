@@ -7,6 +7,8 @@
 //! arrive resolved in [`RateInput`]; this module
 //! owns the step order and the formulas. The rate draws nothing.
 
+use crate::rules::global::AnimationRules;
+
 /// Constant `c` of the `animstat` rows of the table (every base-game
 /// row has flag 1).
 pub const E_C: [i32; 5] = [120, 120, 120, 120, 150];
@@ -31,7 +33,15 @@ pub fn diminished(row: usize, v: i32) -> i32 {
     if v == 0 {
         return 0;
     }
-    let c = E_C[row];
+    diminished_with(E_C[row], v)
+}
+
+/// Diminishing returns with a mod-provided coefficient. A stat that cancels the
+/// denominator contributes zero instead of dividing by zero.
+pub fn diminished_with(c: i32, v: i32) -> i32 {
+    if v == 0 || c.wrapping_add(v) == 0 {
+        return 0;
+    }
     c.wrapping_mul(v).wrapping_div(c.wrapping_add(v))
 }
 
@@ -160,12 +170,18 @@ pub enum RateError {
 
 /// (first match wins).
 pub fn anim_rate(i: &RateInput) -> Result<Rate, RateError> {
+    anim_rate_with(i, &crate::rules::global::DEFAULT.animation)
+}
+
+/// Animation rate with the authoritative mod's breakpoint numbers.
+pub fn anim_rate_with(i: &RateInput, rules: &AnimationRules) -> Result<Rate, RateError> {
+    let d = |s, f| d(s, f).min(rules.speed_cap);
     // Step 1.
     if !i.applies {
         return Ok(Rate::Nothing);
     }
     let (t, m, s) = (i.t, i.m, i.s);
-    let e = |row: usize| diminished(row, i.item[row]);
+    let e = |row: usize| diminished_with(rules.diminishing[row], i.item[row]);
     let row = mode_row(t, i.c, m);
     let set = |speed: i32, seq: Option<i32>, velocity: Velocity| {
         Ok(Rate::Set {
@@ -179,21 +195,36 @@ pub fn anim_rate(i: &RateInput) -> Result<Rate, RateError> {
         || (t == 0 && m == 18 && i.used_seqtrans == Some(10))
         || (t == 1 && m == 7)
     {
-        let v = d(s, (100 + e(E_CAST)).min(175));
+        let v = d(
+            s,
+            (rules.cast_base_percent + e(E_CAST)).min(rules.cast_max_percent),
+        );
         return set(v, Some(v), Velocity::Keep);
     }
     // Step 4: block.
     if (t == 0 && m == 9) || (t == 1 && m == 6) {
-        let f = if i.holyshield { 100 } else { 50 };
-        return set(d(s, f + e(E_BLOCK)).max(1), None, Velocity::Keep);
+        let f = if i.holyshield {
+            rules.holy_shield_block_percent
+        } else {
+            rules.block_base_percent
+        };
+        return set(
+            d(s, f + e(E_BLOCK)).max(rules.block_min_speed),
+            None,
+            Velocity::Keep,
+        );
     }
     // Step 5: get hit.
     if (t == 0 && m == 4) || (t == 1 && m == 3) {
-        return set(d(s, 50 + e(E_GETHIT)), None, Velocity::Keep);
+        return set(
+            d(s, rules.recovery_base_percent + e(E_GETHIT)),
+            None,
+            Velocity::Keep,
+        );
     }
     // Step 6: knockback.
     if (t == 0 && m == 19) || (t == 1 && m == 13) {
-        return set(i.w.clamp(0, SPEED_MAX), None, Velocity::Fixed(0x1000));
+        return set(i.w.clamp(0, rules.speed_cap), None, Velocity::Fixed(0x1000));
     }
     // Step 7: velocity modes.
     if i.velocity_mode {
@@ -203,9 +234,9 @@ pub fn anim_rate(i: &RateInput) -> Result<Rate, RateError> {
         if !i.has_path {
             return Ok(Rate::Nothing);
         }
-        let p = (e(E_MOVE) + i.velocitypercent).max(25);
+        let p = rules.movement_percent(e(E_MOVE) + i.velocitypercent);
         let w = i.w.wrapping_mul(p).wrapping_div(100);
-        let w = if w <= 0 { 0 } else { w.min(SPEED_MAX) };
+        let w = if w <= 0 { 0 } else { w.min(rules.speed_cap) };
         return set(w, None, Velocity::Percent(p));
     }
     // Step 8: attack modes.
@@ -218,19 +249,27 @@ pub fn anim_rate(i: &RateInput) -> Result<Rate, RateError> {
             v += (a4 + a5) / 2 - a4;
         }
         if i.player_mode_18 {
-            v -= 30;
+            v -= rules.sequence_attack_penalty;
         }
-        let v = v.clamp(15, 175);
+        let v = v.clamp(rules.attack_percent[0], rules.attack_percent[1]);
         let b = i.were_speed.filter(|&b| b != 0).unwrap_or(s);
         let r = d(b, v);
         return set(r, Some(r), Velocity::Keep);
     }
     // Step 9: fixed.
     if row.fixed {
-        return set(s.clamp(0, SPEED_MAX), None, Velocity::Keep);
+        return set(s.clamp(0, rules.speed_cap), None, Velocity::Keep);
     }
     // Step 10.
-    set(d(s, i.other_animrate.clamp(15, 175)), None, Velocity::Keep)
+    set(
+        d(
+            s,
+            i.other_animrate
+                .clamp(rules.other_percent[0], rules.other_percent[1]),
+        ),
+        None,
+        Velocity::Keep,
+    )
 }
 
 /// Player mode (0…19) → monster mode.
@@ -259,14 +298,13 @@ pub fn mode_fallback(m: u32) -> u32 {
 /// 1 for type class 0 and 2 for type classes 2–6 on the Amazon (0) and
 /// Sorceress (1); everything else, and type class 12 (past the table), 0.
 pub fn frame_bonus_table(type_class: u32, player_class: u32) -> i32 {
-    if player_class > 1 || type_class > 11 {
-        return 0;
-    }
-    match type_class {
-        0 => 1,
-        2..=6 => 2,
-        _ => 0,
-    }
+    crate::rules::global::DEFAULT
+        .animation
+        .frame_bonus
+        .get(type_class as usize)
+        .and_then(|r| r.get(player_class as usize))
+        .copied()
+        .unwrap_or(0)
 }
 
 /// Draw type `t`, player class `c`, mode `m`;
@@ -279,11 +317,32 @@ pub fn frame_bonus(
     dual_capable: bool,
     weapon_type_class: Option<u32>,
 ) -> i32 {
-    if t != 0 {
-        return 0;
-    }
-    if matches!(m, 7 | 8) || (matches!(m, 15 | 16) && dual_capable) {
-        return frame_bonus_table(weapon_type_class.unwrap_or(0), c);
+    frame_bonus_with(
+        t,
+        c,
+        m,
+        dual_capable,
+        weapon_type_class,
+        &crate::rules::global::DEFAULT.animation,
+    )
+}
+
+/// Frame bonus table selected by the mod, indexed by weapon type then player class.
+pub fn frame_bonus_with(
+    t: u8,
+    c: u32,
+    m: u32,
+    dual_capable: bool,
+    weapon_type_class: Option<u32>,
+    rules: &AnimationRules,
+) -> i32 {
+    if t == 0 && (matches!(m, 7 | 8) || (matches!(m, 15 | 16) && dual_capable)) {
+        return rules
+            .frame_bonus
+            .get(weapon_type_class.unwrap_or(0) as usize)
+            .and_then(|r| r.get(c as usize))
+            .copied()
+            .unwrap_or(0);
     }
     0
 }
@@ -422,7 +481,7 @@ mod tests {
         a.item[E_ATTACK] = 60; // E = 40
         let v = d(256, 160);
         assert_eq!(anim_rate(&a), set(v, Some(v), Velocity::Keep));
-        // Dual wield: v += (a4 + a5)/2 - a4; mode 18: v -= 30; clamp.
+        // Dual wield: v += (a4 + a5)/2 - a4; mode 18: v -= rules.sequence_attack_penalty; clamp.
         a.dual = Some((10, 31));
         assert_eq!(speed(&a), d(256, 160 + (41 / 2 - 10)));
         a.dual = None;

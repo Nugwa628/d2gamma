@@ -24,7 +24,7 @@ fn spawn(item: &Item) -> String {
         .collect();
     format!("{quest}at 0 poke item {} @x @y quality normal ilvl 99\nat 4 msg PickItem type=4 id=@4:{} cursor=1\nat 8 check unit(item,{}).mode_id == 4\n", item.code, item.class, item.class)
 }
-pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
+pub(super) fn generate(live: &LiveData, g: &mut Generated, world: &World<'_>) -> Result<()> {
     let catalog = Catalog::load(live)?;
     let objects = live.tables.rows::<Objects>()?;
     // The client's stash object class; row 5's operatefn 4 is a different
@@ -98,7 +98,7 @@ pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
         }
     }
     recipes(live, &catalog, g)?;
-    trade(live, g)?;
+    trade(live, g, world)?;
     Ok(())
 }
 
@@ -121,7 +121,7 @@ fn repair(live: &LiveData, item: &Item, header: &str, g: &mut Generated) -> Resu
         &format!("{}at 12 msg InsertItemInBuffer item=@4:{id} x=0 y=0 page=0\nat 16 poke stat @4:{id} 72 0 1\nat 20 spawn {npc} @x+3 @y normal\nat 22 poke goto unit 1:{npc}\nat 24 poke talk @1:{npc} trade\nat 32 msg Repair npc=@1:{npc} item=@4:{id} unread=0 repair_flags=0\nat 40 msg TerminateEntityChat id=@1:{npc}" ,spawn(item)), 44)
 }
 
-fn trade(live: &LiveData, g: &mut Generated) -> Result<()> {
+fn trade(live: &LiveData, g: &mut Generated, world: &World<'_>) -> Result<()> {
     let monsters = live.tables.rows::<d2_data::tables::Monstats>()?;
     let mut menus = NpcMenus::load()?;
     menus.reset_for_interaction();
@@ -138,7 +138,10 @@ fn trade(live: &LiveData, g: &mut Generated) -> Result<()> {
         }
         let npc = vendor.class;
         let act = vendor.act;
-        let town = d2_sim::world::vendors::TOWNS[usize::from(act)];
+        let Some(town) = world.town(act) else {
+            g.skip("items:vendor-without-configured-town");
+            continue;
+        };
         // The player's way in: walk up, talk, skip the greeting, pick the
         // menu's Trade line, then click the first stocked item and confirm.
         let Some(menu) = menus.menu(u32::from(npc)) else {

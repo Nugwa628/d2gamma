@@ -2,7 +2,7 @@
 //!
 //! The image and text kinds are adapters over the `d2-native`
 //! reader and writer of that kind ([`Native`]); the verbatim kinds,
-//! `excel`, `colormap` and `palshift`, are copies checked by byte
+//! `excel`, `colormap`, `palshift` and `colortxt`, are copies checked by byte
 //! equality.
 
 use d2_native::asset::{AssetError, AssetKind};
@@ -12,13 +12,34 @@ use crate::kind::{Failure, Kind, NativeData, Written};
 
 /// All kinds this build converts, in registry order.
 pub fn builtin() -> Vec<Box<dyn Kind>> {
-    let mut v: Vec<Box<dyn Kind>> = vec![Box::new(Excel), Box::new(ColorMap), Box::new(PalShift)];
+    let mut v: Vec<Box<dyn Kind>> = vec![
+        Box::new(Excel),
+        Box::new(ColorMap),
+        Box::new(PalShift),
+        Box::new(ColorTxt),
+    ];
     v.extend(
         AssetKind::ALL
             .into_iter()
             .map(|k| Box::new(Native(k)) as Box<dyn Kind>),
     );
     v
+}
+
+/// The kinds a server reads: the tables, the strings, the maps and their
+/// tiles, the animation lengths and the experience bar's field. A game
+/// server's probe (one game, a new character of every class joins and is
+/// saved) reads files of these kinds only; the art, sounds, palettes and
+/// fonts are the client's.
+pub const SERVER_KINDS: [&str; 6] = ["excel", "tbl", "ds1", "dt1", "animdata", "expfield"];
+
+/// [`builtin`] limited to [`SERVER_KINDS`], in registry order: what a
+/// server's own conversion converts.
+pub fn server() -> Vec<Box<dyn Kind>> {
+    builtin()
+        .into_iter()
+        .filter(|k| SERVER_KINDS.contains(&k.name()))
+        .collect()
 }
 
 /// Extensions no kind claims on purpose, with the reason the report lists
@@ -56,6 +77,14 @@ pub const NEVER_LOADED: &[(&str, &str)] = &[
     (
         "data/global/tiles/act1/outdoors/outdoor1.dt1",
         "version-4 DT1 named by no LvlTypes, LvlPrest or DS1 (dt1.md)",
+    ),
+    (
+        "data/global/sfx/cursor/curindx.wav",
+        "an index file, not a RIFF/WAVE sound; sounds.txt names no such file",
+    ),
+    (
+        "data/global/sfx/cursor/wavindx.wav",
+        "an index file, not a RIFF/WAVE sound; sounds.txt names no such file",
     ),
     (
         "data/local/font/latin/default.tbl",
@@ -132,14 +161,23 @@ impl Kind for Native {
 /// byte equality (C-TABLE step 1). The step that compiles the native set
 /// against each live `.bin` (C-TABLE step 2, `_bin-overrides.toml`) comes
 /// with the native tables (`tables.rs`).
+///
+/// `sounds.txt` references the sound, speech and music files it names: the
+/// sound archive's own listing names almost none of them, so without this
+/// they are never converted.
 pub struct Excel;
+
+/// The table whose rows name sound files.
+pub const SOUNDS_TXT: &str = "data/global/excel/sounds.txt";
 
 impl Kind for Excel {
     fn name(&self) -> &'static str {
         "excel"
     }
+    /// 2: the conversion follows the file names in `sounds.txt`, so a
+    /// root converted at 1 has no base sounds and must be converted again.
     fn native_version(&self) -> u32 {
-        1
+        2
     }
     fn phase(&self) -> u8 {
         0
@@ -148,6 +186,17 @@ impl Kind for Excel {
         canon
             .strip_prefix("data/global/excel/")
             .is_some_and(|rest| !rest.contains('/') && rest.ends_with(".txt"))
+    }
+    fn has_references(&self) -> bool {
+        true
+    }
+    fn references(&self, canon: &str, src: &[u8]) -> Vec<String> {
+        if canon != SOUNDS_TXT {
+            return Vec::new();
+        }
+        d2_data::txt::TxtTable::parse("sounds.txt", src)
+            .and_then(|t| d2_data::sounds::sound_paths(&t))
+            .unwrap_or_default()
     }
     fn write(&self, canon: &str, src: &[u8]) -> Result<Written, Failure> {
         Ok(copy(canon, src))
@@ -208,6 +257,31 @@ impl Kind for PalShift {
     }
 }
 
+/// `data/local/Color.txt`, the green-blood switch: a byte-for-byte copy;
+/// the check is byte equality (C-COPY).
+pub struct ColorTxt;
+
+impl Kind for ColorTxt {
+    fn name(&self) -> &'static str {
+        "colortxt"
+    }
+    fn native_version(&self) -> u32 {
+        1
+    }
+    fn phase(&self) -> u8 {
+        1
+    }
+    fn claims(&self, canon: &str) -> bool {
+        canon == d2_native::source::COLOR_TXT
+    }
+    fn write(&self, canon: &str, src: &[u8]) -> Result<Written, Failure> {
+        Ok(copy(canon, src))
+    }
+    fn check(&self, canon: &str, src: &[u8], native: &[NativeData]) -> Result<(), Failure> {
+        check_copy("C-COPY", canon, src, native)
+    }
+}
+
 /// The one native file of a verbatim kind: `canon` with the source bytes.
 fn copy(canon: &str, src: &[u8]) -> Written {
     Written {
@@ -256,7 +330,7 @@ mod tests {
     #[test]
     fn never_loaded_paths_are_canonical_and_claimed() {
         let kinds = builtin();
-        assert_eq!(NEVER_LOADED.len(), 9);
+        assert_eq!(NEVER_LOADED.len(), 11);
         for (p, _) in NEVER_LOADED {
             assert_eq!(crate::names::canonical(p).as_deref(), Some(*p));
             assert!(
@@ -266,6 +340,56 @@ mod tests {
         }
         assert!(never_loaded("data/global/tiles/act1/court/court.dt1").is_some());
         assert!(never_loaded("data/local/font/latin/font8.tbl").is_none());
+        assert!(never_loaded("data/global/sfx/cursor/curindx.wav").is_some());
+        assert!(never_loaded("data/global/sfx/cursor/wavindx.wav").is_some());
+        assert!(never_loaded("data/global/sfx/cursor/button.wav").is_none());
+    }
+
+    #[test]
+    fn the_server_kinds_are_builtin_kinds() {
+        let names: Vec<&str> = server().iter().map(|k| k.name()).collect();
+        assert_eq!(names.len(), SERVER_KINDS.len(), "{names:?}");
+        for k in SERVER_KINDS {
+            assert!(names.contains(&k), "{k} is not a builtin kind");
+        }
+        assert!(!names.contains(&"dcc") && !names.contains(&"wav"));
+    }
+
+    #[test]
+    fn sounds_txt_references_the_files_its_rows_name() {
+        let kinds = builtin();
+        let k = kinds.iter().find(|k| k.claims(SOUNDS_TXT)).unwrap();
+        assert_eq!(k.name(), "excel");
+        assert!(k.has_references());
+        let mut lines: Vec<String> = (0..4660)
+            .map(|i| match i {
+                0 => "none\t0\t".to_owned(),
+                1 => "cursor_pass\t1\tcursor\\pass.wav".to_owned(),
+                3000 => "akara_hi\t3000\tnpc\\akara\\hi.wav".to_owned(),
+                4657 => "town1\t4657\tact1\\town1.wav".to_owned(),
+                _ => format!("r{i}\t{i}\t"),
+            })
+            .collect();
+        lines.insert(0, "Sound\tIndex\tFileName".to_owned());
+        let src = lines.join("\r\n") + "\r\n";
+        let refs: Vec<String> = k
+            .references(SOUNDS_TXT, src.as_bytes())
+            .iter()
+            .filter_map(|r| crate::names::canonical(r))
+            .collect();
+        assert_eq!(
+            refs,
+            [
+                "data/global/sfx/cursor/pass.wav",
+                "data/local/sfx/npc/akara/hi.wav",
+                "data/global/music/act1/town1.wav",
+            ]
+        );
+        // Other tables name no files; an unreadable table names none.
+        assert!(k
+            .references("data/global/excel/weapons.txt", src.as_bytes())
+            .is_empty());
+        assert!(k.references(SOUNDS_TXT, b"").is_empty());
     }
 
     #[test]
@@ -321,5 +445,23 @@ mod tests {
         ] {
             assert!(kinds.iter().all(|k| !k.claims(other)), "{other}");
         }
+    }
+
+    #[test]
+    fn color_txt_is_a_verbatim_copy() {
+        let kinds = builtin();
+        let p = "data/local/color.txt";
+        let claim: Vec<_> = kinds.iter().filter(|k| k.claims(p)).collect();
+        assert_eq!(claim.len(), 1);
+        let k = claim[0];
+        assert_eq!(k.name(), "colortxt");
+        assert!(!k.claims("data/local/other.txt"));
+        let w = k.write(p, b"1").unwrap();
+        assert_eq!(w.files.len(), 1);
+        assert_eq!(w.files[0].name, p);
+        k.check(p, b"1", &w.files).unwrap();
+        let mut bad = w.files.clone();
+        bad[0].bytes[0] = b'0';
+        assert_eq!(k.check(p, b"1", &bad).unwrap_err().check, "C-COPY");
     }
 }

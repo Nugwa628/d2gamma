@@ -451,6 +451,25 @@ impl<'a, H: LifecycleHooks, R: NpcRest + QuestRest + PlayerQuestsRef> NpcWorld
     fn player_name(&self, player: UnitId) -> Vec<u8> {
         self.rest.player_name(player)
     }
+    fn data_act_travel(&mut self, player: UnitId, npc: u16, action: u32) -> bool {
+        let Some(acts) = self.econ.hooks.rules().acts() else {
+            return false;
+        };
+        let level = self
+            .econ
+            .game
+            .lists
+            .unit(player)
+            .and_then(|u| u.room())
+            .and_then(|r| self.econ.hooks.room_level(self.econ.game, r))
+            .unwrap_or(0);
+        let route = acts.travel(level, npc, action).cloned();
+        if let Some(route) = route {
+            self.act_change(player, route.to, route.tile);
+            return true;
+        }
+        false
+    }
     fn act_change(&mut self, player: UnitId, level: u32, arg: u32) {
         self.rest.act_change(player, level, arg);
         self.econ.hooks.request_act_change(player, level, arg);

@@ -3,7 +3,8 @@
 //! reader ([`d2_service::config`]).
 //!
 //! The file has one `key = value` per line. Blank lines and lines that
-//! start with `#` are skipped. Every key is optional except `game_data`.
+//! start with `#` are skipped. Every key is optional except one of
+//! `diablo2` and `game_data`.
 //! A relative path is taken from the config file's folder, so a server
 //! folder can be moved as a whole.
 //!
@@ -12,7 +13,9 @@
 //! listen      = 0.0.0.0:6112        # players and game servers
 //! nodes       = data/nodes.toml     # the official game servers
 //! max_players = 8
-//! game_data   = C:/Games/D2RUST/game
+//! diablo2     = ~/d2rust-server/diablo2  # your Diablo II (its MPQs): the game data is made from it
+//! base_data   = ~/d2rust-server/base     # where it is made, shared by every server on the machine
+//! game_data   = game                 # a mod's own layer (mods/), or an older converted copy
 //! characters  = characters
 //! logs        = logs
 //! grace_s     = 30
@@ -26,6 +29,13 @@
 //! backups     = backups
 //! backup_keep = 14
 //! ```
+//!
+//! The game data: `diablo2` names the owner's Diablo II (an install or a
+//! folder of its MPQs), from which the machine's shared base is made once
+//! per engine format ([`d2_base_data`]); `game_data` then holds only a mod's
+//! own layer, if any. Without `diablo2`, a `game_data` that is an install or
+//! a converted folder of its own is read as before, else Diablo II is looked
+//! for on the machine.
 //!
 //! `dev = test` is for test servers only (the MP test tool). With it, and
 //! only with it, `bundle_dir = PATH` and `test_nodes = ID,ID` make the
@@ -50,7 +60,10 @@
 //! `records = game` is for a mod realm whose game saves its characters in
 //! a format of its own: the realm stores them as the game server sends
 //! them, takes their summaries from the game server and skips its `.d2s`
-//! checks (`d2_accounts::RecordFormat`; default `d2s`).
+//! checks (`d2_accounts::RecordFormat`; default `d2s`). It runs no item
+//! registry either (the registry reads `.d2s` records only, so it would
+//! take every item for an invented one): `item_registry` is `off` there,
+//! and `flag` or `refuse` is refused.
 //!
 //! `journals = PATH` is where the games' journals are kept
 //! ([`crate::realm::journals`]; default `data/journals`).
@@ -148,6 +161,10 @@ pub struct RealmConfig {
     /// The game folder the server reads its game data from. Nothing
     /// from it is ever sent to clients.
     pub game_data: PathBuf,
+    /// `diablo2`: the Diablo II the shared base is converted from.
+    pub diablo2: Option<PathBuf>,
+    /// `base_data`: the shared base's folder, when not the default.
+    pub base_data: Option<PathBuf>,
     /// The character folder.
     pub characters: PathBuf,
     /// The log folder.
@@ -167,6 +184,10 @@ pub struct RealmConfig {
     pub folder: PathBuf,
     /// The mod realm this main server runs.
     pub game: String,
+    /// Optional mod-kit version; absent preserves legacy handshakes and listings.
+    pub mod_version: Option<String>,
+    /// Optional deployed mod.toml; binds identity, economy namespace and maker policy.
+    pub mod_manifest: Option<PathBuf>,
     /// The realm's name in the chat's Mod tab.
     pub mod_label: String,
     /// The name clients see in the server's welcome.
@@ -207,7 +228,20 @@ pub struct RealmConfig {
 impl RealmConfig {
     /// Reads and parses the config file at `path`.
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
-        Self::parse(&config::read(path)?, config::folder(path))
+        let mut cfg = Self::parse(&config::read(path)?, config::folder(path))?;
+        if let Some(manifest_path) = cfg.mod_manifest.clone() {
+            let text = config::read(&manifest_path)?;
+            let manifest = d2_modkit::Manifest::parse(&text).map_err(|e| ConfigError::Read {
+                path: manifest_path.clone(),
+                reason: e.to_string(),
+            })?;
+            cfg.apply_mod(&manifest)
+                .map_err(|reason| ConfigError::Read {
+                    path: manifest_path.clone(),
+                    reason,
+                })?;
+        }
+        Ok(cfg)
     }
 
     /// Parses config text; relative paths are taken from `base`.
@@ -215,6 +249,8 @@ impl RealmConfig {
         let mut listen = None;
         let mut max_players = None;
         let mut game_data = None;
+        let mut diablo2 = None;
+        let mut base_data = None;
         let mut characters = None;
         let mut logs = None;
         let mut grace_s = None;
@@ -231,6 +267,8 @@ impl RealmConfig {
         let mut save_interval_s = None;
         let mut server_name = None;
         let mut game = None;
+        let mut mod_version = None;
+        let mut mod_manifest = None;
         let mut mod_label = None;
         let mut identity = None;
         let mut max_sessions = None;
@@ -244,6 +282,7 @@ impl RealmConfig {
         let mut test_only = None;
         let mut save_checks = None;
         let mut item_registry = None;
+        let mut item_registry_line = 0;
         let mut journals = None;
         let mut check_modes: Vec<(String, d2_save_checks::Mode)> = Vec::new();
         let mut ladder = None;
@@ -254,6 +293,8 @@ impl RealmConfig {
                 "listen" => set_once(&mut listen, e.parse::<SocketAddr>()?, &e)?,
                 "max_players" => set_once(&mut max_players, e.number(1..=MAX_PLAYERS_LIMIT)?, &e)?,
                 "game_data" => set_once(&mut game_data, e.path(base), &e)?,
+                "diablo2" => set_once(&mut diablo2, e.home_path(base), &e)?,
+                "base_data" => set_once(&mut base_data, e.home_path(base), &e)?,
                 "characters" => set_once(&mut characters, e.path(base), &e)?,
                 "logs" => set_once(&mut logs, e.path(base), &e)?,
                 "grace_s" => set_once(&mut grace_s, e.parse::<u32>()?, &e)?,
@@ -298,9 +339,22 @@ impl RealmConfig {
                 }
                 "game" => {
                     if !valid_game_id(e.value) {
-                        return Err(e.bad("1-15 of a-z, 0-9 and -"));
+                        return Err(e.bad("1-40 of a-z, 0-9 and -"));
                     }
                     set_once(&mut game, e.value.to_owned(), &e)?;
+                }
+                "mod_manifest" => set_once(&mut mod_manifest, e.path(base), &e)?,
+                "mod_version" => {
+                    let identity = d2_net::mod_identity::ModIdentity {
+                        id: "test-mod".into(),
+                        version: e.value.into(),
+                    };
+                    if !identity.valid() {
+                        return Err(
+                            e.bad("1-64 version characters: letters, digits, dots, + and -")
+                        );
+                    }
+                    set_once(&mut mod_version, e.value.to_owned(), &e)?;
                 }
                 "mod_label" => {
                     if e.value.is_empty()
@@ -362,6 +416,7 @@ impl RealmConfig {
                     let m = RegistryMode::parse(e.value)
                         .ok_or_else(|| e.bad("`flag`, `refuse` or `off`"))?;
                     set_once(&mut item_registry, m, &e)?;
+                    item_registry_line = e.line;
                 }
                 k if k.starts_with("check.") => {
                     let name = &k["check.".len()..];
@@ -397,11 +452,30 @@ impl RealmConfig {
                 return Err(bad("`bundle_dir` and `test_nodes` go together"));
             }
         }
+        let registry = match (accounts.records.is_d2s(), item_registry) {
+            (true, m) => m.unwrap_or_default(),
+            (false, None | Some(RegistryMode::Off)) => RegistryMode::Off,
+            (false, Some(_)) => {
+                return Err(ConfigError::Value {
+                    line: item_registry_line,
+                    key: "item_registry".into(),
+                    reason: "a realm of the game's own records (`records = game`) runs no \
+                             item registry: `off`"
+                        .into(),
+                })
+            }
+        };
         let data = accounts.data.clone();
         Ok(RealmConfig {
             listen: listen.unwrap_or_else(|| DEFAULT_LISTEN.parse().expect("a valid address")),
             max_players: max_players.unwrap_or(DEFAULT_MAX_PLAYERS),
-            game_data: game_data.ok_or(ConfigError::NoGameData)?,
+            game_data: match (game_data, &diablo2) {
+                (Some(g), _) => g,
+                (None, Some(_)) => base.join("game"),
+                (None, None) => return Err(ConfigError::NoGameData),
+            },
+            diablo2,
+            base_data,
             characters: characters.unwrap_or_else(|| base.join("characters")),
             logs: logs.unwrap_or_else(|| base.join("logs")),
             grace: Duration::from_secs(grace_s.unwrap_or(DEFAULT_GRACE_S).into()),
@@ -413,6 +487,8 @@ impl RealmConfig {
             ),
             folder: base.to_path_buf(),
             game: game.unwrap_or_else(|| DEFAULT_GAME.to_owned()),
+            mod_version,
+            mod_manifest,
             mod_label: mod_label.unwrap_or_else(|| DEFAULT_MOD_LABEL.to_owned()),
             server_name: server_name.unwrap_or_else(|| DEFAULT_SERVER_NAME.to_owned()),
             identity: identity.unwrap_or_else(|| base.join("identity")),
@@ -427,7 +503,7 @@ impl RealmConfig {
             guard: GuardConfig {
                 checks: save_checks.unwrap_or_default(),
                 check_modes,
-                registry: item_registry.unwrap_or_default(),
+                registry,
             },
             journals: journals.unwrap_or_else(|| data.join("journals")),
             market,
@@ -446,6 +522,43 @@ impl RealmConfig {
 }
 
 impl RealmConfig {
+    /// Binds every existing per-realm service to the full mod id, never its version.
+    pub fn apply_mod(&mut self, manifest: &d2_modkit::Manifest) -> Result<(), String> {
+        if manifest.kind != d2_modkit::Kind::Full {
+            return Err("mod_manifest must name a full mod".into());
+        }
+        match d2_modkit::api::check_api_now(manifest.api) {
+            d2_modkit::ApiCheck::Ok => {}
+            d2_modkit::ApiCheck::NeedsUpdate(message) | d2_modkit::ApiCheck::TooNew(message) => {
+                return Err(message)
+            }
+        }
+        if self.game != DEFAULT_GAME && self.game != manifest.id {
+            return Err(format!(
+                "realm game {} differs from mod {}",
+                self.game, manifest.id
+            ));
+        }
+        let version = manifest.version.to_string();
+        if self.mod_version.as_ref().is_some_and(|v| v != &version) {
+            return Err("mod_version differs from mod_manifest".into());
+        }
+        self.game = manifest.id.clone();
+        self.mod_version = Some(version);
+        self.mod_label = manifest.name.clone();
+        self.market.economy.market &= manifest.market;
+        self.ladder.on &= manifest.ladder;
+        Ok(())
+    }
+
+    pub fn mod_identity(&self) -> Option<d2_net::mod_identity::ModIdentity> {
+        self.mod_version
+            .as_ref()
+            .map(|version| d2_net::mod_identity::ModIdentity {
+                id: self.game.clone(),
+                version: version.clone(),
+            })
+    }
     /// Checks that a game server (`--add-node --realm`) is for this
     /// main server's mod realm.
     pub fn check_game(&self, realm: &str) -> Result<(), String> {
@@ -474,12 +587,133 @@ mod tests {
         RealmConfig::parse(&format!("game_data = game\n{text}"), Path::new("/srv"))
     }
 
+    fn kit_manifest() -> d2_modkit::Manifest {
+        d2_modkit::Manifest::parse("id='ghost-world'\nname='Ghost World'\nversion='1.0.0'\nauthor='Nugwa'\ndescription='Test'\napi=1\nkind='full'").unwrap()
+    }
+
+    #[test]
+    fn kit_mod_stash_and_market_reject_cross_namespace_requests_for_same_account() {
+        use d2_economy::{
+            AccountId, Economy, EconomyConfig, EconomyKey, Goods, MarketQuery, Owner, Req,
+        };
+        let config = EconomyConfig {
+            market: true,
+            ..EconomyConfig::default()
+        };
+        let mut ghost = Economy::in_memory(&"g".repeat(40), config.clone()).unwrap();
+        let ember = Economy::in_memory("ember-world", config).unwrap();
+        let a = Owner::new(7, EconomyKey::new("g".repeat(40)));
+        let b = Owner::new(7, EconomyKey::new("ember-world"));
+        ghost
+            .seed(&a, &Req::account(AccountId(7), 1), &Goods::Gold(123), 0)
+            .unwrap();
+        assert_eq!(ghost.stash_gold(&a).unwrap(), 123);
+        assert_eq!(ember.stash_gold(&b).unwrap(), 0);
+        assert!(ghost.stash_gold(&b).is_err());
+        assert!(ember.stash_gold(&a).is_err());
+        assert!(ghost
+            .search(&b.economy, Some(a.account), &MarketQuery::default(), 0)
+            .is_err());
+        assert!(ember
+            .search(&a.economy, Some(b.account), &MarketQuery::default(), 0)
+            .is_err());
+    }
+
+    #[test]
+    fn mod_policy_uses_stable_id_namespace_and_can_only_disable_services() {
+        let mut cfg = parse("market = on\nladder = on").unwrap();
+        let mut manifest = kit_manifest();
+        manifest.market = false;
+        manifest.ladder = false;
+        cfg.apply_mod(&manifest).unwrap();
+        assert_eq!(cfg.game, "ghost-world");
+        assert_eq!(cfg.mod_identity().unwrap().version, "1.0.0");
+        assert!(!cfg.market.economy.market && !cfg.ladder.on);
+        let path = crate::realm::guard::realm_db(&cfg.accounts.data, &cfg.game);
+        manifest.version = d2_modkit::Version::parse("2.0.0").unwrap();
+        let mut upgraded = parse("").unwrap();
+        upgraded.apply_mod(&manifest).unwrap();
+        assert_eq!(
+            path,
+            crate::realm::guard::realm_db(&upgraded.accounts.data, &upgraded.game)
+        );
+        assert_ne!(
+            path,
+            crate::realm::guard::realm_db(&cfg.accounts.data, DEFAULT_GAME)
+        );
+        let mut disabled_by_owner = parse("").unwrap();
+        manifest.market = true;
+        manifest.ladder = true;
+        disabled_by_owner.apply_mod(&manifest).unwrap();
+        assert!(!disabled_by_owner.market.economy.market && !disabled_by_owner.ladder.on);
+        assert!(parse("game = another-mod")
+            .unwrap()
+            .apply_mod(&manifest)
+            .is_err());
+        assert!(parse("mod_version = 9.0.0")
+            .unwrap()
+            .apply_mod(&manifest)
+            .is_err());
+    }
+
+    #[test]
+    fn deployed_manifest_load_enforces_policy_and_reports_bad_files() {
+        let dir = std::env::temp_dir().join(format!("realm-kit-policy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("mod.toml"), kit_manifest().to_toml()).unwrap();
+        let path = dir.join("realm.cfg");
+        std::fs::write(&path, "game_data = game\nmod_manifest = mod.toml").unwrap();
+        let cfg = RealmConfig::load(&path).unwrap();
+        assert_eq!(cfg.game, "ghost-world");
+        assert_eq!(cfg.mod_version.as_deref(), Some("1.0.0"));
+        std::fs::write(dir.join("mod.toml"), "broken").unwrap();
+        assert!(RealmConfig::load(&path).is_err());
+        std::fs::remove_file(dir.join("mod.toml")).unwrap();
+        assert!(RealmConfig::load(&path).is_err());
+    }
+
+    #[test]
+    fn mod_version_is_optional_and_preserves_the_plain_realm() {
+        assert_eq!(parse("").unwrap().mod_identity(), None);
+        let c = parse("game = ghost\nmod_version = 1.2.3\n").unwrap();
+        assert_eq!(
+            c.mod_identity().unwrap(),
+            d2_net::mod_identity::ModIdentity {
+                id: "ghost".into(),
+                version: "1.2.3".into()
+            }
+        );
+        assert!(parse("mod_version = bad version\n").is_err());
+        assert!(parse("mod_version = 1\nmod_version = 2\n").is_err());
+    }
+
     #[test]
     fn the_save_path_keys_default_to_flag() {
         let c = parse("").unwrap();
         assert_eq!(c.guard, GuardConfig::default());
         assert_eq!(c.guard.checks, ChecksMode::Flag);
         assert_eq!(c.guard.registry, RegistryMode::Flag);
+    }
+
+    /// A realm of the game's own records runs no item registry: it can't
+    /// read the records the registry tracks items in.
+    #[test]
+    fn a_game_records_realm_runs_no_item_registry() {
+        let c = parse("records = game\n").unwrap();
+        assert_eq!(c.guard.registry, RegistryMode::Off);
+        let c = parse("records = game\nitem_registry = off\n").unwrap();
+        assert_eq!(c.guard.registry, RegistryMode::Off);
+        for mode in ["flag", "refuse"] {
+            let e = parse(&format!("records = game\nitem_registry = {mode}\n")).unwrap_err();
+            assert!(
+                matches!(&e, ConfigError::Value { line: 3, key, .. } if key == "item_registry"),
+                "{e:?}"
+            );
+        }
+        assert_eq!(
+            parse("records = d2s\n").unwrap().guard.registry,
+            RegistryMode::Flag
+        );
     }
 
     #[test]
@@ -510,6 +744,26 @@ mod tests {
     }
 
     #[test]
+    fn diablo2_or_game_data_names_the_game_data() {
+        let c =
+            RealmConfig::parse("diablo2 = ~/d2rust-server/diablo2\n", Path::new("/srv")).unwrap();
+        assert_eq!(c.game_data, Path::new("/srv/game"));
+        assert!(c.diablo2.is_some());
+        assert_eq!(c.base_data, None);
+        let c =
+            RealmConfig::parse("game_data = mods\nbase_data = /b\n", Path::new("/srv")).unwrap();
+        assert_eq!(c.game_data, Path::new("/srv/mods"));
+        assert_eq!(
+            (c.diablo2, c.base_data.as_deref()),
+            (None, Some(Path::new("/b")))
+        );
+        assert_eq!(
+            RealmConfig::parse("listen = 0.0.0.0:6112\n", Path::new("/srv")).unwrap_err(),
+            ConfigError::NoGameData
+        );
+    }
+
+    #[test]
     fn the_game_keys_default_to_the_engines_realm() {
         let c = parse("").unwrap();
         assert_eq!(c.game, "d2rust");
@@ -521,12 +775,16 @@ mod tests {
         let c = parse("game = mymod\nmod_label = My Mod\n").unwrap();
         assert_eq!(c.game, "mymod");
         assert_eq!(c.mod_label, "My Mod");
+        for len in [16, 40] {
+            let id = "x".repeat(len);
+            assert_eq!(parse(&format!("game = {id}")).unwrap().game, id);
+        }
         for (bad, line) in [
             ("game = ", 2),
             ("game = MYMOD", 2),
             ("game = a/b", 2),
             ("game = ../x", 2),
-            ("game = abcdefghijklmnop", 2),
+            ("game = xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 2),
             ("game = mymod\ngame = d2rust", 3),
             ("mod_label = \u{7}", 2),
             ("mod_label = mymod\nmod_label = x", 3),
@@ -536,6 +794,9 @@ mod tests {
         }
         let long = format!("mod_label = {}", "x".repeat(33));
         assert!(parse(&long).is_err());
+        let node = format!("test_nodes = {}", "x".repeat(16));
+        let error = parse(&node).unwrap_err().to_string();
+        assert!(error.contains("node ids of 1-15"), "{error}");
     }
 
     #[test]

@@ -34,6 +34,8 @@ mod act3_tests;
 #[cfg(test)]
 mod gaps_tests;
 #[cfg(test)]
+mod mod_npc_text_tests;
+#[cfg(test)]
 mod mod_object_operate_tests;
 #[cfg(test)]
 mod mod_quest_tests;
@@ -204,20 +206,40 @@ impl QuestFlags {
 
 /// A player's quest state (in the player data).
 /// Owned by the player unit (provider: the units group).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayerQuests {
     /// Flag record per difficulty.
-    pub flags: [QuestFlags; 3],
+    pub flags: Vec<QuestFlags>,
     /// NPC intro record per difficulty: NPC class ids introduced (the
     /// save's field B).
-    pub intro: [BTreeSet<u16>; 3],
+    pub intro: Vec<BTreeSet<u16>>,
     /// The first-talk bits per difficulty (the save's field A): set by
     /// [`PlayerQuests::hear`], tested by [`PlayerQuests::heard`]; bit by
     /// NPC class through [`d2_formats::d2s::npc_bit`].
-    pub first_talk: [[u8; 8]; 3],
+    pub first_talk: Vec<[u8; 8]>,
+    /// Last visited town by difficulty, persisted by the mod codec.
+    pub towns: Vec<u8>,
+}
+
+impl Default for PlayerQuests {
+    fn default() -> Self {
+        Self {
+            flags: vec![QuestFlags::default(); 3],
+            intro: vec![BTreeSet::new(); 3],
+            first_talk: vec![[0; 8]; 3],
+            towns: vec![0; 3],
+        }
+    }
 }
 
 impl PlayerQuests {
+    /// Allocate independent records for all difficulties of this game.
+    pub fn ensure_difficulties(&mut self, count: usize) {
+        self.flags.resize(count, QuestFlags::default());
+        self.intro.resize_with(count, BTreeSet::new);
+        self.first_talk.resize(count, [0; 8]);
+        self.towns.resize(count, 0);
+    }
     /// The first-talk bit of NPC `class` in difficulty `d`.
     pub fn heard(&self, d: usize, class: u16) -> bool {
         let n = d2_formats::d2s::npc_bit(i32::from(class));
@@ -1868,6 +1890,11 @@ impl QuestControl {
             ..EventArgs::default()
         };
         self.dispatch_list(w, event::NPC_ACTIVATE, args, true, Some(list));
+        // A mod game's NPC lines, after the quest records'.
+        let rules = w.rules().clone();
+        if let (Some(p), Some(class)) = (rules.npcs(), w.monster_class(npc)) {
+            p.chat_text(w, player, npc, class, list);
+        }
     }
 
     /// Item picked up (4) or dropped (5),
@@ -2295,7 +2322,11 @@ pub fn raise_progression<W: QuestWorld>(
 ) -> bool {
     match w.client_save_flags(player) {
         Some(f) => {
-            w.set_client_save_flags(player, progression(f, step, difficulty));
+            // Extended difficulty progress lives in independent mod records.
+            // The base status word has room only for the three base tiers.
+            if difficulty < 3 {
+                w.set_client_save_flags(player, progression(f, step, difficulty));
+            }
             true
         }
         None => false,
@@ -2323,7 +2354,7 @@ pub const INTRO_NPCS: [&[u16]; 5] = [
 pub fn set_intro_flags<W: QuestWorld>(w: &mut W, player: UnitId, act: u8) {
     let d = usize::from(w.difficulty());
     if let Some(q) = w.quests(player) {
-        for &n in INTRO_NPCS[usize::from(act)] {
+        for &n in INTRO_NPCS.get(usize::from(act)).copied().unwrap_or(&[]) {
             q.intro[d].insert(n);
         }
     }

@@ -1,0 +1,34 @@
+version = 1
+
+# monstats aip1, aip2, aip4 of the zombie1 row (Normal): 30, 10, 20. The other zombies have their own (40/15/25, 50/20/30,
+# 100/30/35, 60/25/40).
+[[ai]]
+index = 3
+name = "Zombie (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "shamble"
+
+# In reach: aip4 = 20% swing 1, else swing 2.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 20 }]
+
+[[ai.state.action]]
+kind = "attack"
+attack = 2
+when = [{ kind = "in_melee" }]
+
+# Nearer than aip2 = 10 and a aip1 = 30% draw: run at the target, twice as fast.
+[[ai.state.action]]
+kind = "move_to"
+run = true
+speed = 100
+when = [{ kind = "distance_below", value = 10 }, { kind = "random", percent = 30 }]
+
+# Otherwise wander a few steps.
+[[ai.state.action]]
+kind = "wander"
+radius = 3

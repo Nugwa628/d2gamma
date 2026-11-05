@@ -93,6 +93,8 @@ pub struct LiveData {
     pub waypoints: WaypointTables,
     /// drlg-data's level-type table views (`LevelTables::from_fixed`).
     pub levels: LevelTables,
+    /// Opt-in authored maps, shared with the client generator.
+    pub maps: d2_sim::drlg::maps::Maps,
     /// Every DS1 / DT1 the level types read, parsed.
     pub files: WorldFiles,
     /// The loaded and fixed-up sets and `AnimData.d2`: every other table
@@ -126,22 +128,70 @@ impl LiveData {
         // in with the game's source ([`GameSource`]), once those seams exist.
         let bins = d2_data::bin::load_from(archives.as_ref(), d2_data::bin::DEFAULT_LANGUAGE)
             .map_err(|e| BuildError::Tables(e.to_string()))?;
-        let anim = match archives.read_native(
-            &CanonicalPath::new(d2_formats::animdata::PATH)
-                .map_err(|e| BuildError::Tables(format!("{}: {e}", d2_formats::animdata::PATH)))?,
-        ) {
-            Some(Ok(NativeAsset::AnimData(a))) => a,
-            Some(Ok(_)) => return Err(BuildError::Tables("AnimData.d2: wrong kind".into())),
-            Some(Err(e)) => return Err(BuildError::Tables(format!("AnimData.d2: {e}"))),
-            None => return Err(BuildError::Tables("AnimData.d2: in no archive".into())),
-        };
+        let anim = super::appearance::load_animation_data(archives.as_ref())?;
         let expfield = load_expfield(&archives)?;
         let tables = GameTables::from_loaded(bins, anim)?;
-        let levels = LevelTables::from_fixed(&tables.fixed)?;
-        let files = load_world_files(&archives, &levels)?;
+        let mut levels = LevelTables::from_fixed(&tables.fixed)?;
+        let maps = archives.map_rules().map_err(BuildError::Tables)?;
+        if !maps.level.is_empty() {
+            maps.apply(&mut levels.drlg, &mut levels.preset)
+                .map_err(BuildError::Tables)?;
+        }
+        let mut files = load_world_files(&archives, &levels)?;
+        for l in &maps.level {
+            for tile in &l.tiles {
+                if !files.dt1.0.contains_key(tile.as_bytes()) {
+                    return Err(BuildError::Tables(format!(
+                        "files/levels.toml: level {}: missing or invalid DT1 {}",
+                        l.id, tile
+                    )));
+                }
+            }
+            if l.object
+                .iter()
+                .any(|o| usize::from(o.class) >= levels.drlg.object_subclass.len())
+                || l.spawn
+                    .iter()
+                    .any(|s| u32::from(s.monster) >= levels.preset.monstats_count)
+            {
+                return Err(BuildError::Tables(format!(
+                    "files/levels.toml: level {}: object/monster class outside effective tables",
+                    l.id
+                )));
+            }
+            for p in &l.preset {
+                if files.ds1.0.contains_key(p.path.as_bytes()) {
+                    continue;
+                }
+                let name = format!("data/global/tiles/{}", p.path);
+                let path =
+                    CanonicalPath::new(&name).map_err(|e| BuildError::Tables(e.to_string()))?;
+                let asset = archives
+                    .read_native(&path)
+                    .ok_or_else(|| BuildError::Tables(format!("{name}: missing")))?
+                    .map_err(BuildError::Tables)?;
+                let NativeAsset::Ds1(d) = asset else {
+                    return Err(BuildError::Tables(format!("{name}: not a DS1")));
+                };
+                files.ds1.0.insert(
+                    p.path.as_bytes().to_vec(),
+                    world_data::ds1_input(p.path.as_bytes(), &d)?,
+                );
+            }
+            // Reject malformed variants and placements before a game starts, regardless of its seed.
+            for path in &l.files {
+                let mut single = maps.clone();
+                single.level.retain(|row| row.id == l.id);
+                single.level[0].files = vec![path.clone()];
+                single
+                    .preview(l.id, 0, &files.ds1)
+                    .map_err(BuildError::Tables)?;
+            }
+        }
         Ok(LiveData {
             waypoints,
             levels,
+            maps,
             files,
             drops: Arc::new(drop_tables(&tables.fixed)?),
             picks: Arc::new(class_picks(&tables.fixed)?),
@@ -158,6 +208,12 @@ impl LiveData {
     /// types read. Two games run the same way only on data of the same
     /// hash; the link's version match and the journal's `Start` carry it.
     pub fn data_hash(&self) -> [u8; 32] {
+        if !self.maps.level.is_empty() {
+            return d2_data::data_hash::game_data_hash(
+                &self.tables.bins,
+                &(&self.tables.anim, &*self.expfield, &self.files, &self.maps),
+            );
+        }
         d2_data::data_hash::game_data_hash(
             &self.tables.bins,
             &(&self.tables.anim, &*self.expfield, &self.files),
@@ -280,27 +336,48 @@ impl LevelSource {
     /// Build fresh level-type state from the loaded files, using the same
     /// initialization seed for every act and each act's town level.
     pub fn live(d: &LiveData, init_seed: u32) -> Self {
+        Self::live_with_acts(d, init_seed, None)
+    }
+    pub fn live_with_acts(
+        d: &LiveData,
+        init_seed: u32,
+        acts: Option<&d2_sim::rules::acts::Acts>,
+    ) -> Self {
         let data = Arc::new(d.levels.drlg.clone());
-        let types = SharedTypes::new(WorldTypes::new(
-            data.clone(),
-            Maze::new(d.levels.maze.clone()),
-            d.levels.preset.clone(),
-            d.levels.outdoor.clone(),
-            Box::new(d.files.ds1.clone()),
-            Box::new(d.files.subs.clone()),
-        ));
+        let types = SharedTypes::new(
+            WorldTypes::new(
+                data.clone(),
+                Maze::new(d.levels.maze.clone()),
+                d.levels.preset.clone(),
+                d.levels.outdoor.clone(),
+                Box::new(d.files.ds1.clone()),
+                Box::new(d.files.subs.clone()),
+            )
+            .with_acts(acts.cloned())
+            .with_maps(d.maps.clone()),
+        );
         LevelSource {
             data,
             tiles: Box::new(d.files.dt1.clone()),
             shared: types.clone(),
             types: Box::new(types),
-            acts: vec![
-                (0, init_seed, 1),
-                (1, init_seed, ACT2_TOWN),
-                (2, init_seed, KURAST_DOCKS),
-                (4, init_seed, ACT5_TOWN),
-                (3, init_seed, PANDEMONIUM_FORTRESS),
-            ],
+            acts: acts
+                .map(|a| {
+                    a.rows()
+                        .iter()
+                        .enumerate()
+                        .map(|(i, a)| (i as u8, init_seed, a.town))
+                        .collect()
+                })
+                .unwrap_or_else(|| {
+                    vec![
+                        (0, init_seed, 1),
+                        (1, init_seed, ACT2_TOWN),
+                        (2, init_seed, KURAST_DOCKS),
+                        (4, init_seed, ACT5_TOWN),
+                        (3, init_seed, PANDEMONIUM_FORTRESS),
+                    ]
+                }),
         }
     }
 }

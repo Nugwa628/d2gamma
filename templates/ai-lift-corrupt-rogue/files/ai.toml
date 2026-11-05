@@ -1,0 +1,46 @@
+version = 1
+
+# monstats aip1..aip5 of the corruptrogue1 row (Normal): 60, 15, 75, 100, 20.
+# The body runs when the target is farther than 20 - 3 * difficulty; this graph holds Normal's 20.
+[[ai]]
+index = 10
+name = "CorruptRogue (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "stalk"
+
+# Farther than 20: run in, 3 steps at a time, aip4 = 100 percent faster.
+[[ai.state.action]]
+kind = "move_to"
+run = true
+steps = 3
+speed = 100
+when = [{ kind = "distance_above", value = 21 }]
+
+# In reach: aip3 = 75% swing, else stand aip2 = 15 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 75 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6
+when = [{ kind = "in_melee" }]
+
+# Else, 40% (the rest of aip1 = 60) of the thinks stand 15 frames; of the others aip5 = 20% run in and the rest walk.
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6
+when = [{ kind = "random", percent = 40 }]
+
+[[ai.state.action]]
+kind = "move_to"
+run = true
+steps = 3
+speed = 100
+when = [{ kind = "random", percent = 20 }]
+
+[[ai.state.action]]
+kind = "move_to"

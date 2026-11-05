@@ -224,7 +224,7 @@ where
             return;
         };
         std::mem::swap(&mut ctl.seed, seed);
-        let r = ctl.make_hire_list(class);
+        let r = ctl.make_hire_list_for(self.desk.econ.hooks.rules(), class);
         std::mem::swap(&mut ctl.seed, seed);
         if let Err(e) = r {
             self.desk.state.errors.push(InteractionError::Npc(e));

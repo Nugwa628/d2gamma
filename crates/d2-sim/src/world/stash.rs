@@ -35,12 +35,12 @@ pub const SOUND_IMPOSSIBLE: u16 = 19;
 
 /// Stats read and written (`itemstatcost`).
 pub mod stat {
-    /// Character level.
-    pub const LEVEL: u16 = 12;
     /// Carried gold.
-    pub const GOLD: u16 = 14;
+    pub use crate::stats::ids::GOLD;
     /// Gold in the stash.
-    pub const GOLDBANK: u16 = 15;
+    pub use crate::stats::ids::GOLDBANK;
+    /// Character level.
+    pub use crate::stats::ids::LEVEL;
 }
 
 /// S→C 0x77 TradeAction codes of the dispatch.

@@ -211,7 +211,10 @@ pub fn add_original_ui_with(
     let mut root = UiRoot::new(Box::new(NoPanelRules));
     original.install(&mut root)?;
     super::items::prepare_ui(app, &mut original);
-    let files = original.files();
+    let mut files = original.files();
+    let definitions =
+        crate::ui::data_panels::load(parts.source.as_ref()).map_err(OriginalUiError::ModUi)?;
+    crate::ui::data_panels::install(&mut root, &mut files, definitions)?;
     let mut ui = WorldViewUi::new(root, Box::new(NoStrings));
     ui.original = Some(original);
     ui.bindings = crate::ui::front_end::screens::controls::saved_bindings()

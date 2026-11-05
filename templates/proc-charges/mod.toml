@@ -1,0 +1,7 @@
+id = "proc-charges"
+name = "Proc Charges (template)"
+version = "0.1.0"
+author = "Nugwa"
+description = "Template: a melee proc opens a short reaction window; skills used inside it build charges that boost a skill."
+api = 1
+kind = "full"

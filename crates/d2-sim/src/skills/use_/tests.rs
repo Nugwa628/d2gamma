@@ -27,6 +27,7 @@ pub(crate) struct U {
     pub(crate) mode: u32,
     pub(crate) cursor: bool,
     pub(crate) endanim: i32,
+    pub(crate) committed: bool,
     pub(crate) target: Option<usize>,
     pub(crate) flags: u32,
     pub(crate) event_arg: i32,
@@ -63,6 +64,7 @@ impl U {
             mode: mode::NU,
             cursor: false,
             endanim: 0,
+            committed: false,
             target: None,
             flags: FLAG_TARGETABLE,
             event_arg: 0,
@@ -389,6 +391,9 @@ impl UseWorld for F {
     }
     fn cursor_item(&self, u: usize) -> bool {
         self.units[u].cursor
+    }
+    fn cast_committed(&self, u: usize) -> bool {
+        self.units[u].committed
     }
     fn endanim_expire(&self, u: usize) -> i32 {
         self.units[u].endanim
@@ -1782,3 +1787,26 @@ fn request_starts_mode_and_runs_start_in_the_same_tick() {
 }
 
 mod bodies;
+
+#[test]
+fn interrupt_gate_keeps_a_cast_past_its_point() {
+    let t = tables(
+        80,
+        &[(76, &|r: &mut Skills| {
+            r.srvdofunc = 76;
+            r.interrupt = true;
+        })],
+    );
+    let mut f = F::new();
+    let p = f.player(&[(1, 1), (76, 1)]);
+    let req = native(1, 1);
+    f.units[p].used = Some(native(76, 1));
+    f.units[p].mode = mode::A1;
+    // Before the point a new action replaces the cast; past it does not; death
+    // still comes.
+    assert!(interrupt_gate(&mut f, &t, p, mode::A1, &req));
+    f.units[p].committed = true;
+    assert!(!interrupt_gate(&mut f, &t, p, mode::A1, &req));
+    assert!(!interrupt_gate(&mut f, &t, p, mode::GH, &req), "a get-hit");
+    assert!(interrupt_gate(&mut f, &t, p, mode::DT, &req));
+}

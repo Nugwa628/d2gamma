@@ -98,6 +98,12 @@ pub trait TableFiles {
     fn string_edits(&self) -> Vec<crate::strings::StringEdit> {
         Vec::new()
     }
+    /// The data rules the game checks these tables under ([`load_from`]
+    /// loads them so): [`DataRules::Original`] unless the source belongs
+    /// to a mod game, which sets [`DataRules::Mod`] on it.
+    fn data_rules(&self) -> DataRules {
+        DataRules::Original
+    }
 }
 
 impl TableFiles for ArchiveSet {
@@ -287,9 +293,9 @@ impl DataRules {
     /// [`DataRules::Original`] pins it to: under [`DataRules::Mod`] the
     /// `experience` table has a row for every level the mod's classes
     /// reach (at least the 101 rows of the original), and a layer may add
-    /// rows to it.
+    /// rows to it. Mod `difficultylevels` may also grow to 255 rows.
     pub fn grows(self, name: &str) -> bool {
-        self == DataRules::Mod && name == "experience"
+        self == DataRules::Mod && matches!(name, "experience" | "difficultylevels")
     }
 
     /// The most rows table `name` may have, `None` when it has no limit
@@ -312,6 +318,7 @@ impl DataRules {
         match name {
             "states" if from_data => Some(65_535),
             "pettype" | "states" => Some(255),
+            "itemtypes" => Some(65_535),
             "itemstatcost" if from_data => Some(65_535),
             "itemstatcost" => Some(511),
             "skills" | "skilldesc" | "uniqueitems" | "sets" | "setitems" | "monstats"
@@ -388,9 +395,11 @@ pub fn load(set: &ArchiveSet, language: &str) -> Result<BinSet, LoadError> {
     load_from(set, language)
 }
 
-/// [`load`] over any [`TableFiles`] source, under D2RUST's own rules.
+/// [`load`] over any [`TableFiles`] source, under the source's data
+/// rules ([`TableFiles::data_rules`]; D2Gamma's own unless a mod game set
+/// its rules on the source).
 pub fn load_from(set: &dyn TableFiles, language: &str) -> Result<BinSet, LoadError> {
-    load_from_with(set, language, DataRules::Original)
+    load_from_with(set, language, set.data_rules())
 }
 
 /// [`load_from`] under the data `rules` of the game being built (a mod
@@ -624,6 +633,13 @@ pub fn post_load_check_with(
     };
     match name {
         "inventory" => exactly(32),
+        "difficultylevels" if rules == DataRules::Mod => {
+            if (1..=255).contains(&t.count) {
+                Ok(())
+            } else {
+                Err(check(name, "requires 1..255 rows"))
+            }
+        }
         "difficultylevels" => exactly(3),
         "arena" => exactly(1),
         "composit" => exactly(16),
@@ -837,6 +853,14 @@ mod tests {
             assert!(ok(&table("skills", 32_766, 1), &[], l));
             assert!(!ok(&table("skills", 32_767, 1), &[], l));
         }
+        for count in [1, 3, 4, 255] {
+            assert!(ok(&table("difficultylevels", count, 88), &[], data));
+        }
+        for count in [0, 256] {
+            assert!(!ok(&table("difficultylevels", count, 88), &[], data));
+        }
+        assert!(ok(&table("difficultylevels", 3, 88), &[], orig));
+        assert!(!ok(&table("difficultylevels", 4, 88), &[], orig));
         // Original is what post_load_check checks.
         assert_eq!(DataRules::default(), orig);
         assert!(post_load_check(&stats, &[], &s, true).is_err());

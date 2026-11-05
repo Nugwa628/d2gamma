@@ -234,9 +234,9 @@ pub fn parse_command(line: &str) -> Result<Command, String> {
         ["walklevel", n] => n
             .parse::<u32>()
             .ok()
-            .filter(|n| (1..=136).contains(n))
+            .filter(|n| (1..=255).contains(n))
             .map(Command::WalkLevel)
-            .ok_or_else(|| "walklevel: level must be 1..136".into()),
+            .ok_or_else(|| "walklevel: level must be 1..255".into()),
         ["move", x, y] => Ok(Command::Move(point(x, y)?)),
         ["press", b, x, y] => Ok(Command::Press(button(b)?, point(x, y)?)),
         ["release", b, x, y] => Ok(Command::Release(button(b)?, point(x, y)?)),
@@ -474,6 +474,8 @@ pub fn state<C: Clock + Send + 'static>(
             "npc_menu": npc,
             "topics": topics,
             "dialog_lines": dialog,
+            // The NPC menu's "Waiting for confirmation of transaction..." note is up.
+            "npc_waiting": o.map(|o| o.npc_waiting_note()),
             "waypoint_rows": waypoint,
             "belt": belt,
             "ground": ground,
@@ -516,7 +518,7 @@ pub fn map<C: Clock + Send + 'static>(server: &Mutex<ThreadLink<Link<C>>>) -> Re
                 .drlg
                 .with_act(act, &mut sim.game.lists, |d, svc| {
                     let mut levels = Vec::new();
-                    for id in 1..=136u32 {
+                    for id in 1..=255u32 {
                         let Some(li) = d.find_level(id) else { continue };
                         let lv = d.level(li);
                         let rooms: Vec<Value> = d
@@ -541,6 +543,7 @@ pub fn map<C: Clock + Send + 'static>(server: &Mutex<ThreadLink<Link<C>>>) -> Re
                                     "near": room.near().map(|n| n.iter().map(|x| x.0).collect::<Vec<_>>()),
                                     "warps": room.warp_links.iter().map(|w| json!({
                                         "to": w.target.0, "on": w.enabled, "row": w.lvlwarp_row,
+                                        "class": svc.data.warps.get(w.lvlwarp_row).map(|r| r.id),
                                     })).collect::<Vec<_>>(),
                                     "level": id,
                                 })

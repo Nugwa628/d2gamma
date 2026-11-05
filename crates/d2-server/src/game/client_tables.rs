@@ -398,10 +398,10 @@ pub fn client_unit_rows(archives: &dyn TableFiles) -> Result<UnitRows, BuildErro
         })
         .collect();
     let difficulty: Vec<Difficultylevels> = decode_all(table("difficultylevels")?).map_err(err)?;
-    let mut monster_skill_bonus = [0i32; 3];
-    for (b, d) in monster_skill_bonus.iter_mut().zip(&difficulty) {
-        *b = d.monsterskillbonus as i32;
-    }
+    let monster_skill_bonus = difficulty
+        .iter()
+        .map(|d| d.monsterskillbonus as i32)
+        .collect();
     let isc: Vec<Itemstatcost> = decode_all(table("itemstatcost")?).map_err(err)?;
     let stats = isc
         .iter()
@@ -718,15 +718,7 @@ pub fn client_monster_anims_with<A: MonsterAppearance>(
     rows: &mut UnitRows,
     load_appearance: impl FnOnce() -> Result<A, BuildError>,
 ) -> Result<(), BuildError> {
-    let anim = match archives.read_native(
-        &CanonicalPath::new(d2_formats::animdata::PATH)
-            .map_err(|e| BuildError::Tables(format!("{}: {e}", d2_formats::animdata::PATH)))?,
-    ) {
-        Some(Ok(NativeAsset::AnimData(a))) => a,
-        Some(Ok(_)) => return Err(BuildError::Tables("AnimData.d2: wrong kind".into())),
-        Some(Err(e)) => return Err(BuildError::Tables(format!("AnimData.d2: {e}"))),
-        None => return Err(BuildError::Tables("AnimData.d2: in no archive".into())),
-    };
+    let anim = super::appearance::load_animation_data(archives)?;
     let bins = d2_data::bin::load_from(archives, d2_data::bin::DEFAULT_LANGUAGE)
         .map_err(|e| BuildError::Tables(e.to_string()))?;
     let tables = GameTables::from_loaded(bins, anim.clone())?;

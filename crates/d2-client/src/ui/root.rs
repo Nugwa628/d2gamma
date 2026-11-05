@@ -5,8 +5,8 @@
 use super::draw::UiDrawSink;
 use super::geom::{Point, Rect};
 use super::panel::{
-    ClientIntent, Panel, PanelAction, PanelId, PanelTick, UiCtx, UiEvent, UiInput, UiResponse,
-    WidgetId,
+    ClientIntent, OutsideClose, Panel, PanelAction, PanelId, PanelTick, UiCtx, UiEvent, UiInput,
+    UiResponse, WidgetId,
 };
 use super::ui_ids::UiElement;
 use crate::bridge::link::ServerLink;
@@ -79,6 +79,9 @@ pub struct UiRoot {
     /// [`Self::take_chat_end`]: every UI path that sends it also ends the
     /// NPC interaction on the client.
     chat_end: bool,
+    /// The panels a press or key outside them closed
+    /// ([`Panel::outside_close`]), for [`Self::take_outside_closes`].
+    outside_closes: Vec<PanelId>,
     /// The panel actions the root does not carry out itself, oldest first
     /// ([`Self::take_requests`]).
     requests: Vec<PanelAction>,
@@ -95,6 +98,7 @@ impl UiRoot {
             cursor: None,
             outbox: Vec::new(),
             chat_end: false,
+            outside_closes: Vec::new(),
             requests: Vec::new(),
             keys: Vec::new(),
         }
@@ -236,12 +240,16 @@ impl UiRoot {
             .next()
     }
 
-    /// Whether an open panel that `covers` names has its rect over `p`,
+    /// Whether an open panel that `covers` names hides the world at `p`
+    /// (its rect is over `p` and [`Panel::covers_world_at`] says so),
     /// whatever lies above it.
     pub fn open_panel_at(&self, p: Point, covers: impl Fn(PanelId) -> bool) -> bool {
-        self.slots
-            .iter()
-            .any(|s| s.open && covers(s.panel.id()) && s.panel.rect().contains(p))
+        self.slots.iter().any(|s| {
+            s.open
+                && covers(s.panel.id())
+                && s.panel.rect().contains(p)
+                && s.panel.covers_world_at(p)
+        })
     }
 
     /// The clickable elements of the open panels ([`Panel::ui_elements`]),
@@ -282,7 +290,9 @@ impl UiRoot {
     /// every open panel. The first answer other than `Ignored` ends the
     /// walk; an intent is queued for [`Self::forward`]. A click inside an
     /// open UI-state panel's area is consumed by it: that is the panel's
-    /// answer.
+    /// answer. A press outside a panel that closes from outside
+    /// ([`Panel::outside_close`]), or a key, closes it first and then goes
+    /// on as if it had not been open ([`Self::take_outside_closes`]).
     pub fn dispatch(&mut self, e: UiEvent, ctx: &UiCtx) -> Routed {
         match e {
             UiEvent::CursorMoved(p) => self.cursor = Some(p),
@@ -291,6 +301,18 @@ impl UiRoot {
         }
         if matches!(e, UiEvent::CursorMoved(_) | UiEvent::CursorLeft) {
             super::ui_frame::set_pointer(self.cursor);
+        }
+        for s in self.slots.iter_mut().filter(|s| s.open) {
+            let closes = match (s.panel.outside_close(), e) {
+                (OutsideClose::Never, _) => false,
+                (_, UiEvent::Press { at, .. }) => !s.panel.rect().contains(at),
+                (OutsideClose::PressOrKey, UiEvent::Action(_) | UiEvent::Char(_)) => true,
+                _ => false,
+            };
+            if closes {
+                s.open = false;
+                self.outside_closes.push(s.panel.id());
+            }
         }
         let at = e.at();
         for i in (0..self.slots.len()).rev() {
@@ -408,6 +430,14 @@ impl UiRoot {
     pub fn queue_intent(&mut self, intent: ClientIntent) {
         self.chat_end |= intent.0.first() == Some(&0x30);
         self.outbox.push(intent);
+    }
+
+    /// The panels a press or key outside them closed since the last call
+    /// ([`Panel::outside_close`]), in order. The root marks them closed;
+    /// the owner of a UI state's flag clears it, or the next
+    /// [`Self::sync_states`] opens the panel again.
+    pub fn take_outside_closes(&mut self) -> Vec<PanelId> {
+        std::mem::take(&mut self.outside_closes)
     }
 
     /// Whether a C→S 0x30 was queued since the last call.

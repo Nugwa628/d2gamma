@@ -131,6 +131,23 @@ fn overlay_records(
     out
 }
 
+fn patched_text(data: &PatchData, name: &str, live: &crate::txt::TxtTable) -> crate::txt::TxtTable {
+    let Some(t) = data.table(name) else {
+        return live.clone();
+    };
+    // Keep original source line numbers when the effective cells are unchanged.
+    if t.header == live.header
+        && t.rows
+            .iter()
+            .map(|r| &r.cells)
+            .eq(live.records.iter().map(|r| &r.cells))
+    {
+        return live.clone();
+    }
+    crate::txt::TxtTable::parse(&t.rules.txt_name, &t.render())
+        .expect("patch cells are valid table text")
+}
+
 fn new_live(
     live: &BinSet,
     compiled: &CompiledSet,
@@ -213,8 +230,8 @@ fn new_live(
         code,
         code_reports,
         hitclass: live.hitclass.clone(),
-        sounds: live.sounds.clone(),
-        soundenviron: live.soundenviron.clone(),
+        sounds: patched_text(data, "sounds", &live.sounds),
+        soundenviron: patched_text(data, "soundenviron", &live.soundenviron),
     }
 }
 
@@ -249,6 +266,7 @@ pub fn compile_patched(base: &PatchData, patched: &PatchData, live: &BinSet) -> 
             }
         }
     };
+    findings.extend(super::check_references(base, patched));
     let before: BTreeSet<_> = diagnostics(base, &base_set, &live.strings)
         .into_keys()
         .collect();

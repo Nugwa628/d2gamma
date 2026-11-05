@@ -14,6 +14,7 @@ use d2_quic::{fingerprint, FramedStream, Identity, QuicConn, QuicServer};
 
 fn me() -> ClientInfo {
     ClientInfo {
+        mod_identity: None,
         protocol: 2,
         game: "d2rust".into(),
         build: "0.1.2.0".into(),
@@ -23,6 +24,7 @@ fn me() -> ClientInfo {
 
 fn info() -> ServerInfo {
     ServerInfo {
+        mod_identity: None,
         protocol: 2,
         game: "d2rust".into(),
         build: "0.1.2.0".into(),

@@ -519,6 +519,21 @@ fn assign_merc_sets_with_extra_values() {
     assert!(m.log.rejected.is_empty());
 }
 
+// 0x7F for a unit that is not a player (a hireling): its life percent goes
+// into the pet record (+0x1C); a player's (the party roster's) changes no pet.
+#[test]
+fn ally_party_info_sets_the_hirelings_life_percent() {
+    let mut m = Model::default();
+    m.hex(PET_SET);
+    m.hex("7f 00 2a 00 21 00 00 00 00 00");
+    assert_eq!(m.w.pets[0].f1c, 42);
+    m.hex("7f 01 05 00 21 00 00 00 00 00");
+    assert_eq!(m.w.pets[0].f1c, 42, "a player's update");
+    m.hex("7f 00 07 00 99 00 00 00 00 00");
+    assert_eq!(m.w.pets[0].f1c, 42, "another GUID");
+    assert!(m.log.rejected.is_empty());
+}
+
 #[test]
 fn remove_unit_keeps_the_local_hireling() {
     let mut m = Model::default();

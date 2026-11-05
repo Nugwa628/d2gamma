@@ -36,6 +36,12 @@ impl<X: Pending> EventHost for CombatView<'_, X> {
     fn has_state(&self, unit: UnitId, state: u16) -> bool {
         self.v.stats.has_state(unit, u32::from(state))
     }
+    fn say(&mut self, player: UnitId, text: &str) {
+        self.v.h.x.script_message(player, text);
+    }
+    fn ui_variable(&mut self, player: UnitId, name: &str, value: i32) {
+        self.v.h.x.script_ui_variable(player, name, value);
+    }
     fn seed(&mut self, unit: UnitId) -> Option<&mut Seed> {
         self.v.units.get(unit)?;
         Some(self.v.seed(unit))
@@ -154,6 +160,67 @@ impl<X: Pending> EventHost for CombatView<'_, X> {
         };
         self.v.h.assign_monster_skill(&mut sim, unit, skill, level);
         true
+    }
+    /// The type's units in the unit lists' order, by their path positions.
+    fn units_near(&self, unit: UnitId, ty: UnitType, range: i32) -> Vec<UnitId> {
+        let Some(level) = self.level(unit) else {
+            return Vec::new();
+        };
+        let (x, y) = self.v.h.path_position(unit);
+        let lists = &self.game.lists;
+        let mut found = Vec::new();
+        let mut next = lists.first_of_type(ty);
+        while let Some(u) = next {
+            next = lists.next_of_type(u);
+            if u == unit || self.level(u) != Some(level) {
+                continue;
+            }
+            let (ux, uy) = self.v.h.path_position(u);
+            if (ux - x).abs() <= range && (uy - y).abs() <= range {
+                found.push(u);
+            }
+        }
+        found
+    }
+    /// Queued on [`super::ActionHooks::mod_pickups`] for the inventory host.
+    fn pick_up(&mut self, player: UnitId, item: UnitId) -> bool {
+        let units = &self.game.lists;
+        let ok = units.unit(player).is_some_and(|e| e.ty == UnitType::Player)
+            && units.unit(item).is_some_and(|e| e.ty == UnitType::Item);
+        if ok {
+            self.v.h.mod_pickups.push((player, item));
+        }
+        ok
+    }
+    /// [`crate::world::waypoints::WaypointData::learn`] on the waypoint
+    /// view.
+    fn learn_waypoint(&mut self, player: UnitId, object: UnitId) -> bool {
+        use crate::world::waypoints::WaypointWorld;
+        let Some(data) = self.v.h.waypoint_init.clone() else {
+            return false;
+        };
+        let Some(guid) = self
+            .game
+            .lists
+            .unit(object)
+            .filter(|e| e.ty == UnitType::Object)
+            .map(|e| e.guid)
+        else {
+            return false;
+        };
+        let mut w = super::waypoints::WaypointView {
+            game: &mut *self.game,
+            v: super::View::of(
+                &mut *self.v.units,
+                &mut *self.v.stats,
+                self.v.data,
+                &mut *self.v.h,
+            ),
+        };
+        let Some((u, facts)) = w.object(guid) else {
+            return false;
+        };
+        data.learn(&mut w, u, &facts, player).unwrap_or(false)
     }
 }
 

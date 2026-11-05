@@ -39,17 +39,23 @@ const NO_BEVY: &[&str] = &[
     "d2-audit",
     "d2-host-control",
     "d2-limits",
+    "d2-base-data",
+    "d2-modkit",
+    "mod-studio",
+    "d2-item-text",
     "d2rust-audit",
 ];
 
 /// (crate, forbidden dependency) pairs: layering rules beyond Bevy.
 const FORBIDDEN: &[(&str, &str)] = &[
+    ("mod-studio", "d2-client"),
+    ("mod-studio", "d2-server"),
     // The sim does no I/O and knows nothing about transport or the client.
     ("d2-sim", "d2-net"),
     ("d2-sim", "d2-server"),
     ("d2-sim", "d2-client"),
     ("d2-sim", "d2-proto"),
-    // No ambient randomness in the sim (rule 6): only the seeded RNG.
+    // No ambient randomness in the sim (rule 5): only the seeded RNG.
     ("d2-sim", "rand"),
     ("d2-sim", "getrandom"),
     // The server never depends on the client.
@@ -76,6 +82,11 @@ const FORBIDDEN: &[(&str, &str)] = &[
     ("d2rust-node", "d2-accounts"),
     ("d2rust-node", "rusqlite"),
     ("d2rust-node", "argon2"),
+    // The shared base game data is made by both server programs: it holds
+    // no game, no database and no window (the programs bring their checks).
+    ("d2-base-data", "d2-client"),
+    ("d2-base-data", "d2-games"),
+    ("d2-base-data", "rusqlite"),
     ("d2rust-realm", "d2-client"),
     ("d2rust-realm", "d2-games"),
     // The multiplayer test tool's bots are headless: they speak the wire

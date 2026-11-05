@@ -1,0 +1,45 @@
+version = 1
+
+# monstats aip1..aip4 of the minion spawner rows (Normal): 100, 25, 100, 20 (aip5 = 25 is not read).
+# The body is a stationary summoner: while its target is within aip4 = 20 it casts skill 1 (the summon), waits aip3 = 100
+# frames, and stops for good after aip1 = 100 casts. It does not cast while aip2 = 25 of its minions (of the base classes
+# minion1 and suicideminion1) are alive near it. A graph cannot count a class of units or remember a total.
+[[ai]]
+index = 121
+name = "MinionSpawner (lifted, without the count caps)"
+target = "enemy"
+
+# Nothing to do until the target is within 20.
+[[ai.state]]
+name = "watch"
+
+[[ai.state.transition]]
+to = "summon"
+when = [{ kind = "distance_below", value = 20 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 1
+
+[[ai.state]]
+name = "summon"
+
+[[ai.state.transition]]
+to = "wait"
+when = [{ kind = "in_state_for", seconds = 0.1 }]
+
+[[ai.state.action]]
+kind = "use_skill"
+slot = 1
+
+[[ai.state]]
+name = "wait"
+
+# aip3 = 100 frames between the start of two casts; a cast takes about half of that, so wait the other half.
+[[ai.state.transition]]
+to = "summon"
+when = [{ kind = "in_state_for", seconds = 2 }, { kind = "distance_below", value = 20 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 1

@@ -11,6 +11,7 @@
 //! comes from `d2_data` typed records ([`SkillTables`]).
 
 pub mod calc;
+pub mod cast_point;
 pub mod levels;
 pub mod list;
 pub mod sequences;
@@ -20,7 +21,7 @@ pub mod use_;
 
 use crate::rng::Seed;
 use crate::units::UnitType;
-use d2_data::bin::BinSet;
+use d2_data::bin::{BinSet, DataRules};
 use d2_data::schema::CalcBuffer;
 use d2_data::tables::{decode_all, Missiles, Skilldesc, Skills, WrongTable};
 
@@ -166,6 +167,10 @@ pub struct SkillTables {
     pub level_cap: i32,
     /// `itemstatcost` record count (bound of the formula `stat`).
     pub stat_count: i32,
+    /// The data rules the tables were loaded under. Under
+    /// [`DataRules::Mod`] a class skill may have no skilldesc record
+    /// (see [`levels::bonus_level_of`]).
+    pub data_rules: DataRules,
 }
 
 /// A table the skills tables need is missing or malformed.
@@ -197,6 +202,7 @@ impl SkillTables {
             miss_code: code(CalcBuffer::MissCode, "misscode")?,
             level_cap,
             stat_count: i32::try_from(table("itemstatcost")?.count).unwrap_or(i32::MAX),
+            data_rules: set.rules,
         })
     }
 
@@ -225,6 +231,8 @@ mod calc_unit_tests;
 pub(crate) mod fake;
 #[cfg(test)]
 mod levels_gap_tests;
+#[cfg(test)]
+mod levels_mod_tests;
 #[cfg(test)]
 mod mutant_tests;
 #[cfg(test)]

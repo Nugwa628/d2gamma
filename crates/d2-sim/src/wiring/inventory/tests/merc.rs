@@ -106,3 +106,83 @@ fn swap_queues_old_item_and_merc() {
     assert_eq!(w.units.get(mu).unwrap().flags2 & 1, 1);
     assert!(w.game.lists.update_queue(room).contains(&mu));
 }
+
+/// 0x26 with the hireling flag (Shift held, 0x8000): the hireling drinks
+/// the belt potion. The `healthpot` list (stat 74) goes on her, not on the
+/// player, and the potion leaves the belt. Without the flag the player
+/// drinks it.
+#[test]
+fn a_shift_belt_potion_is_drunk_by_the_hireling() {
+    use crate::wiring::inventory::potion::STATE_HEALTHPOT;
+    let mut w = World::new();
+    let room = w.room;
+    let merc = add_merc(&mut w, room);
+    w.units.get_mut(w.player).unwrap().mode = 1;
+    let mu = w
+        .game
+        .lists
+        .find_unit(UnitType::Monster, merc.guid)
+        .unwrap();
+    w.set_stat(mu, 7, 100 << 8);
+    w.set_stat(mu, 6, 10 << 8);
+    let pu = w.player;
+    w.set_stat(pu, 7, 100 << 8);
+    w.set_stat(pu, 6, 10 << 8);
+    let feed = w.ground_item(HP1, 12, 11);
+    assert_eq!(w.handle(&pick(feed, 0)), Ok(0));
+    let own = w.ground_item(HP1, 12, 11);
+    assert_eq!(w.handle(&pick(own, 0)), Ok(0));
+    w.drain();
+    assert_eq!(w.handle(&msg(0x26, &[feed, 0x8000, 0])), Ok(0));
+    assert!(w.stats.unit_total(mu, 74, 0) > 0, "the hireling drinks");
+    assert!(w
+        .stats
+        .list_by_state_flags(mu, STATE_HEALTHPOT, 0)
+        .is_some());
+    assert_eq!(w.stats.unit_total(pu, 74, 0), 0, "not the player");
+    assert!(w.unit(feed).is_none(), "the potion is used up");
+    assert_eq!(w.handle(&msg(0x26, &[own, 0, 0])), Ok(0));
+    assert_eq!(
+        w.stats.unit_total(pu, 74, 0),
+        80,
+        "no flag: the player drinks"
+    );
+    assert_eq!(w.state.errors, Vec::new());
+}
+
+/// 0x61 with a healing potion on the cursor: the hireling drinks it, the
+/// potion leaves the player's cursor with S→C 0x42 to the player and is
+/// freed.
+#[test]
+fn a_potion_given_to_the_hireling_is_drunk_and_leaves_the_cursor() {
+    use crate::wiring::inventory::potion::STATE_HEALTHPOT;
+    let mut w = World::new();
+    let room = w.room;
+    let merc = add_merc(&mut w, room);
+    ready(&mut w);
+    let mu = w
+        .game
+        .lists
+        .find_unit(UnitType::Monster, merc.guid)
+        .unwrap();
+    w.set_stat(mu, 7, 100 << 8);
+    w.set_stat(mu, 6, 10 << 8);
+    // The player's room list holds the hireling's room (its own).
+    w.game.lists.room_mut(room).unwrap().adjacent.push(room);
+    let c = w.cursor_item(HP1);
+    w.rest.sent.clear();
+    let p = w.pguid();
+    let _ = w.desk(|d| crate::items::moves::handle(d, p, &msg(0x61, &[0])[..3]).unwrap());
+    assert!(
+        w.stats
+            .list_by_state_flags(mu, STATE_HEALTHPOT, 0)
+            .is_some(),
+        "she drinks"
+    );
+    assert_eq!(w.state.cursor_of(w.player), None);
+    assert!(w.unit(c).is_none(), "the potion is freed");
+    assert!(
+        w.rest.sent.iter().any(|(_, m)| m[0] == 0x42),
+        "the cursor clears on the client (0x42)"
+    );
+}

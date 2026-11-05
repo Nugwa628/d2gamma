@@ -8,7 +8,9 @@
 //! identity    = identity             # its certificate and key
 //! listen      = 0.0.0.0:6113         # players connect here; the link leaves from here
 //! public_addr = 203.0.113.20:6113    # what players are told, when not the address seen
-//! game_data   = /srv/d2rust/game     # required
+//! diablo2     = ~/d2rust-server/diablo2  # your Diablo II (its MPQs): the game data is made from it
+//! base_data   = ~/d2rust-server/base     # where it is made, shared by every server on the machine
+//! game_data   = game                 # a mod's own layer (mods/), or an older converted copy
 //! game        = d2rust                 # must match the binary's NodeGame and bundle
 //! max_games   = 16
 //! max_players = 8                    # per game
@@ -33,6 +35,13 @@
 //! -NonInteractive -ExecutionPolicy Bypass -File node-ctl.ps1`. Without it the game server
 //! shows an upgrade's lines but fetches nothing. `update_command = test`
 //! (with `dev = test` only) stages every version at once.
+//!
+//! The game data: `diablo2` names the owner's Diablo II (an install or a
+//! folder of its MPQs), from which the machine's shared base is made once
+//! per engine format ([`d2_base_data`]); `game_data` then holds only a mod's
+//! own layer, if any. Without `diablo2`, a `game_data` that is an install or
+//! a converted folder of its own is read as before, else Diablo II is looked
+//! for on the machine. One of `game_data` and `diablo2` is required.
 //!
 //! A game server keeps no characters and no accounts: `data`,
 //! `characters`, `accounts` and `backups` are refused. `dev = test` is for
@@ -78,7 +87,13 @@ pub struct NodeConfig {
     pub listen: SocketAddr,
     /// The address players are told, when set.
     pub public_addr: Option<SocketAddr>,
+    /// `game_data`: a mod's layer folder, an install, or a converted folder
+    /// (`game` when only `diablo2` is set).
     pub game_data: PathBuf,
+    /// `diablo2`: the Diablo II the shared base is converted from.
+    pub diablo2: Option<PathBuf>,
+    /// `base_data`: the shared base's folder, when not the default.
+    pub base_data: Option<PathBuf>,
     /// The expected game id; must match the binary's `NodeGame`.
     pub game: Option<String>,
     pub max_games: u16,
@@ -115,6 +130,8 @@ impl NodeConfig {
         let mut listen = None;
         let mut public_addr = None;
         let mut game_data = None;
+        let mut diablo2 = None;
+        let mut base_data = None;
         let mut game = None;
         let mut max_games = None;
         let mut max_players = None;
@@ -134,6 +151,8 @@ impl NodeConfig {
                 "listen" => set_once(&mut listen, e.parse::<SocketAddr>()?, &e)?,
                 "public_addr" => set_once(&mut public_addr, e.parse::<SocketAddr>()?, &e)?,
                 "game_data" => set_once(&mut game_data, e.path(base), &e)?,
+                "diablo2" => set_once(&mut diablo2, e.home_path(base), &e)?,
+                "base_data" => set_once(&mut base_data, e.home_path(base), &e)?,
                 "game" => {
                     if !valid_game_id(e.value) {
                         return Err(e.bad("1-15 of a-z, 0-9 and -"));
@@ -207,7 +226,13 @@ impl NodeConfig {
             identity: identity.unwrap_or_else(|| base.join("identity")),
             listen: listen.unwrap_or_else(|| DEFAULT_LISTEN.parse().expect("a valid address")),
             public_addr,
-            game_data: game_data.ok_or(ConfigError::NoGameData)?,
+            game_data: match (game_data, &diablo2) {
+                (Some(g), _) => g,
+                (None, Some(_)) => base.join("game"),
+                (None, None) => return Err(ConfigError::NoGameData),
+            },
+            diablo2,
+            base_data,
             game,
             max_games: max_games.unwrap_or(16),
             max_players: max_players.unwrap_or(8),
@@ -288,6 +313,19 @@ mod tests {
             Err(ConfigError::Missing { key: "bundle", .. })
         ));
         assert_eq!(parse("bundle = b\n"), Err(ConfigError::NoGameData));
+    }
+
+    #[test]
+    fn diablo2_alone_is_enough_and_names_the_base_source() {
+        let c = parse("bundle = b\ndiablo2 = /games/Diablo II\n").unwrap();
+        assert_eq!(c.diablo2.as_deref(), Some(Path::new("/games/Diablo II")));
+        assert_eq!(c.game_data, Path::new("node").join("game"));
+        assert_eq!(c.base_data, None);
+        let c = parse("bundle = b\ngame_data = mod\ndiablo2 = d2\nbase_data = /b\n").unwrap();
+        assert_eq!(c.game_data, Path::new("node").join("mod"));
+        assert_eq!(c.diablo2, Some(Path::new("node").join("d2")));
+        assert_eq!(c.base_data.as_deref(), Some(Path::new("/b")));
+        assert!(parse("bundle = b\ndiablo2 = a\ndiablo2 = b\n").is_err());
     }
 
     #[test]

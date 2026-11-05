@@ -34,6 +34,9 @@ impl AutomapLevels for LevelFacts {
     fn act(&self, level: u32) -> Option<u8> {
         self.act.get(level as usize).copied()
     }
+    fn max_layer(&self) -> Option<u32> {
+        self.layer.iter().copied().max()
+    }
 }
 
 /// `monstats2` `automapCel` through `monstats` `MonStatsEx`, and the

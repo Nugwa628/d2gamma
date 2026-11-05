@@ -111,6 +111,7 @@ struct HeldSeat {
 
 /// The lobby on the main server.
 pub struct Lobby {
+    mod_identity: Option<d2_net::mod_identity::ModIdentity>,
     state: Mutex<LobbyState>,
     sessions: Sessions,
     realm: Arc<Realm>,
@@ -160,6 +161,7 @@ fn contact(node: &Linked) -> Result<NodeContact, ErrorCode> {
 impl Lobby {
     pub fn new(limits: Limits, sessions: Sessions, realm: Arc<Realm>) -> Self {
         Lobby {
+            mod_identity: None,
             state: Mutex::new(LobbyState::new(limits)),
             sessions,
             realm,
@@ -169,6 +171,14 @@ impl Lobby {
             node_watch: Mutex::new(BTreeSet::new()),
             node_push: Mutex::new(Pushes::default()),
         }
+    }
+
+    pub fn with_mod_identity(
+        mut self,
+        identity: Option<d2_net::mod_identity::ModIdentity>,
+    ) -> Self {
+        self.mod_identity = identity;
+        self
     }
 
     /// The old chat line (0x49) goes to `social`'s Mod room.
@@ -223,7 +233,10 @@ impl Lobby {
         let views = lock(&self.state).views_of(id);
         for (session, view) in views {
             let ev = match view {
-                Some(g) => LobbyEvent::GameEntry(g),
+                Some(mut g) => {
+                    g.mod_identity = self.mod_identity.clone();
+                    LobbyEvent::GameEntry(g)
+                }
                 None => LobbyEvent::GameGone { game_id: id },
             };
             self.sessions.send(session, ev.body());
@@ -367,7 +380,8 @@ impl Lobby {
             Err(code) => Err(code),
         };
         match joined {
-            Ok(j) => {
+            Ok(mut j) => {
+                j.mod_identity = self.mod_identity.clone();
                 s.game = Some(game);
                 s.out.send(LobbyEvent::JoinNode(j).body());
                 self.broadcast(game);
@@ -402,7 +416,8 @@ impl Lobby {
         let list: Vec<GameInfo> = lock(&self.state).subscribe(s.id, c);
         let count = u16::try_from(list.len()).unwrap_or(u16::MAX);
         s.out.send(LobbyEvent::GameListBegin { count }.body());
-        for g in list {
+        for mut g in list {
+            g.mod_identity = self.mod_identity.clone();
             s.out.send(LobbyEvent::GameEntry(g).body());
         }
         s.out.send(LobbyEvent::GameListEnd.body());

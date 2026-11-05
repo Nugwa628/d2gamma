@@ -59,6 +59,7 @@ fn with_mod<R>(
         fonts: sh.fonts.as_ref(),
         mouse: sh.mouse,
         cursor: items::cursor_item(world).map(|i| i.key.guid),
+        shared: sh.shared_stash.on.then_some(&sh.shared_stash),
     };
     let m = sh.mod_stash.as_mut()?;
     Some(f(m, &ctx))
@@ -72,11 +73,13 @@ fn mod_ctx<'a>(sh: &'a super::Shared, world: &'a ClientWorld) -> StashCtx<'a> {
         fonts: sh.fonts.as_ref(),
         mouse: sh.mouse,
         cursor: items::cursor_item(world).map(|i| i.key.guid),
+        shared: sh.shared_stash.on.then_some(&sh.shared_stash),
     }
 }
 
 /// The mod panel's answers: mod messages out as C->S envelopes (one too
-/// large for an envelope is dropped), sounds, store asks.
+/// large for an envelope is dropped), sounds, store asks, the market
+/// window's open.
 fn send_outs(sh: &mut super::Shared, outs: Vec<StashOut>) {
     for o in outs {
         match o {
@@ -87,8 +90,34 @@ fn send_outs(sh: &mut super::Shared, outs: Vec<StashOut>) {
             }
             StashOut::Sound(id) => sh.outputs.push(PanelOutput::Sound(id)),
             StashOut::Ask(a) => sh.shared_stash.ask(a),
+            StashOut::ShowShared(shown) => show_shared(&mut sh.shared_stash, shown),
+            StashOut::OpenMarket => match sh.mod_window() {
+                Some(link) => link.ask_open(crate::mods::OpenAsk::Stash),
+                None => {
+                    if sh.market.toggle().is_ok() {
+                        sh.outputs.push(PanelOutput::Sound(4));
+                    }
+                }
+            },
         }
     }
+}
+
+/// Shows `shown` of the shared stash store and asks for it.
+fn show_shared(st: &mut shared::SharedStashUi, shown: shared::Shown) {
+    use shared::{Category, Shown, Tab};
+    match shown {
+        Shown::Personal => {
+            st.tab.0 = Tab::Personal;
+            st.category.0 = Category::Stash;
+        }
+        Shown::Page(p) => {
+            st.tab.0 = Tab::Shared(p);
+            st.category.0 = Category::Stash;
+        }
+        Shown::Stacks(page) => st.category.0 = Category::Stacks(page),
+    }
+    st.ask(StashAsk::Refresh);
 }
 
 /// The mod panel's cover rectangle (`StashPanelMod::cover`): `None`

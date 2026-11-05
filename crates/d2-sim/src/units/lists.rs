@@ -328,7 +328,7 @@ pub struct UnitLists {
     /// Tile list head (game +0x1B20).
     tiles: Option<UnitId>,
     rooms: Arena<RoomEntry>,
-    acts: [Option<ActEntry>; ACTS],
+    acts: Vec<Option<ActEntry>>,
     clients: Arena<ClientEntry>,
     /// Client list head (game +0x88).
     client_head: Option<ClientId>,
@@ -342,7 +342,7 @@ impl Default for UnitLists {
             hash: [[None; HASH_BUCKETS]; 5],
             tiles: None,
             rooms: Arena::default(),
-            acts: Default::default(),
+            acts: vec![None; ACTS],
             clients: Arena::default(),
             client_head: None,
         }
@@ -610,6 +610,13 @@ impl UnitLists {
     // ---- acts and act room lists ----------------------------------
 
     /// Creates act `act` (0..4) if it does not exist.
+    pub fn act_count(&self) -> usize {
+        self.acts.len()
+    }
+    pub fn set_act_count(&mut self, count: usize) {
+        assert!((1..=crate::rules::acts::MAX_ACTS).contains(&count));
+        self.acts.resize_with(count, || None);
+    }
     pub fn ensure_act(&mut self, act: u8) -> Result<(), ListError> {
         let slot = self
             .acts

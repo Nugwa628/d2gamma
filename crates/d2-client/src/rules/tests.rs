@@ -733,6 +733,22 @@ fn wall_blocks_culled_in_mode_2() {
         vec![block(-152), block(-170)],
     );
     assert!(view.tile(&tile, &image).is_err());
+    // The real draw path uses separate block frames when a single clip
+    // cannot express the cull. The overlapping culled block stays absent.
+    let draws = view.tile_draws(&tile, &image, &[]).unwrap();
+    assert_eq!(draws.len(), 1);
+    assert_eq!(draws[0].frame.index, crate::frames::DT1_BLOCK_FRAME0);
+    assert_eq!(draws[0].clip, Rect::new(368, 360, 32, 32));
+    let shades: Vec<_> = tile
+        .blocks
+        .iter()
+        .map(|block| BlockShade {
+            block: *block,
+            shade: ShadeChain::EMPTY,
+            blend: BlendOp::Opaque,
+        })
+        .collect();
+    assert_eq!(view.tile_draws(&tile, &image, &shades).unwrap(), draws);
     // Mode 0: nothing culled, frame clip.
     let view = OriginalView::new(camera(0, pos(0, 0)), &Fixture, &scene);
     let tile = map_tile(

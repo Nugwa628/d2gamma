@@ -1,0 +1,35 @@
+version = 1
+
+# Skill 390 "Ember Lash": fire damage around the target. It reads stat 340
+# on the caster as a percent, so with 3 or more charges it hits 25% harder.
+[[skill]]
+id = 390
+name = "Ember Lash"
+[[skill.part]]
+kind = "area_hit"
+radius = 8
+[skill.part.damage]
+element = "fire"
+min = "10 + lvl * 4"
+max = "20 + lvl * 6"
+bonus_stat = 340
+
+# Skill 391 "Frost Nova": cold damage around the caster. No charge bonus.
+[[skill]]
+id = 391
+name = "Frost Nova"
+[[skill.part]]
+kind = "area_hit"
+around = "caster"
+radius = 12
+[skill.part.damage]
+element = "cold"
+min = "6 + lvl * 3"
+max = "12 + lvl * 4"
+
+# Skill 392 "Quick Strike": a plain melee hit.
+[[skill]]
+id = 392
+name = "Quick Strike"
+[[skill.part]]
+kind = "melee_hit"

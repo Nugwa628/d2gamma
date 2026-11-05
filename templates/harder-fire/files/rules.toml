@@ -1,0 +1,12 @@
+# Harder elemental damage: resistances stop sooner and the harder
+# difficulties take more of them away. Physical resistance and monster
+# immunities are not touched.
+version = 1
+
+[resistances]
+# Where elemental resistance stops by default (D2Gamma: 75) and the highest
+# it can ever reach with items that add to the cap (D2Gamma: 95).
+elemental_cap = 60
+elemental_max_cap = 80
+# Penalty on Normal, Nightmare and Hell (D2Gamma: 0, -40, -100).
+expansion_penalties = [0, -60, -120]

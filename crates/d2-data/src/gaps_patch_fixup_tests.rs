@@ -200,6 +200,7 @@ fn patch_rules(
             name.into()
         },
         lists: vec![fields.iter().map(|f| v(f)).collect()],
+        adopt: false,
     }
 }
 
@@ -295,7 +296,7 @@ fn patch_versioning_and_determinism() {
     assert!(stack_codes("d2stack 1\nlayer a.d2patch\n").is_empty());
     assert_eq!(stack_codes("d2stack 2\nlayer a.d2patch\n"), [Code::S02]);
     // Unknown statements are never ignored (deferred ones included).
-    for s in ["frob axe", "remove axe", "delcol x", "[addcol] x int"] {
+    for s in ["frob axe", "erase axe", "delcol x", "[addcol] x int"] {
         let text = format!("d2patch 1\ntable items\n{s}\n");
         assert_eq!(layer_codes(&text), [Code::P04], "{s}");
     }

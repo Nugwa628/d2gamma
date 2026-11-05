@@ -8,8 +8,9 @@
 use d2_client::app::single_player::{GameData, GameSource, Layers};
 use d2_sim::rules::{ModRules, SkillFn};
 use mod_game_example::{
-    builder, front_end_config, identity, rules_name, run_frames, saves, start_and_join,
-    window_config, ExampleRules, Options, StepClock, CREDITS, EXAMPLE_DO_SLOT, FOLDER, NAME, TITLE,
+    builder, front_end_config, front_end_config_with, front_screens, identity, rules, rules_name,
+    run_frames, saves, start_and_join, window_config, ExampleRules, Options, StepClock, CREDITS,
+    EXAMPLE_DO_SLOT, FOLDER, NAME, TITLE,
 };
 
 #[test]
@@ -91,7 +92,8 @@ fn the_example_brands_itself_as_its_own_game() {
 #[ignore = "real data: needs D2_GAME_DIR (tools/realdata-gate.sh)"]
 fn the_example_game_runs_under_its_own_rules() {
     let dir = std::env::var_os("D2_GAME_DIR").expect("D2_GAME_DIR");
-    let data = GameData::open(&GameSource::Archives(dir.into())).expect("the install loads");
+    let data = GameData::open_with(&GameSource::Archives(dir.into()), rules().data_rules())
+        .expect("the install loads");
     let saves_dir = std::env::temp_dir().join(format!("d2rust-mod-game-{}", std::process::id()));
     let b = builder(data.clone(), saves_dir.clone());
     assert_eq!(b.saves.folder, saves_dir);
@@ -171,4 +173,132 @@ fn the_examples_window_opens_at_its_own_front_end() {
     assert_eq!(s.screen(), Some(MAIN_MENU));
     let line = format!("{TITLE} {}", env!("CARGO_PKG_VERSION"));
     assert!(s.texts().contains(&line), "{:?}", s.texts());
+}
+
+/// What the game maker of a hand-back session was given.
+#[derive(Debug, PartialEq)]
+struct Handed {
+    name: String,
+    class: u8,
+    /// The save to load (`None`: a new character).
+    save: Option<std::path::PathBuf>,
+    /// The character's file in the save folder.
+    file: std::path::PathBuf,
+}
+
+/// A headless session of the example with its own character screens
+/// ([`front_screens::hand_back_mods`]) over `saves_dir`; the game maker
+/// records what the front end handed back and stops the start.
+fn hand_back_session(
+    saves_dir: &std::path::Path,
+) -> (
+    d2_client::app::front_session::HeadlessFrontEnd,
+    std::rc::Rc<std::cell::RefCell<Vec<Handed>>>,
+) {
+    use d2_client::app::front_session::{FrontGame, HeadlessFrontEnd};
+    let dir = std::env::var_os("D2_GAME_DIR").expect("D2_GAME_DIR");
+    let data =
+        GameData::open(&GameSource::Archives(dir.clone().into())).expect("the install loads");
+    let mut config = front_end_config_with(
+        data,
+        Some(dir.into()),
+        saves_dir.to_path_buf(),
+        front_screens::hand_back_mods(),
+    );
+    let handed: std::rc::Rc<std::cell::RefCell<Vec<Handed>>> = Default::default();
+    let record = handed.clone();
+    config.make_game = Box::new(move |g: FrontGame| {
+        let c = g.choice.expect("the front end handed a character back");
+        record.borrow_mut().push(Handed {
+            name: c.name,
+            class: c.class,
+            save: c.save,
+            file: c.file,
+        });
+        anyhow::bail!("the test stops the game start")
+    });
+    (HeadlessFrontEnd::open(config).expect("the session"), handed)
+}
+
+/// Runs frames until the game maker was called.
+fn until_handed(
+    s: &mut d2_client::app::front_session::HeadlessFrontEnd,
+    handed: &std::cell::RefCell<Vec<Handed>>,
+) {
+    for _ in 0..50 {
+        if !handed.borrow().is_empty() {
+            return;
+        }
+        s.frames(1);
+    }
+    panic!("the front end started no game");
+}
+
+/// A mod game's own character select hands the saved character it picked
+/// back to the front end, which starts the game with that file.
+#[test]
+#[ignore = "real data: needs D2_GAME_DIR (tools/realdata-gate.sh)"]
+fn a_mod_character_select_starts_the_game_with_its_pick() {
+    use d2_client::app::front_host::write_stub;
+    use d2_client::ui::front_end::flow::Trigger;
+    use d2_client::ui::front_end::screens::create::{Class, NewCharacter};
+    use d2_client::ui::front_end::CHAR_SELECT;
+    let saves_dir =
+        std::env::temp_dir().join(format!("d2gamma-mod-game-pick-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&saves_dir);
+    let hero = NewCharacter {
+        name: "Hero".into(),
+        class: Class::Sorceress,
+        hardcore: false,
+        expansion: true,
+    };
+    write_stub(&saves_dir, &hero, 1).unwrap();
+    let (mut s, handed) = hand_back_session(&saves_dir);
+    s.trigger(Trigger::Continue);
+    s.trigger(Trigger::SinglePlayer);
+    assert_eq!(s.screen(), Some(CHAR_SELECT));
+    s.key(13);
+    until_handed(&mut s, &handed);
+    assert_eq!(
+        *handed.borrow(),
+        [Handed {
+            name: "Hero".into(),
+            class: Class::Sorceress.id(),
+            save: Some(saves_dir.join("Hero.d2s")),
+            file: saves_dir.join("Hero.d2s"),
+        }]
+    );
+}
+
+/// A mod game's own character create hands a new character back: the
+/// engine writes its file in the game's save format and folder, and the
+/// game starts with it.
+#[test]
+#[ignore = "real data: needs D2_GAME_DIR (tools/realdata-gate.sh)"]
+fn a_mod_character_create_starts_the_game_with_a_new_character() {
+    use d2_client::ui::front_end::flow::Trigger;
+    use d2_client::ui::front_end::screens::create::Class;
+    use d2_client::ui::front_end::CHAR_CREATE;
+    let saves_dir =
+        std::env::temp_dir().join(format!("d2gamma-mod-game-create-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&saves_dir);
+    std::fs::create_dir_all(&saves_dir).unwrap();
+    let (mut s, handed) = hand_back_session(&saves_dir);
+    s.trigger(Trigger::Continue);
+    // No saves: Single Player opens character create.
+    s.trigger(Trigger::SinglePlayer);
+    assert_eq!(s.screen(), Some(CHAR_CREATE));
+    s.key(13);
+    until_handed(&mut s, &handed);
+    let file = saves_dir.join(format!("{}.d2s", front_screens::NEW_NAME));
+    assert_eq!(
+        *handed.borrow(),
+        [Handed {
+            name: front_screens::NEW_NAME.into(),
+            class: Class::Paladin.id(),
+            save: None,
+            file: file.clone(),
+        }]
+    );
+    assert!(file.exists(), "the engine wrote the new character's file");
 }

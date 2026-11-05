@@ -1304,6 +1304,7 @@ fn a_plain_mode_set_drops_the_sequence_and_takes_the_record_count() {
         speed: 0x100,
         pos: 0,
         events: vec![0; 9],
+        event_before: None,
         drawn: Vec::new(),
     };
     fx.sim.sys.units.get_mut(m).unwrap().anim.sequence = Some(seq);

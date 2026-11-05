@@ -68,6 +68,16 @@ fn has_modifier(t: &PathTables, f: &VelocityFacts, mode: u32) -> bool {
 /// at least 25. `None`: knockback (rule 1) or a mode without the
 /// modifier.
 pub fn velocity_percent(t: &PathTables, f: &VelocityFacts, mode: u32) -> Option<i32> {
+    velocity_percent_with(t, f, mode, &crate::rules::global::DEFAULT.animation)
+}
+
+/// Movement percent with the same diminishing row and caps as animation rates.
+pub fn velocity_percent_with(
+    t: &PathTables,
+    f: &VelocityFacts,
+    mode: u32,
+    rules: &crate::rules::global::AnimationRules,
+) -> Option<i32> {
     if (f.ty == UnitType::Player && mode == 19) || (f.ty == UnitType::Monster && mode == 13) {
         return None;
     }
@@ -77,12 +87,8 @@ pub fn velocity_percent(t: &PathTables, f: &VelocityFacts, mode: u32) -> Option<
     // animstat row 4: (has base, base, stat).
     let [_, scale_base, _] = t.animstat[4];
     let raw = f.item_fastermove;
-    let e = if raw != 0 {
-        scale_base.wrapping_mul(raw) / (scale_base + raw)
-    } else {
-        0
-    };
-    Some((e + f.velocitypercent).max(VELOCITY_PERCENT_FLOOR))
+    let e = crate::units::anim_rate::diminished_with(rules.movement_coefficient(scale_base), raw);
+    Some(rules.movement_percent(e + f.velocitypercent))
 }
 
 /// The facts of [`velocity_percent`] read through the walk seams.
@@ -111,9 +117,12 @@ pub fn mode_velocity<U: WalkUnits + ?Sized>(
 ) -> Option<i32> {
     let ty = u.unit_type(unit);
     if (ty == UnitType::Player && mode == 19) || (ty == UnitType::Monster && mode == 13) {
-        return Some(KNOCKBACK_VELOCITY);
+        return Some(u.global_rules().unit(ty).knockback.speed(
+            u.global_rules().unit(ty).control.knockback_velocity,
+            i32::MAX,
+        ));
     }
-    let p = velocity_percent(t, &facts(t, u, unit), mode)?;
+    let p = velocity_percent_with(t, &facts(t, u, unit), mode, &u.global_rules().animation)?;
     // The velocity base on the draw identity (the routine passes the type and
     // class the draw identity gave).
     let base = u.velocity_base(unit) * 256;

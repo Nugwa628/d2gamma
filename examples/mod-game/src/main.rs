@@ -7,7 +7,7 @@
 
 use d2_client::app::{play, single_player};
 use mod_game_example::{
-    builder, front_end_config, identity, rules_name, run_frames, saves, start_and_join,
+    builder, front_end_config, identity, rules, rules_name, run_frames, saves, start_and_join,
     window_config, Options, StepClock,
 };
 
@@ -17,7 +17,8 @@ fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("the identity was set twice"))?;
     let options = Options::parse(std::env::args().skip(1))?;
     let (user, _) = d2_client::user_dir::init();
-    let data = single_player::GameData::open(&options.source)?;
+    // The tables load under the game's own data rules.
+    let data = single_player::GameData::open_with(&options.source, rules().data_rules())?;
     let saves_dir = options.saves_dir();
     if let (true, None) = (options.window, &options.name) {
         // The front end: the example's main menu, its characters.

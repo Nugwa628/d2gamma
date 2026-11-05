@@ -1,0 +1,16 @@
+version=1
+[[values]]
+id=1
+name="resonance"
+source="stat.resonance"
+[[actions]]
+id=1
+name="charge"
+stat="resonance"
+delta=1
+minimum=0
+maximum=20
+cooldown=25
+[actions.validator]
+module="ward.luau"
+function="can_charge"

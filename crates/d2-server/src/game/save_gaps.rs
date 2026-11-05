@@ -120,7 +120,9 @@ pub fn apply_gaps(save: &mut D2s, gaps: &Gaps) {
     // and zeroes the other two.
     if let Some((difficulty, act)) = gaps.town {
         save.header.towns = [0; 3];
-        save.header.towns[usize::from(difficulty).min(2)] = (if act < 5 { act } else { 0 }) | 0x80;
+        if let Some(town) = save.header.towns.get_mut(usize::from(difficulty)) {
+            *town = (if act < 5 { act } else { 0 }) | 0x80;
+        }
     }
     if let Some(([left, right], switch)) = gaps.swap {
         save.header.mouse[2] = left;

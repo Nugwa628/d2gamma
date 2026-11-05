@@ -1,0 +1,19 @@
+[package]
+name = "d2-modkit"
+description = "The mod format: mod.toml manifest, mod folder layout, the single-file pack with its content hash and signature field, and the modding API version check. Pure library, shared by D2Gamma and Mod Studio."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+toml = "0.9"
+sha2.workspace = true
+# Pack signatures: Ed25519, the same ring the join tickets use.
+ring.workspace = true
+
+[lints]
+workspace = true

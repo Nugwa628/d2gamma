@@ -24,7 +24,7 @@ pub mod timer;
 pub use rate::TickRate;
 
 use crate::game::Game;
-use crate::units::lists::{client_state, ACTS};
+use crate::units::lists::client_state;
 use crate::units::{ClientId, RoomId, UnitId};
 use timer::{TimerClass, TimerList, TimerRun};
 
@@ -221,14 +221,14 @@ pub fn tick_from_client_pass<H: TickHooks + ?Sized>(game: &mut Game, hooks: &mut
         room_deactivation(game, hooks);
     }
     if is_due(frame, game.ticks(period::FREE_INACTIVE_ROOMS)) {
-        for act in 0..ACTS as u8 {
+        for act in 0..game.lists.act_count() as u8 {
             if game.lists.act(act).is_some() {
                 hooks.free_inactive_rooms(game, act);
             }
         }
     }
     if is_due(frame, game.ticks(period::EXPIRED_ITEMS)) {
-        for act in 0..ACTS as u8 {
+        for act in 0..game.lists.act_count() as u8 {
             if game.lists.act(act).is_some() {
                 hooks.delete_inactive_items(game, act);
                 hooks.expire_inactive_unit_items(game, act);
@@ -250,7 +250,7 @@ fn environment<H: TickHooks + ?Sized>(game: &mut Game, hooks: &mut H) {
     if !environment_due(game) {
         return;
     }
-    for act in 0..ACTS as u8 {
+    for act in 0..game.lists.act_count() as u8 {
         if game.lists.act(act).is_none() || !hooks.advance_environment(game, act) {
             continue;
         }
@@ -264,7 +264,7 @@ fn environment<H: TickHooks + ?Sized>(game: &mut Game, hooks: &mut H) {
 
 /// Step 3, the room pass.
 fn room_pass<H: TickHooks + ?Sized>(game: &mut Game, hooks: &mut H) {
-    for act in 0..ACTS as u8 {
+    for act in 0..game.lists.act_count() as u8 {
         if !game.lists.act(act).is_some_and(|a| a.pending_rooms) {
             continue;
         }
@@ -416,7 +416,7 @@ fn client_update<H: TickHooks + ?Sized>(game: &mut Game, hooks: &mut H, client: 
 /// Step 6: walk and clear the update queues of acts with
 /// pending updates.
 fn room_update_queues<H: TickHooks + ?Sized>(game: &mut Game, hooks: &mut H) {
-    for act in 0..ACTS as u8 {
+    for act in 0..game.lists.act_count() as u8 {
         if !game.lists.act(act).is_some_and(|a| a.pending_updates) {
             continue;
         }
@@ -442,7 +442,7 @@ fn room_update_queues<H: TickHooks + ?Sized>(game: &mut Game, hooks: &mut H) {
 
 /// Step 7.
 fn removal_records<H: TickHooks + ?Sized>(game: &mut Game, hooks: &mut H) {
-    for act in 0..ACTS as u8 {
+    for act in 0..game.lists.act_count() as u8 {
         if !game.lists.act(act).is_some_and(|a| a.pending_removals) {
             continue;
         }
@@ -460,7 +460,7 @@ fn removal_records<H: TickHooks + ?Sized>(game: &mut Game, hooks: &mut H) {
 /// Step 9: deactivate rooms inactive for more than 10
 /// counts where the act allows it.
 fn room_deactivation<H: TickHooks + ?Sized>(game: &mut Game, hooks: &mut H) {
-    for act in 0..ACTS as u8 {
+    for act in 0..game.lists.act_count() as u8 {
         if game.lists.act(act).is_none() {
             continue;
         }

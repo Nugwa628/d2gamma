@@ -21,7 +21,7 @@ use crate::{Lease, NodeId, PlayerId};
 /// The layout version, the ticket's first byte.
 pub const VERSION: u8 = 1;
 /// Longest realm name.
-pub const MAX_REALM: usize = 16;
+pub const MAX_REALM: usize = 40;
 /// Longest game server id.
 pub const MAX_NODE: usize = 15;
 /// Longest character name.

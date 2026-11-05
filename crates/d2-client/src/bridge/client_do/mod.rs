@@ -206,7 +206,7 @@ pub fn client_do(
             34 => f034_sacrifice::sacrifice(w, inputs, key, skill, level)?,
             35 => f035_blessed_hammer::blessed_hammer(w, inputs, key, skill, level)?,
             36 => f036_fist_of_heavens::fist_of_heavens(w, inputs, key, skill, level)?,
-            37 => f037_charge::charge(w, key)?,
+            37 => f037_charge::charge(w, inputs, key)?,
             44 => f044_leap_attack::leap_attack(w, inputs, key)?,
             45 => f045_whirlwind::whirlwind(w, key),
             38 => f038_f040_find::find_potion(w, inputs, key)?,
@@ -651,28 +651,6 @@ pub(super) fn skill_calc(
         i32::from(skill),
         level,
     ))
-}
-
-/// The search with (U, 3, 3, …) of the Charge do:
-/// the units of U's room and its neighbours, U excluded,
-/// whose cell lies within distance² 9 of U's and that pass the filter
-/// with mask 0xA283: a player not in mode 0 or 0x11, a
-/// monster not in mode 0 or 0xC; no other unit type. The pick among
-/// several (callback) is not in the exports: this returns
-/// the first candidate only to tell "none" from "some".
-fn charge_search(w: &ClientWorld, key: UnitKey) -> Option<UnitKey> {
-    let (x, y) = w.units.get(&key)?.cell();
-    let (x, y) = (i32::from(x), i32::from(y));
-    w.units.values().find_map(|v| {
-        let alive = match v.key.unit_type {
-            PLAYER => !matches!(v.mode, 0 | 0x11),
-            MONSTER => !matches!(v.mode, 0 | 0xC),
-            _ => false,
-        };
-        let (vx, vy) = v.position?;
-        let (dx, dy) = (i32::from(vx) - x, i32::from(vy) - y);
-        (v.key != key && alive && dx * dx + dy * dy <= 9).then_some(v.key)
-    })
 }
 
 /// With (U): the used skill entry of U.
@@ -1142,6 +1120,7 @@ mod tests {
                 miss_code: Vec::new(),
                 level_cap: 99,
                 stat_count: 359,
+                data_rules: d2_data::bin::DataRules::Original,
             }));
             assert_eq!(client_do(&mut w, &i, key, FROST_NOVA, 1).unwrap(), 1);
             w.skill_lock
@@ -1256,6 +1235,7 @@ mod tests {
             miss_code: Vec::new(),
             level_cap: 99,
             stat_count: 359,
+            data_rules: d2_data::bin::DataRules::Original,
         }));
         player_anim::mode_set(&mut w, &i, key, 10);
         // Update 1 advances 0 → 1, update 2 crosses frame 2 (+0x4E := 2),

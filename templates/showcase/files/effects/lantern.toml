@@ -1,0 +1,15 @@
+version=1
+[[effects]]
+name="showcase/lens"
+duration=30
+[effects.light]
+radius=12
+red=80
+green=210
+blue=255
+[effects.particles]
+count=32
+speed=3
+spread=48
+gravity=0
+color=230

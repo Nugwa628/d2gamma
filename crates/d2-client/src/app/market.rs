@@ -10,6 +10,12 @@
 //! Tests and offscreen shots turn the in-process fake market on with
 //! `D2RUST_MARKET=fake` ([`crate::market::fake::FakeSource`]): the game
 //! counts as online and the fake answers.
+//!
+//! A mod game that registered a market link
+//! ([`crate::mods::ClientMods::with_market_link`]) gets the market handed
+//! to the link, which shares it between D2Gamma's window and the mod's
+//! own (`crate::mods::market_link`), and is told each frame whether the
+//! stash panel is open. Without one the window is pumped as it always was.
 
 use bevy::prelude::{App, Local, NonSendMut, Res, ResMut, Resource, Update};
 
@@ -18,6 +24,7 @@ use crate::bridge::BridgeResource;
 use crate::market::fake::FakeSource;
 use crate::market::source::MarketSource;
 use crate::market::trade::OffersWhich;
+use crate::mods::ClientMods;
 use crate::ui::market::{deliveries, notices, MarketUi};
 use crate::world_view::present::WorldViewUi;
 
@@ -42,24 +49,44 @@ pub fn register_market(app: &mut App) {
 fn run_market(
     mut link: ResMut<MarketLink>,
     bridge: Option<Res<BridgeResource>>,
-    ui: Option<NonSendMut<WorldViewUi>>,
+    mods: Option<Res<ClientMods>>,
+    mut ui: Option<NonSendMut<WorldViewUi>>,
     mut fake: Local<Option<bool>>,
+    mut fake_made: Local<bool>,
 ) {
-    let Some(mut ui) = ui else {
+    let mod_link = mods.as_ref().and_then(|m| m.market_link());
+    let window = ui.as_mut().and_then(|u| u.original.as_mut());
+    if window.is_none() && mod_link.is_none() {
         return;
-    };
-    let Some(o) = ui.original.as_mut() else {
-        return;
-    };
+    }
     let fake = *fake.get_or_insert_with(fake_wanted);
-    if fake && link.0.is_none() {
+    // Once per app: a mod's link keeps the market it was handed, so the
+    // resource is empty after that.
+    if fake && link.0.is_none() && !*fake_made {
         let mut f = FakeSource::new(&|_| None, false, 0, true);
         // A made-up shop in every My shop tab, for the shots.
         f.seed_shop(&|_| None);
         link.0 = Some(Box::new(f));
     }
+    *fake_made |= fake;
     let remote = bridge.as_ref().is_some_and(|b| b.0.link().is_remote());
-    o.pump_market(remote || fake, link.0.as_deref_mut());
+    let online = remote || fake;
+    if let Some(m) = mod_link {
+        // Selling and claiming are at the stash only.
+        m.set_at_stash(window.as_ref().is_some_and(|o| o.stash_open()));
+    }
+    match mod_link {
+        Some(m) => m.frame(online, &mut link.0, |src| {
+            if let Some(o) = window {
+                o.pump_market(online, src);
+            }
+        }),
+        None => {
+            if let Some(o) = window {
+                o.pump_market(online, link.0.as_deref_mut());
+            }
+        }
+    }
 }
 
 /// The market window in a control `state` reply: what a driver checks

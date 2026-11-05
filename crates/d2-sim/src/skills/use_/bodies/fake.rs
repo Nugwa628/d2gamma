@@ -31,6 +31,7 @@ pub struct FList {
     pub callback: u32,
     pub unit: Option<usize>,
     pub freed: bool,
+    pub stacks: u16,
 }
 
 /// One `unit_find` call: (at, radius, filter).
@@ -145,6 +146,8 @@ pub struct BodyFake {
     pub busy: bool,
     /// `item_missile_type` by item (default 0).
     pub item_missiles: BTreeMap<usize, i32>,
+    /// The mod's stack rules by state (`state_def`).
+    pub state_defs: BTreeMap<i32, crate::rules::StateDef>,
 }
 
 impl BodyFake {
@@ -546,6 +549,15 @@ impl BodyWorld for BodyFake {
     }
     fn stays_on_death(&self, _: usize, _: i32) -> bool {
         false
+    }
+    fn state_def(&self, s: i32) -> Option<crate::rules::StateDef> {
+        self.state_defs.get(&s).cloned()
+    }
+    fn list_stacks(&self, l: usize) -> u16 {
+        self.lists[l].stacks
+    }
+    fn set_list_stacks(&mut self, l: usize, stacks: u16) {
+        self.lists[l].stacks = stacks;
     }
     fn state_list(&self, u: usize, s: i32) -> Option<usize> {
         self.lists

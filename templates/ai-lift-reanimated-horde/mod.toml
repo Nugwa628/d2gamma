@@ -1,0 +1,7 @@
+id = "ai-lift-reanimated-horde"
+name = "AI 437 ReanimatedHorde, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "ReanimatedHorde as a graph: AI 437 (ReanimatedHorde)."
+api = 1
+kind = "full"

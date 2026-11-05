@@ -65,6 +65,11 @@ pub fn handler(class: TimerClass, ev: u8) -> u32 {
 /// The event-14 callback (skill cooldown end).
 pub const SKILL_COOLDOWN: CallbackId = CallbackId(0x0055_4570);
 
+/// The event-14 callback of a mod's tick ([`crate::rules::HostTimers::schedule_tick`]):
+/// a block skill part that runs again over time. Not an address; the base
+/// game has no handler with this id. `a1` is the tick's job number.
+pub const MOD_TICK: CallbackId = CallbackId(0x4D4F_4454);
+
 /// Number of active-state functions.
 pub const ACTIVE_STATE_FUNCTIONS: u16 = 191;
 
@@ -133,10 +138,13 @@ pub fn dispatch<H: UnitHooks>(
     let unit = run.owner.unit;
     let (ev, a1, a2) = (run.event, run.arg1, run.arg2);
     if let Some(cb) = run.callback {
-        if cb != SKILL_COOLDOWN {
+        if cb == SKILL_COOLDOWN {
+            hooks.cooldown_end(sim, unit, a1, a2);
+        } else if cb == MOD_TICK {
+            hooks.mod_tick(sim, unit, a1, a2);
+        } else {
             return Err(UnitError::UnknownCallback(cb.0));
         }
-        hooks.cooldown_end(sim, unit, a1, a2);
         return Ok(());
     }
     let modded = run.class == TimerClass::Object && hooks.mod_object_event(ev);
@@ -248,6 +256,7 @@ fn remove_state<H: UnitHooks>(
     unit: UnitId,
 ) -> Result<(), UnitError> {
     let f = sim.game.frame;
+    hooks.before_expiry(sim, unit, f);
     sim.stats.expire_lists(hooks, unit, f)?;
     hooks.lists_expired(sim, unit);
     Ok(())

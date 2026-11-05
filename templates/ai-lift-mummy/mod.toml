@@ -1,0 +1,7 @@
+id = "ai-lift-mummy"
+name = "AI 21 Mummy, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "Mummy as a graph: AI 21 (Mummy)."
+api = 1
+kind = "full"

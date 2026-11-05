@@ -296,6 +296,15 @@ pub fn potion_code<W: BodyWorld>(
     u: W::Unit,
     skill: i32,
 ) -> Option<[u8; 4]> {
+    potion_code_with_bands(w, u, [param(t, skill, 3), param(t, skill, 4)])
+}
+
+/// The normal act/difficulty selector with editable category bands.
+pub fn potion_code_with_bands<W: BodyWorld>(
+    w: &mut W,
+    u: W::Unit,
+    bands: [i32; 2],
+) -> Option<[u8; 4]> {
     let room = w.unit_room(u)?;
     let a = w.room_act(room);
     if a > 4 {
@@ -303,7 +312,7 @@ pub fn potion_code<W: BodyWorld>(
     }
     let i = a.wrapping_add(5 * w.combat().difficulty() as i32);
     let r = (w.seed(u).step() % 100) as i32;
-    let (p3, p4) = (param(t, skill, 3), param(t, skill, 4));
+    let [p3, p4] = bands;
     let c = if r < p3 {
         1
     } else if r < p3.wrapping_add(p4) {

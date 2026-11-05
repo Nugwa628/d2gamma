@@ -210,6 +210,36 @@ fn leap_attack_leaps_to_the_monster_and_strikes_it() {
     assert!(low < life0, "the strike hurt the monster ({errors})");
 }
 
+/// The client's own Leap Attack (the player's click starts the cast, the
+/// server sends it no skill message): it lands next to a monster, the
+/// client's landing picks that monster and faces it, and no update of the
+/// client is rejected.
+#[test]
+#[ignore = "real data: needs D2_GAME_DIR (tools/realdata-gate.sh)"]
+fn the_clients_leap_attack_lands_facing_the_monster() {
+    let mut r = barbarian(&[LEAP_ATTACK]);
+    r.select_right(LEAP_ATTACK);
+    r.select_right_as_client(LEAP_ATTACK);
+    let m = r.spawn_monster(6);
+    let (mana0, life0) = (r.mana(), r.life(m));
+    r.right_click_point_as_client(6, 0);
+    let low = r.lowest_life(m, 60);
+    let errors = r.errors();
+    assert_eq!(errors, "[]", "no server error");
+    assert!(r.mana() < mana0, "Leap Attack spent mana");
+    assert!(low <= life0, "the monster stands");
+    let bridge = &r
+        .app
+        .world()
+        .resource::<d2_client::bridge::BridgeResource>()
+        .0;
+    let rejected = &bridge.log().rejected;
+    assert!(
+        rejected.is_empty(),
+        "the client rejected updates: {rejected:?}"
+    );
+}
+
 #[test]
 #[ignore = "real data: needs D2_GAME_DIR (tools/realdata-gate.sh)"]
 fn dragon_talon_kick_hurts_a_monster() {

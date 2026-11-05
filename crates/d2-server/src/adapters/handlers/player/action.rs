@@ -222,6 +222,13 @@ impl<X: Pending> PlayerWorld for ActionPlayer<'_, '_, X> {
         self.v.h.x.stat_sent(u, stat, value as u32);
     }
     /// The DRLG level of the unit's room (`ActionHooks::drlg`).
+    fn resurrect_town(&self, level: u32) -> u32 {
+        self.v
+            .h
+            .rules
+            .act_town(self.v.h.rules.act_of_level(level))
+            .unwrap_or(0)
+    }
     fn current_level(&self, u: UnitId) -> u32 {
         self.game
             .lists

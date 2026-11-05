@@ -1,0 +1,64 @@
+version = 1
+
+# monstats aip1..aip5 of the greater mummy rows (Normal): 70, 30, 40, 60, 24.
+# The body also looks around (the undead scan, within aip5 = 24) for other undead: it heals one that is hurt (skill 2), raises
+# a fallen one (skill 1), and casts skill 3 at its second target. With none in sight it walks slowly.
+[[ai]]
+index = 22
+name = "GreaterMummy (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "stalk"
+
+# In reach: aip1 = 70% swing 1.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 70 }]
+
+# Nearer than 5: aip1 = 70% swing 2.
+[[ai.state.action]]
+kind = "attack"
+attack = 2
+when = [{ kind = "distance_below", value = 5 }, { kind = "random", percent = 70 }]
+
+# A hurt undead near by: aip3 = 40% skill 2 (the heal) at it.
+[[ai.state.action]]
+kind = "use_skill"
+slot = 2
+at = "hurt"
+radius = 24
+when = [{ kind = "hurt_within", radius = 24 }, { kind = "random", percent = 40 }]
+
+# A fallen undead near by: aip2 = 30% skill 1 (the raise) at it.
+[[ai.state.action]]
+kind = "use_skill"
+slot = 1
+at = "corpse"
+radius = 24
+when = [{ kind = "corpse_within", radius = 24 }, { kind = "random", percent = 30 }]
+
+# aip4 = 60%: skill 3 (the resurrection sequence) at the second target.
+[[ai.state.action]]
+kind = "use_skill"
+slot = 3
+at = "second"
+when = [{ kind = "second_target" }, { kind = "random", percent = 60 }]
+
+# Undead in sight: half the time stand 6 frames, else circle 3 steps.
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.24
+when = [{ kind = "undead_within", radius = 24 }, { kind = "random", percent = 50 }]
+
+[[ai.state.action]]
+kind = "move_around"
+steps = 3
+when = [{ kind = "undead_within", radius = 24 }]
+
+# None in sight: speed 50 percent, stopping 3 steps short of the target.
+[[ai.state.action]]
+kind = "move_to"
+steps = 3
+speed = 50

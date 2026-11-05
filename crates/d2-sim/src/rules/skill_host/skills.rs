@@ -64,6 +64,20 @@ pub trait HostSkills {
         let _ = (u, calc, skill, lvl);
         0
     }
+    /// A compiled skills formula held outside the tables (a mod's own code
+    /// buffer, compiled with the skills family) evaluated for the unit
+    /// using `skill` at `lvl`; empty code: 0.
+    fn eval_formula(&mut self, u: UnitId, code: &[u8], skill: i32, lvl: i32) -> i32 {
+        let _ = (u, code, skill, lvl);
+        0
+    }
+    /// Casts `skill` at `lvl` as `u` the way an item's skill-on-event does
+    /// (no mana, no ownership needed): at the `target` unit, or at `u`
+    /// itself when none. True when it cast.
+    fn cast_skill(&mut self, u: UnitId, skill: i32, lvl: i32, target: Option<UnitId>) -> bool {
+        let _ = (u, skill, lvl, target);
+        false
+    }
     /// A progressive skill's count formula: `prgcalc1`, or `prgcalc<n>`
     /// for the `n` charges on its aura state.
     fn prog_count(&mut self, u: UnitId, skill: i32, lvl: i32) -> i32 {

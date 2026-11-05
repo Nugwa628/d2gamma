@@ -39,6 +39,7 @@ struct Plan {
 
 fn hello(game: &str, build: &str, protocol: Option<u32>, tick: Option<u32>) -> ClientHello {
     ClientHello {
+        mod_identity: None,
         protocol: protocol.unwrap_or(d2_proto::PROTOCOL_VERSION),
         game: game.into(),
         build: build.into(),

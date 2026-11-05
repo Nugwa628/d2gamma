@@ -36,6 +36,13 @@ pub const REQUIRED_ARCHIVES: [&str; 9] = [
     "d2xtalk.mpq",
 ];
 
+/// The archives a server's game data comes from: every file of the
+/// [`crate::kinds::server`] kinds is in one of them. The game servers and
+/// main servers of a realm each convert their own copy, and a server's
+/// game data must hash the same on every machine, so a server conversion
+/// opens exactly these, whatever else the install has.
+pub const SERVER_ARCHIVES: [&str; 3] = ["d2data.mpq", "d2exp.mpq", "patch_d2.mpq"];
+
 #[derive(Debug, Clone)]
 pub struct Options {
     pub install: PathBuf,
@@ -52,6 +59,10 @@ pub struct Options {
     /// Test hook: stop after this many files were committed, as if the run
     /// were killed. Writes no manifest.
     pub stop_after: Option<usize>,
+    /// Opens only these archives, each required, instead of every known
+    /// one with [`REQUIRED_ARCHIVES`] required (a server conversion passes
+    /// [`SERVER_ARCHIVES`]).
+    pub archives: Option<Vec<String>>,
 }
 
 impl Options {
@@ -66,6 +77,7 @@ impl Options {
             converter_commit: option_env!("D2_CONVERT_COMMIT").unwrap_or("unknown").into(),
             progress: false,
             stop_after: None,
+            archives: None,
         }
     }
 }
@@ -332,8 +344,13 @@ pub fn convert(opts: &Options, kinds: &[Box<dyn Kind>]) -> Result<RunSummary, Co
         )));
     }
     say(opts, &format!("opening {}", opts.install.display()));
-    let set = ArchiveSet::open_dir(&opts.install)?;
-    for need in REQUIRED_ARCHIVES {
+    let only: Option<Vec<&str>> = opts
+        .archives
+        .as_ref()
+        .map(|a| a.iter().map(String::as_str).collect());
+    let set = ArchiveSet::open_named(&opts.install, only.as_deref())?;
+    let required = only.unwrap_or_else(|| REQUIRED_ARCHIVES.to_vec());
+    for need in required {
         if !set.has_archive(need) {
             return Err(ConvertError::NotAnInstall(format!(
                 "{} has no {need}: not a D2 Lord of Destruction install",

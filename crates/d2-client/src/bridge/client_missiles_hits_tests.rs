@@ -265,6 +265,7 @@ fn hit_18_the_meteor_explosion() {
         miss_code: Vec::new(),
         level_cap: 99,
         stat_count: 359,
+        data_rules: d2_data::bin::DataRules::Original,
     };
     let env = Env {
         rows: &r,
@@ -472,6 +473,7 @@ fn hit_12_lays_a_fire_patch() {
         miss_code: vec![0x07, 100, 0x00],
         level_cap: 99,
         stat_count: 359,
+        data_rules: d2_data::bin::DataRules::Original,
     };
     // Row 85 shape: list (2, 3, 4), k = c1 1, chance c2 100.
     let r = rows(5, 12, [2, 3, 4, -1], [1, 100, 0]);

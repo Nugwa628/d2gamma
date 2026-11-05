@@ -20,9 +20,11 @@ use super::items::ItemView;
 use super::msg::skills::level_with_bonuses;
 use super::skills::{SkillEntry, NATIVE};
 use super::world::{
-    CastTarget, ClientWorld, KindData, ModelInputs, SkillRow, UnitKey, ITEM, MONSTER,
+    CastTarget, ClientUnit, ClientWorld, KindData, ModelInputs, SkillRow, UnitKey, ITEM, MONSTER,
 };
 use crate::controls::click::skill_flag;
+use d2_sim::rules::{FormSkill, UnitForm};
+use d2_sim::skills::use_::form::form_ok_with;
 
 /// The use state codes.
 pub mod code {
@@ -99,7 +101,7 @@ pub fn use_state(w: &ClientWorld, inputs: &ModelInputs, key: UnitKey, e: &SkillE
     if !can_afford(w, key, r, e, level) {
         return code::NO_MANA;
     }
-    if !shape_ok(w, inputs, key, r) {
+    if !shape_ok(w, inputs, key, e.skill, r) {
         return code::SHAPE;
     }
     if !start_stat_ok(w, key, r) {
@@ -271,33 +273,42 @@ fn charges_ok(w: &ClientWorld, e: &SkillEntry) -> bool {
     v as u8 != 0
 }
 
-/// The shape test (test 7): `restrict` 0
-/// passes only outside a shapeshift form (no state with the `states.txt`
-/// `restrict` flag), 1 always, 2 only in a form that has
-/// one of the row's `State1`…`State3` (a negative id ends the list).
-fn shape_ok(w: &ClientWorld, inputs: &ModelInputs, key: UnitKey, r: &SkillRow) -> bool {
+/// The shape test (test 7), under the game's rules (`form_ok_with`, the
+/// server's rule): by default `restrict` 0 passes only outside a
+/// shapeshift form (no state with the `states.txt` `restrict` flag), 1
+/// always, 2 only in a form that has one of the row's `State1`…`State3`
+/// (a negative id ends the list).
+fn shape_ok(w: &ClientWorld, inputs: &ModelInputs, key: UnitKey, skill: u16, r: &SkillRow) -> bool {
     let Some(u) = w.units.get(&key) else {
         return false;
     };
-    let in_form = || {
-        u.states.iter().any(|&s| {
-            inputs
+    let k = FormSkill {
+        skill: i32::from(skill),
+        restrict: r.restrict,
+        // A negative id is the `0xFFFF` of an empty cell.
+        states: r.shape_states.map(|s| s as u16),
+    };
+    form_ok_with(&w.rules.0, &k, &ClientForm { u, inputs })
+}
+
+/// A client unit as the form test reads it.
+struct ClientForm<'a> {
+    u: &'a ClientUnit,
+    inputs: &'a ModelInputs,
+}
+
+impl UnitForm for ClientForm<'_> {
+    fn in_form(&self) -> bool {
+        self.u.states.iter().any(|&s| {
+            self.inputs
                 .tables
                 .states
                 .get(usize::from(s))
                 .is_some_and(|row| row.restrict)
         })
-    };
-    match r.restrict {
-        0 => !in_form(),
-        2 => {
-            in_form()
-                && r.shape_states
-                    .iter()
-                    .take_while(|&&s| s >= 0)
-                    .any(|&s| u.states.contains(&(s as u16)))
-        }
-        _ => true,
+    }
+    fn has_state(&self, state: u16) -> bool {
+        self.u.states.contains(&state)
     }
 }
 
@@ -505,8 +516,7 @@ pub fn client_start_apply(
 }
 
 /// The melee range test with (U, T) for a start's target unit: `None` where the
-/// melee range is not modelled (a caster other than the local player, no
-/// item tables), and the start then changes nothing (its hit start
+/// melee range is not modelled (no item tables), and the start then changes nothing (its hit start
 /// is not modelled either).
 fn target_in_reach(
     w: &ClientWorld,
@@ -522,7 +532,7 @@ fn target_in_reach(
 mod tests {
     use super::*;
     use crate::bridge::skills::SkillList;
-    use crate::bridge::world::{ClientUnit, PLAYER};
+    use crate::bridge::world::PLAYER;
 
     fn world(mana: i32) -> (ClientWorld, ModelInputs, UnitKey) {
         let mut inputs = ModelInputs::default();
@@ -736,6 +746,75 @@ mod tests {
         // `restrict` 1: any form.
         i.tables.skills[85].restrict = 1;
         assert_eq!(use_state(&w, &i, k, &entry(85, 20)), code::USABLE);
+    }
+
+    /// A mod game whose form test answers `answer`, after reading the
+    /// skill's columns and the unit's form.
+    #[derive(Debug)]
+    struct FormMod(
+        Option<bool>,
+        std::sync::Arc<std::sync::Mutex<Vec<FormSeen>>>,
+    );
+
+    /// What [`FormMod`] read: skill, `restrict`, the states, in a form,
+    /// has state 141.
+    type FormSeen = (i32, u8, [u16; 3], bool, bool);
+
+    impl d2_sim::rules::SkillProvider for FormMod {
+        fn has(&self, _: d2_sim::rules::SkillFn, _: u16) -> bool {
+            false
+        }
+        fn form_ok(&self, k: &FormSkill, u: &dyn UnitForm) -> Option<bool> {
+            let seen = (k.skill, k.restrict, k.states, u.in_form(), u.has_state(141));
+            self.1.lock().unwrap().push(seen);
+            self.0
+        }
+    }
+
+    impl d2_sim::rules::ModRules for FormMod {
+        fn name(&self) -> &str {
+            "form-mod"
+        }
+        fn skills(&self) -> Option<&dyn d2_sim::rules::SkillProvider> {
+            Some(self)
+        }
+    }
+
+    /// The game's rules answer the shape test first: a mod refuses what
+    /// the engine's rule passes and passes what it refuses, reading the
+    /// row's `restrict` and states (an empty cell as `0xFFFF`) and the
+    /// unit's form; a mod with no answer leaves the engine's rule.
+    #[test]
+    fn the_games_rules_answer_the_shape_test() {
+        use crate::bridge::passive::RulesRef;
+        use d2_sim::rules::Ruleset;
+        let (mut w, mut i, k) = world(100_000);
+        i.tables.states = vec![Default::default(); 150];
+        i.tables.states[141].restrict = true;
+        i.tables.skills[85].restrict = 3;
+        i.tables.skills[85].shape_states = [141, -1, -1];
+        let seen: std::sync::Arc<std::sync::Mutex<Vec<FormSeen>>> = Default::default();
+        let rules = |a| RulesRef(Ruleset::Mod(std::sync::Arc::new(FormMod(a, seen.clone()))));
+        assert_eq!(use_state(&w, &i, k, &entry(85, 20)), code::USABLE);
+        w.rules = rules(Some(false));
+        assert_eq!(use_state(&w, &i, k, &entry(85, 20)), code::SHAPE);
+        w.units.get_mut(&k).expect("p").states.insert(141);
+        i.tables.skills[85].restrict = 0;
+        assert_eq!(use_state(&w, &i, k, &entry(85, 20)), code::SHAPE);
+        w.rules = rules(Some(true));
+        assert_eq!(use_state(&w, &i, k, &entry(85, 20)), code::USABLE);
+        w.rules = rules(None);
+        assert_eq!(use_state(&w, &i, k, &entry(85, 20)), code::SHAPE);
+        let s = [141, 0xFFFF, 0xFFFF];
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![
+                (85, 3, s, false, false),
+                (85, 0, s, true, true),
+                (85, 0, s, true, true),
+                (85, 0, s, true, true)
+            ]
+        );
     }
 
     /// Item tables of the ammo rule: `sbw ` (short bow) is of 45 `weap`

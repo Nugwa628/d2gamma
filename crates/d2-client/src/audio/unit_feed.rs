@@ -61,7 +61,7 @@ use crate::audio::triggers::hooks::umod_phase2;
 use crate::audio::triggers::identity::{monsounds_row, RecordInputs};
 use crate::audio::triggers::modes::{mode_set, mode_sound};
 use crate::audio::triggers::movement::{
-    footstep, footstep_called, footstep_material, init_voice, neutral, Floor, TOWN_LEVELS,
+    footstep, footstep_called, footstep_material, init_voice, neutral, Floor,
 };
 use crate::audio::triggers::skills::{skill_start, state_off, state_on, SkillStart};
 use crate::audio::triggers::{within_700, Ctx, TriggerError, Unit, UnitSound, MONSTER, PLAYER};
@@ -767,7 +767,7 @@ impl UnitFeed {
         };
         let in_town = world
             .player_level()
-            .is_some_and(|l| TOWN_LEVELS.contains(&i32::from(l)));
+            .is_some_and(|l| crate::kit_mod::ruleset().is_town(u32::from(l)));
         let c0 = cx.c;
         for p in &plan {
             let cu = if p.client_only {

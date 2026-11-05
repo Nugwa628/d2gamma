@@ -3,6 +3,20 @@ use super::*;
 use crate::bridge::drlg::DrlgSource;
 use crate::bridge::world::UnitRows;
 pub use d2_server::game::client_tables::*;
+pub fn client_waypoint_map(data: &GameData) -> d2_sim::world::waypoints::WaypointMap {
+    client_waypoint_map_with_rules(data, &crate::kit_mod::ruleset())
+}
+
+pub fn client_waypoint_map_with_rules(
+    data: &GameData,
+    rules: &d2_sim::rules::Ruleset,
+) -> d2_sim::world::waypoints::WaypointMap {
+    let mut map = d2_server::game::client_tables::client_waypoint_map(data);
+    if let Some(a) = rules.acts() {
+        map.apply_acts(a);
+    }
+    map
+}
 use d2_sim::drlg::maze::Maze;
 use d2_sim::items::inventory::tables::InvTables;
 use d2_sim::wiring::worldgen::levels::WorldTypes;
@@ -10,7 +24,15 @@ use d2_sim::wiring::worldgen::levels::WorldTypes;
 /// and level-type data the game's DRLG reads, with fresh level-type state for
 /// every client act (the client never reads the server's DRLG).
 pub fn client_drlg_source(data: &GameData) -> DrlgSource {
+    client_drlg_source_with_rules(data, &crate::kit_mod::ruleset())
+}
+
+pub fn client_drlg_source_with_rules(
+    data: &GameData,
+    rules: &d2_sim::rules::Ruleset,
+) -> DrlgSource {
     let GameData::Live(d) = data;
+    let acts = rules.acts().cloned();
     let live = d.clone();
     let drlg = Arc::new(d.levels.drlg.clone());
     let types_data = drlg.clone();
@@ -18,14 +40,18 @@ pub fn client_drlg_source(data: &GameData) -> DrlgSource {
         data: drlg,
         tiles: Arc::new(d.files.dt1.clone()),
         types: Arc::new(move || {
-            Box::new(WorldTypes::new(
-                types_data.clone(),
-                Maze::new(live.levels.maze.clone()),
-                live.levels.preset.clone(),
-                live.levels.outdoor.clone(),
-                Box::new(LiveDs1(live.clone())),
-                Box::new(LiveSubs(live.clone())),
-            ))
+            Box::new(
+                WorldTypes::new(
+                    types_data.clone(),
+                    Maze::new(live.levels.maze.clone()),
+                    live.levels.preset.clone(),
+                    live.levels.outdoor.clone(),
+                    Box::new(LiveDs1(live.clone())),
+                    Box::new(LiveSubs(live.clone())),
+                )
+                .with_acts(acts.clone())
+                .with_maps(live.maps.clone()),
+            )
         }),
     }
 }

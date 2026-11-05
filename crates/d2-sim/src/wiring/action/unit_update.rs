@@ -418,8 +418,18 @@ pub fn anim_complete(a: &Anim) -> bool {
 /// [`anim_complete`] at rate `rate` on tick `tick`: the next step is the
 /// tick's share of the speed (stated per base tick).
 pub fn anim_complete_at(a: &Anim, rate: crate::tick::TickRate, tick: i32) -> bool {
+    anim_complete_with_feel(a, rate, tick, false)
+}
+
+/// Completion uses the same animation steps as the schedule and frame advance.
+pub fn anim_complete_with_feel(
+    a: &Anim,
+    rate: crate::tick::TickRate,
+    tick: i32,
+    classic: bool,
+) -> bool {
     match a.sequence {
-        None => a.frame + rate.share(i32::from(a.speed), tick) >= a.frame_count,
+        None => a.frame + rate.animation_share(i32::from(a.speed), tick, classic) >= a.frame_count,
         Some(_) => a.frame_count <= 0,
     }
 }
@@ -432,10 +442,15 @@ impl<X: Pending> ActionHooks<X> {
         let bonus = self.frame_bonus_in(sim.units, sim.stats, unit);
         // Speeds are stated per base tick; this tick advances by its share.
         let (rate, tick) = (sim.game.tick_rate, sim.game.frame);
+        let classic = self.rules.global_rules().animation.classic_25hz;
         if let Some(r) = sim.units.get_mut(unit) {
-            if !crate::units::anim::advance_sequence_at(&mut r.anim, rate, tick) {
-                let step = rate.share(i32::from(r.anim.speed), tick);
-                crate::units::anim::advance_frame_by(&mut r.anim, bonus, step);
+            if !crate::units::anim::advance_sequence_with_feel(&mut r.anim, rate, tick, classic) {
+                let step = rate.animation_share(i32::from(r.anim.speed), tick, classic);
+                if classic && step == 0 {
+                    r.anim.action_frame = 0;
+                } else {
+                    crate::units::anim::advance_frame_by(&mut r.anim, bonus, step);
+                }
             }
         }
     }
@@ -492,11 +507,14 @@ impl<X: Pending> ActionHooks<X> {
             }
             self.refresh_unit_animation(sim, unit);
             let (rate, tick) = (sim.game.tick_rate, sim.game.frame);
-            if !sim
-                .units
-                .get(unit)
-                .is_some_and(|r| anim_complete_at(&r.anim, rate, tick))
-            {
+            if !sim.units.get(unit).is_some_and(|r| {
+                anim_complete_with_feel(
+                    &r.anim,
+                    rate,
+                    tick,
+                    self.rules.global_rules().animation.classic_25hz,
+                )
+            }) {
                 return;
             }
         }

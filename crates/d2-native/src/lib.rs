@@ -19,8 +19,9 @@
 //!   tables), [`animdata`], [`tables`] (excel tables), [`wav`];
 //! - the converter's view: [`asset`] (one entry point per converted kind)
 //!   and [`manifest`] (`manifest.toml` and `files.tsv`);
-//! - the runtime view: [`layers`] (the base and mod layer stack) and
-//!   [`source`] (decoded assets and compiled tables from a native root).
+//! - the runtime view: [`layers`] (the base and mod layer stack),
+//!   [`source`] (decoded assets and compiled tables from a native root) and
+//!   [`pack`] (a mod layer as one data pack file).
 
 // ---- the shared contract
 pub mod kind;
@@ -28,6 +29,7 @@ pub mod native_toml;
 
 // ---- pictures and maps
 pub mod expfield;
+pub mod map;
 pub mod pal;
 pub mod png;
 pub mod sheet;
@@ -46,4 +48,8 @@ pub mod manifest;
 
 // ---- the runtime view
 pub mod layers;
+pub mod pack;
+pub mod package;
 pub mod source;
+
+pub mod addons;

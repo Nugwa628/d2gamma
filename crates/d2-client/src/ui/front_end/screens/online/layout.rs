@@ -643,6 +643,7 @@ pub fn shift_items(items: &mut [DrawItem], (dx, dy): (i32, i32)) {
             | DrawItem::Rect { at, .. }
             | DrawItem::Border { at, .. }
             | DrawItem::Pill { at, .. }
+            | DrawItem::Picture { at, .. }
             | DrawItem::Cut { at, .. } => {
                 at.x += dx;
                 at.y += dy;

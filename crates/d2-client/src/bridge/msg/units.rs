@@ -246,7 +246,11 @@ pub fn assign_monster(w: &mut ClientWorld, msg: &Message<'_>) -> Result<(), Hand
         // Kept for the umod hooks and step 6.10 after the add.
         u.kind = KindData::Monster(Box::new(data.clone()));
         if let Some(s) = &setup {
-            let bonus = tables.monster_skill_bonus[usize::from(w.difficulty.min(2))];
+            let bonus = tables
+                .monster_skill_bonus
+                .get(usize::from(w.difficulty))
+                .copied()
+                .unwrap_or(0);
             setup_skills(u, s, &tables.skills, bonus)?;
         }
         created = Some(c);
@@ -763,8 +767,12 @@ pub fn reassign_player(w: &mut ClientWorld, msg: &Message<'_>) -> Result<(), Han
     // Step 4.5. TODO:
     // a failed teleport falls back to the nearest free point,
     // which needs the client's collision map.
+    // The teleport puts the unit at the centre of (x, y): a precise
+    // point of its old place (the client room free zeroes it) goes, and a
+    // unit with a client path takes its path's below.
     if let Some(u) = w.units.get_mut(&key) {
         u.position = Some((x, y));
+        u.precise = None;
         u.placements = u.placements.wrapping_add(1);
     }
     // Step 4.5: the teleport places the unit's path (a

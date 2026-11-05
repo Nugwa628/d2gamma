@@ -21,7 +21,7 @@ pub mod state;
 
 use std::collections::BTreeMap;
 
-use d2_shared_stash::{Cell, ItemId, PageItem};
+use d2_shared_stash::{Cell, ItemId, PageItem, StashShape};
 
 use crate::ui::item_tip::ItemTips;
 
@@ -31,13 +31,16 @@ pub use layout::{Category, Places, Spot, Tab, MARKET_SLOT};
 pub use state::{CountBox, MarketPick, SharedStashUi, Shown, ShownItem, StashAsk};
 
 /// What the store said after an ask: the shown item page, the slots'
-/// counts, the shared gold and the search's hits.
+/// counts, the shared gold and the search's hits, and the store's item
+/// pages and gold cap (when it says one).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StashView {
     pub items: Vec<PageItem>,
     pub stacks: BTreeMap<String, u32>,
     pub gold: u64,
     pub hits: Vec<(ItemId, Cell)>,
+    pub shape: StashShape,
+    pub gold_max: Option<u64>,
 }
 
 impl SharedStashUi {
@@ -48,6 +51,8 @@ impl SharedStashUi {
         self.stacks = v.stacks;
         self.gold = v.gold;
         self.hits = v.hits;
+        self.shape = v.shape;
+        self.gold_max = v.gold_max;
     }
 
     /// The item page to read for the view: the shown one, else none.

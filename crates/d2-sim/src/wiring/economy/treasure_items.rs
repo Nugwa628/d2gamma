@@ -97,6 +97,10 @@ pub fn drop_request(req: &DropRequest<DropSpot>) -> (ItemRequest, ItemSpawn) {
 }
 
 impl<H: LifecycleHooks, P: DropPlacer<H>> DropSink for ItemDrops<'_, '_, H, P> {
+    fn drop_rules(&self) -> crate::treasure::rules::DropRules {
+        self.econ.hooks.rules().global_rules().drops
+    }
+
     type Spot = DropSpot;
     type Item = UnitId;
 

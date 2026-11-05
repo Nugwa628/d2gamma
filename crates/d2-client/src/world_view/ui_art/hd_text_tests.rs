@@ -92,6 +92,90 @@ fn glyph_metrics_and_cache_are_stable_at_every_scale() {
     }
 }
 
+/// Two glyphs of one sheet: frame 0 and frame 1 differ.
+struct TwoGlyphs;
+impl FontSheet for TwoGlyphs {
+    fn path(&self) -> &str {
+        "data/local/font/latin/font16.dc6"
+    }
+    fn table(&self) -> Option<&FontTable> {
+        None
+    }
+    fn cel(&self, index: usize) -> Option<GlyphCel<'_>> {
+        const A: [u8; 9] = [0, 5, 0, 5, 9, 5, 0, 5, 0];
+        const B: [u8; 9] = [7, 0, 7, 0, 7, 0, 7, 0, 7];
+        let pixels: &'static [u8] = match index {
+            0 => &A,
+            1 => &B,
+            _ => return None,
+        };
+        Some(GlyphCel {
+            width: 3,
+            height: 3,
+            left: 0,
+            top: -7,
+            pixels,
+        })
+    }
+}
+
+/// The atlas texels of `image` (an enhanced glyph).
+fn texels(art: &HdTextArt, image: CelImage) -> Vec<u8> {
+    let CelImage::IndexedGlyph { page, rect, .. } = image else {
+        panic!("not enhanced: {image:?}");
+    };
+    let atlas = art.atlas().unwrap();
+    let page = &atlas.pages[page as usize];
+    let mut out = Vec::new();
+    for y in rect[1]..rect[1] + rect[3] {
+        for x in rect[0]..rect[0] + rect[2] {
+            let at = ((y * REP_PAGE + x) * 4) as usize;
+            out.extend_from_slice(&page[at..at + 4]);
+        }
+    }
+    out
+}
+
+/// One frame draws glyphs at two scales (a mod panel's text in the UI
+/// space, a world label at the frame's scale): the glyphs drawn first keep
+/// their images. The cache used to start again on each scale change, so
+/// the second scale's glyphs took the first ones' atlas places and a panel
+/// row showed the label's letters.
+#[test]
+fn glyphs_of_two_scales_in_one_frame_keep_their_own_images() {
+    let (ui, frame) = (2.0, 2.4);
+    let art = HdTextArt::with_hd_fonts(false);
+    let row = art.glyph(&TwoGlyphs, 0, ui);
+    let label = art.glyph(&TwoGlyphs, 1, frame);
+    let alone = HdTextArt::with_hd_fonts(false);
+    let row_alone = alone.glyph(&TwoGlyphs, 0, ui);
+    assert_eq!(texels(&art, row), texels(&alone, row_alone));
+    let label_alone = HdTextArt::with_hd_fonts(false);
+    let l = label_alone.glyph(&TwoGlyphs, 1, frame);
+    assert_eq!(texels(&art, label), texels(&label_alone, l));
+    // the next frame asks again: the same images, nothing placed anew
+    let id = art.atlas().unwrap().id;
+    assert_eq!(art.glyph(&TwoGlyphs, 0, ui), row);
+    assert_eq!(art.glyph(&TwoGlyphs, 1, frame), label);
+    assert_eq!(art.atlas().unwrap().id, id);
+}
+
+/// Past [`MAX_SCALES`] scales the cache starts again (the window or the UI
+/// scale changed), so the atlas does not grow without end.
+#[test]
+fn a_new_scale_past_the_limit_starts_the_cache_again() {
+    let art = HdTextArt::with_hd_fonts(false);
+    for i in 0..MAX_SCALES {
+        art.glyph(&TwoGlyphs, 0, 1.5 + i as f32);
+    }
+    let pages = art.atlas().unwrap().pages.len();
+    art.glyph(&TwoGlyphs, 0, 9.5);
+    let st = art.state.lock().unwrap();
+    assert_eq!(st.scales, vec![9.5f32.to_bits()]);
+    assert_eq!(st.cels.len(), 1);
+    assert!(st.atlas.pages.len() <= pages);
+}
+
 #[test]
 fn invalid_blank_and_non_font_images_remain_unchanged() {
     let art = HdTextArt::new();

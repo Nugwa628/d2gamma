@@ -64,6 +64,13 @@ pub enum CompileSetError {
     /// The `.txt` is in none of the archives.
     #[error("{file}: not found in any archive")]
     Missing { file: String },
+    /// The table cannot fit its ids.
+    #[error("{table}: {count} rows exceed id space (maximum {limit} rows)")]
+    IdLimit {
+        table: String,
+        count: usize,
+        limit: usize,
+    },
     /// The reader failed while fetching the file.
     #[error("{file}: {detail}")]
     Read { file: String, detail: String },
@@ -120,6 +127,15 @@ pub fn compile_all_under(
             })?;
         let file = format!("{source}:{}", def.txt_name);
         let txt = TxtTable::parse(&file, &bytes)?;
+        if let Some(limit) = rules.max_count(&def.name) {
+            if txt.records.len() > limit {
+                return Err(CompileSetError::IdLimit {
+                    table: def.name.clone(),
+                    count: txt.records.len(),
+                    limit,
+                });
+            }
+        }
         let compiled = compile_table_with(
             &file,
             &txt,

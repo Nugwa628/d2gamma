@@ -1,0 +1,69 @@
+version = 1
+
+# monstats aip1..aip4 of the bighead rows (Normal): 88, 40, 0, 60 (the later rows 581 to 585 have aip3 = 85).
+# The body keeps two phases by life: healthy (at least aip1 percent) it closes in and fights; hurt it keeps its distance.
+[[ai]]
+index = 4
+name = "Bighead (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "healthy"
+
+[[ai.state.transition]]
+to = "hurt"
+when = [{ kind = "life_below", percent = 88 }]
+
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }]
+
+# aip3 = 0 in the first rows (class 10 to 14), so never there. The later rows (classes 581 to 585) have aip3 = 85: they
+# swing 2 (a cast) at 85% inside 15 while a second target is in sight; for those rows take out the `#` of the next action.
+# [[ai.state.action]]
+# kind = "attack"
+# attack = 2
+# when = [{ kind = "distance_below", value = 15 }, { kind = "second_target" }, { kind = "random", percent = 85 }]
+
+[[ai.state.action]]
+kind = "move_to"
+
+[[ai.state]]
+name = "hurt"
+
+[[ai.state.transition]]
+to = "healthy"
+when = [{ kind = "life_above", percent = 88 }]
+
+# Closer than 3: run 5 steps away (the body asks for speed 50 first, and swings 2 when it cannot get away).
+[[ai.state.action]]
+kind = "move_away"
+steps = 5
+when = [{ kind = "distance_below", value = 3 }]
+
+[[ai.state.action]]
+kind = "attack"
+attack = 2
+when = [{ kind = "distance_below", value = 3 }]
+
+# Farther than 15: close in to 6 steps.
+[[ai.state.action]]
+kind = "move_to"
+steps = 6
+when = [{ kind = "distance_above", value = 15 }]
+
+# Between: aip4 = 60% swing 2 while a second target is in sight, else aip2 = 40% circle 3 steps, else stand 10 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 2
+when = [{ kind = "second_target" }, { kind = "random", percent = 60 }]
+
+[[ai.state.action]]
+kind = "move_around"
+steps = 3
+when = [{ kind = "random", percent = 40 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4

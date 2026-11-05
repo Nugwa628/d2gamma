@@ -1,0 +1,43 @@
+version = 1
+
+# The melee form of AI 67 (NecroPet): the Necromancer's skeleton and clay warriors. The body has a second form, the ranged one of
+# the skeleton mage, which it picks by the first AI param of the unit (set by the skill that raises it); a graph cannot read
+# that, so the mage is not lifted here (see the README).
+# The pet thinks even with no enemy in sight (`target = "any"`): most of its work is staying with its owner.
+[[ai]]
+index = 67
+name = "NecroPet melee (lifted)"
+target = "any"
+
+[[ai.state]]
+name = "serve"
+
+# Stay with the owner: keep up, make room, catch up when left behind; it does nothing here (and the actions after it go on) when
+# it is near the owner with an enemy to deal with. The body strays 7 sub-tiles from the owner, and 8 for 15 percent of its
+# thinks, when it stands quietly.
+[[ai.state.action]]
+kind = "follow_owner"
+steps = 7
+
+# An enemy in reach: 80 percent swing 1, else stand 10 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 80 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4
+when = [{ kind = "in_melee" }]
+
+# An enemy out of reach: walk at it in short lunges of 7 steps, 12 percent faster.
+[[ai.state.action]]
+kind = "move_to"
+steps = 7
+speed = 12
+when = [{ kind = "has_target" }]
+
+# Nothing to fight: wander a few steps around.
+[[ai.state.action]]
+kind = "wander"
+radius = 4

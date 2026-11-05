@@ -14,6 +14,7 @@ use d2_quic::{fingerprint, FramedStream, Identity, PacketStream, QuicConn, QuicS
 
 fn me() -> ClientInfo {
     ClientInfo {
+        mod_identity: None,
         protocol: 2,
         game: "d2rust".into(),
         build: "0.1.2.0".into(),
@@ -23,6 +24,7 @@ fn me() -> ClientInfo {
 
 fn info() -> ServerInfo {
     ServerInfo {
+        mod_identity: None,
         protocol: 2,
         game: "d2rust".into(),
         build: "0.1.2.0".into(),
@@ -315,6 +317,7 @@ fn a_bot_can_say_another_hello_to_be_refused() {
     });
     let options = d2_online::ConnectOptions {
         hello: Some(ClientHello {
+            mod_identity: None,
             protocol: 2,
             game: "d2rust".into(),
             build: "0.1.2.0".into(),

@@ -19,6 +19,8 @@
 //! menu, character select and create, [`front_end_config`]); `--name`
 //! skips it and starts that character.
 
+pub mod front_screens;
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -215,13 +217,24 @@ pub fn front_end_config(
     game_dir: Option<PathBuf>,
     saves_dir: PathBuf,
 ) -> FrontEndConfig {
-    FrontEndConfig::new(
+    front_end_config_with(
         data,
         game_dir,
-        rules(),
-        saves(saves_dir),
+        saves_dir,
         d2_client::mods::ClientMods::default(),
     )
+}
+
+/// [`front_end_config`] with client hooks of the example's: its own
+/// character screens that hand their choice back
+/// ([`front_screens::hand_back_mods`]).
+pub fn front_end_config_with(
+    data: GameData,
+    game_dir: Option<PathBuf>,
+    saves_dir: PathBuf,
+    mods: d2_client::mods::ClientMods,
+) -> FrontEndConfig {
+    FrontEndConfig::new(data, game_dir, rules(), saves(saves_dir), mods)
 }
 
 /// The example's windowed game (`d2_client::app::play::run`): its rules,

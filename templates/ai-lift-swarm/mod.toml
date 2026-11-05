@@ -1,0 +1,7 @@
+id = "ai-lift-swarm"
+name = "AI 19 Swarm, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "Swarm as a graph: AI 19 (Swarm)."
+api = 1
+kind = "full"

@@ -2393,3 +2393,34 @@ mod mutant_seams;
 mod mutant_tests;
 #[path = "../mutant_tests/umods.rs"]
 mod mutant_umods;
+
+#[test]
+fn fourth_difficulty_keeps_its_id_and_uses_its_own_skill_bonus_row() {
+    use crate::rules::{DataMod, DataModFiles};
+    let mut m = mon(1, 1, 1, 1);
+    m.skill1 = 40;
+    m.sk1lvl = 2;
+    let mut t = Tables::new(vec![m]);
+    t.extra[0].skill_modes[0] = 4;
+    let mut row = t.difficultylevels[2].clone();
+    row.monsterskillbonus = 27;
+    t.difficultylevels.push(row);
+    let mut f = fake_with(t);
+    f.rules = DataMod::from_files(
+        "four",
+        &DataModFiles {
+            difficulties: Some(("difficulties.toml", "version=1\nnames=['A','B','C','D']")),
+            ..DataModFiles::default()
+        },
+    )
+    .unwrap()
+    .into_ruleset();
+    f.info.difficulty = 3;
+    f.monster(0, 1);
+    assert_eq!(f.info.difficulty, 3);
+    assert!(
+        f.log.contains(&"skill 40 29 Some(4)".to_string()),
+        "{:?}",
+        f.log
+    );
+}

@@ -10,7 +10,7 @@
 
 use std::cell::RefCell;
 
-use crate::drlg::{act_of_level, TileRect};
+use crate::drlg::TileRect;
 use crate::game::Game;
 use crate::path::collision::{box_value, find_room, point_value, size_value};
 use crate::path::coords::Point;
@@ -288,11 +288,7 @@ impl<X: Pending> LevelView<RoomId> for Shared<'_, '_, X> {
     }
     /// The act's town level id.
     fn act_start_level(&self, act: u8) -> u32 {
-        crate::drlg::TOWN_LEVELS
-            .iter()
-            .copied()
-            .find(|&l| act_of_level(l) == act)
-            .unwrap_or(0)
+        self.0.borrow().v.h.rules.act_town(act).unwrap_or(0)
     }
     /// The room's DRLG room tile origin and level id.
     fn room_reveal(&self, room: RoomId) -> RoomReveal {
@@ -415,7 +411,7 @@ pub fn level_warp<X: Pending>(
     level: u32,
     tile_index: u32,
 ) -> Option<bool> {
-    let act = act_of_level(level);
+    let act = c.v.h.rules.act_of_level(level);
     let own = c
         .game
         .lists

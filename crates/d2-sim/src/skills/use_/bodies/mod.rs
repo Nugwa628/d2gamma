@@ -35,6 +35,7 @@ pub mod helpers;
 pub mod helpers2;
 pub mod helpers3;
 pub mod passive;
+pub mod stack_state;
 pub mod starts;
 pub mod starts2;
 
@@ -62,6 +63,8 @@ mod tests_b1a;
 mod tests_b1b;
 #[cfg(test)]
 mod tests_b3a;
+#[cfg(test)]
+mod tests_stacks;
 
 pub use b4_helpers::{diab_wall_cb, zigzag_cb, zigzag_ring_cb, PathMissile};
 pub use effects::{BodyEffect, PathOp};
@@ -201,6 +204,10 @@ pub struct BodyStat {
     pub send_other: bool,
 }
 
+/// [`BodyTables::pettype_flags`] bit of `pettype.txt` `unsummon`: the
+/// pet may be unsummoned.
+pub const PETTYPE_UNSUMMON: u8 = 0x08;
+
 /// The table data the bodies read beyond [`SkillTables`] and
 /// [`CombatTables`]: itemstatcost flags, states `group` and `aura`, the
 /// overlay count. A provider without them answers "no record".
@@ -225,7 +232,8 @@ pub struct BodyTables {
     pub pettype_group: Vec<i16>,
     /// `pettype.txt` `basemax` (+0x0A, i16) by row.
     pub pettype_basemax: Vec<i16>,
-    /// `pettype.txt` flag byte (+0x04) by row: bit 0 `warp`, bit 1 `range`.
+    /// `pettype.txt` flag byte (+0x04) by row: bit 0 `warp`, bit 1 `range`,
+    /// bit 3 `unsummon` ([`PETTYPE_UNSUMMON`]).
     pub pettype_flags: Vec<u8>,
     /// The item-event layer split (data +0xC6C shift, +0xC70 mask;
     /// runtime maps): `stuff` of itemstatcost record 0
@@ -260,7 +268,7 @@ impl BodyTables {
             .collect();
         b.pettype_flags = decode_all::<d2_data::tables::Pettype>(table("pettype")?)?
             .iter()
-            .map(|r| u8::from(r.warp) | u8::from(r.range) << 1)
+            .map(|r| u8::from(r.warp) | u8::from(r.range) << 1 | u8::from(r.unsummon) << 3)
             .collect();
         Ok(b)
     }
@@ -432,6 +440,11 @@ pub struct ProgressiveMsg<U> {
 /// durability, composits), monsters (AI install),
 /// player messages.
 pub trait BodyWorld: UseWorld + KickItems {
+    /// A mod's explicit passive definition, when present.
+    fn refresh_data_passive(&mut self, u: Self::Unit, skill: i32) -> bool {
+        let _ = (u, skill);
+        false
+    }
     /// A stat list handle.
     type List: Copy + Eq + std::fmt::Debug;
     /// A room handle.
@@ -468,6 +481,21 @@ pub trait BodyWorld: UseWorld + KickItems {
     fn queue_update(&mut self, u: Self::Unit);
     /// The state stays on the unit at death.
     fn stays_on_death(&self, u: Self::Unit, s: i32) -> bool;
+
+    // ---- stacks (the mod kit's states.toml)
+    /// A state whose rules a mod's triggers watch came on for `u` (its
+    /// list is attached). Default: nothing.
+    fn state_started(&mut self, _u: Self::Unit, _s: i32) {}
+    /// The mod's rules for state `s` (duration, stacks, stat effects per
+    /// stack); `None`: the state plays as its row and the applying skill say.
+    fn state_def(&self, _s: i32) -> Option<crate::rules::StateDef> {
+        None
+    }
+    /// The stack count of a state list the stack rules made; 0 for any other.
+    fn list_stacks(&self, _l: Self::List) -> u16 {
+        0
+    }
+    fn set_list_stacks(&mut self, _l: Self::List, _stacks: u16) {}
 
     // ---- stat lists
     /// The unit's list of state `s`.

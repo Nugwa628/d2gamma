@@ -67,20 +67,20 @@ struct Cast {
     /// largest one-frame rise at rest before it (regeneration), 1/256.
     drop: i32,
     regen: i32,
-    /// The modes the client's local player was in.
-    client_modes: BTreeSet<u32>,
+    /// The modes the server's player was in.
+    server_modes: BTreeSet<u32>,
     /// The state bits the client's local player had.
     client_states: BTreeSet<u16>,
-    /// Whether a message with the byte 0x4D reached the client during the
-    /// cast (the old rigs' loose S→C 0x4D check).
-    saw_4d: bool,
+    /// Whether the server sent the client a skill message (S→C 0x4C /
+    /// 0x4D) during its own cast.
+    own_skill_message: bool,
 }
 
-/// The client model's local player: its mode and state bits.
-fn client_player(r: &Rig) -> Option<(u32, BTreeSet<u16>)> {
+/// The client model's local player's state bits.
+fn client_states(r: &Rig) -> Option<BTreeSet<u16>> {
     let w = r.app.world().resource::<BridgeResource>().0.world();
     let u = w.units.get(&w.local_player?)?;
-    Some((u.mode, u.states.clone()))
+    Some(u.states.clone())
 }
 
 /// Makes `id` the right skill and casts it at the point 6 sub-tiles east
@@ -108,9 +108,9 @@ fn cast(r: &mut Rig, id: usize, frames: usize) -> Cast {
         most: 0,
         drop: 0,
         regen,
-        client_modes: BTreeSet::new(),
+        server_modes: BTreeSet::new(),
         client_states: BTreeSet::new(),
-        saw_4d: false,
+        own_skill_message: false,
     };
     for _ in 0..frames {
         r.step(1);
@@ -120,12 +120,12 @@ fn cast(r: &mut Rig, id: usize, frames: usize) -> Cast {
         let m = r.mana();
         c.drop = c.drop.max(prev - m);
         prev = m;
-        if let Some((m, s)) = client_player(r) {
-            c.client_modes.insert(m);
+        c.server_modes.insert(r.mode());
+        if let Some(s) = client_states(r) {
             c.client_states.extend(s);
         }
     }
-    c.saw_4d = r.s2c_contains_since(mark, 0x4D);
+    c.own_skill_message = r.s2c_since(mark, 0x4D) || r.s2c_since(mark, 0x4C);
     c
 }
 
@@ -162,11 +162,16 @@ fn fire_bolt_and_ice_bolt_cost_mana_and_fly() {
             c.regen
         );
         assert!(c.most > 0, "{name}: missile; {e}");
-        assert!(c.saw_4d, "{name}: 0x4D");
+        // The caster's own client starts the cast at its click: the
+        // server sends it no skill message (S→C 0x4C / 0x4D).
+        assert!(!c.own_skill_message, "{name}: no own skill message");
+        // The cast mode is the server player's. The client's own player
+        // enters it at its click, not from a server message, and this
+        // rig sends the 0x0C bytes without a click.
         assert!(
-            c.client_modes.contains(&u32::from(row.anim)),
-            "{name}: the cast mode reaches the client: {:?}; {e}",
-            c.client_modes
+            c.server_modes.contains(&u32::from(row.anim)),
+            "{name}: the server player's cast mode: {:?}; {e}",
+            c.server_modes
         );
     }
 }

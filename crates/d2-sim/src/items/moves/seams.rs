@@ -273,6 +273,12 @@ pub trait MovePending {
     fn in_town(&self, player: Owner) -> bool {
         false
     }
+    /// The game's rules, for a mod game's item-move veto
+    /// ([`crate::items::provider::ItemProvider::may_move`]). Default: the
+    /// engine's own (no veto).
+    fn item_rules(&self) -> crate::rules::Ruleset {
+        crate::rules::Ruleset::Original
+    }
 
     // ---- rooms ------------------------
 
@@ -379,6 +385,10 @@ pub trait MovePending {
     fn consume_one(&mut self, item: Guid) -> bool {
         false
     }
+    /// The used-up cursor item of `player` leaves its cursor and is
+    /// freed, its client told (S→C 0x42). Default: nothing (the caller
+    /// clears the cursor).
+    fn use_up_cursor_item(&mut self, player: Owner, item: Guid) {}
     /// Item owner := unit.
     fn set_owner(&mut self, item: Guid, owner: Owner) {}
     /// Pile owner.

@@ -25,6 +25,7 @@ fn rules(
         fixed,
         scope: scope.into(),
         lists: vec![fields.iter().map(|f| v(f)).collect()],
+        adopt: false,
     }
 }
 
@@ -214,7 +215,7 @@ fn parse_more() {
     let (l, f) = parse_layer("a", b"d2patch 1\ntable items\nset [#5] lvl 1 -> 2\n", 1);
     assert!(f.is_empty());
     assert!(matches!(&l.statements[1].stmt, Stmt::Set { sel: Sel::Key(k), .. } if k.text == b"#5"));
-    assert_eq!(p3("remove axe"), ["P04 3:1"]);
+    assert_eq!(p3("erase axe"), ["P04 3:1"]);
     assert_eq!(p3("[set] axe lvl 1 -> 2"), ["P04 3:1"]);
     assert_eq!(p3("set axe lvl 1 [->] 2"), ["P05 3:15"]);
     assert_eq!(p3("set #4294967296 x lvl 1 -> 2"), ["P07 3:5"]);
@@ -715,22 +716,16 @@ fn schema_rules() {
 #[test]
 fn rules_for_data_rules() {
     // D2RUST's own rules are the schema's; a mod game's let `experience`
-    // (and only it) take rows.
+    // and `difficultylevels` take rows.
     assert_eq!(rules_for(DataRules::Original), super::rules());
     let m = rules_for(DataRules::Mod);
     let fixed = |r: &[TableRules], n: &str| r.iter().find(|t| t.name == n).unwrap().fixed;
     assert!(fixed(&super::rules(), "experience") && !fixed(&m, "experience"));
-    for n in [
-        "arena",
-        "armtype",
-        "belts",
-        "composit",
-        "difficultylevels",
-        "inventory",
-    ] {
+    assert!(fixed(&super::rules(), "difficultylevels") && !fixed(&m, "difficultylevels"));
+    for n in ["arena", "armtype", "belts", "composit", "inventory"] {
         assert!(fixed(&m, n), "{n}");
     }
-    assert_eq!(m.iter().filter(|t| t.fixed).count(), 6);
+    assert_eq!(m.iter().filter(|t| t.fixed).count(), 5);
 }
 
 #[test]
@@ -739,7 +734,7 @@ fn versioning_and_determinism() {
     // never ignored (P04).
     assert!(parse_codes("d2patch 1\n").is_empty());
     assert_eq!(parse_codes("d2patch 2\n"), ["P03 1:9"]);
-    assert_eq!(p3("remove axe"), ["P04 3:1"]);
+    assert_eq!(p3("erase axe"), ["P04 3:1"]);
     let (_, f) = parse_stack("s", b"d2stack 2\n");
     assert_eq!(f[0].code, Code::S02);
     // Applying twice, and with the statements permuted, gives identical
@@ -887,6 +882,82 @@ fn addcol_apply_vectors() {
     let (d, _) = one("set axe lvl 1 -> 4");
     assert_eq!(d.table("items").unwrap().header.len(), 6);
     assert!(d.ext_store().is_empty());
+}
+
+/// Under the mod rules `addcol` can name a field the base text lacks: the
+/// column joins the header, bound, and holds cells like any other.
+#[test]
+fn addcol_adopts_fields_the_base_text_lacks() {
+    let adopting = |adopt: bool| {
+        let mut r = rules(
+            "extra",
+            None,
+            KeyKind::Exact,
+            false,
+            false,
+            "extra",
+            &["a", "hidden"],
+        );
+        r.adopt = adopt;
+        PatchData::from_tables(vec![table(r, &["a"], &["1", "2"])])
+    };
+    let run = |mut data: PatchData, body: &str| {
+        let body = body.replace(" / ", "\n");
+        let l = layer("a.d2patch", &format!("d2patch 1\ntable extra\n{body}"), 1);
+        let f = apply_stack(&mut data, &[l], "s.d2stack");
+        (data, f)
+    };
+    let (d, f) = run(
+        adopting(true),
+        "addcol Hidden text x / set #1 2 Hidden x -> y / add #2 3 / add #3 4 like #0 1\n",
+    );
+    assert!(f.is_empty(), "{f:?}");
+    let t = d.table("extra").unwrap();
+    assert_eq!(t.header, [v("a"), v("Hidden")]);
+    assert_eq!(t.bound, [true, true]);
+    assert!(t.ext.is_empty() && d.ext_store().is_empty());
+    assert_eq!(t.adopted.len(), 1);
+    assert_eq!(row(&d, "extra", 0), "1;x");
+    assert_eq!(row(&d, "extra", 1), "2;y");
+    // A new row starts at the column's default; a copy takes its template's.
+    assert_eq!(row(&d, "extra", 2), "3;x");
+    assert_eq!(row(&d, "extra", 3), "4;x");
+    // No N02: the compiler binds the column.
+    let (_, f) = run(
+        adopting(true),
+        "addcol hidden text / set #0 1 hidden [] -> z\n",
+    );
+    assert!(f.is_empty(), "{f:?}");
+    // Not a field of the table: an extension column, as before.
+    let (d, f) = run(adopting(true), "addcol other int 7\n");
+    assert!(f.is_empty(), "{f:?}");
+    assert_eq!(d.table("extra").unwrap().ext.len(), 1);
+    assert!(d.table("extra").unwrap().adopted.is_empty());
+    assert_eq!(d.table("extra").unwrap().bound, [true, false]);
+    // A column the text has, or a second adoption: A16.
+    let (_, f) = run(adopting(true), "addcol a text\n");
+    assert_eq!(codes(&f), ["A16 a.d2patch:3:8"]);
+    let (_, f) = run(adopting(true), "addcol hidden text / addcol HIDDEN text\n");
+    assert_eq!(codes(&f), ["A16 a.d2patch:4:8"]);
+    // Without the mod rules the name is refused.
+    let (d, f) = run(adopting(false), "addcol hidden text\n");
+    assert_eq!(codes(&f), ["A16 a.d2patch:3:8"]);
+    assert_eq!(d.table("extra").unwrap().header, [v("a")]);
+}
+
+#[test]
+fn only_the_mod_rules_adopt() {
+    assert!(super::rules().iter().all(|r| !r.adopt));
+    assert!(rules_for(DataRules::Original).iter().all(|r| !r.adopt));
+    assert!(rules_for(DataRules::Mod).iter().all(|r| r.adopt));
+    // The rest of the rules are the same.
+    let strip = |mut r: Vec<TableRules>| {
+        r.iter_mut().for_each(|t| t.adopt = false);
+        r
+    };
+    let (o, m) = (super::rules(), strip(rules_for(DataRules::Mod)));
+    assert_eq!(o.len(), m.len());
+    assert_eq!(o.iter().filter(|t| t.fixed).count(), 7);
 }
 
 /// `stradd` / `strset`: parsed outside table zones, kept in stack order

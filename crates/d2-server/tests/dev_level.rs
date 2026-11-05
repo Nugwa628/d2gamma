@@ -1,6 +1,6 @@
-//! The dev console's `level n` on the synthetic playable install: a level
-//! past the experience table raises the character to the table's max
-//! level instead of reading past its end.
+//! The dev console's `level n` on the synthetic playable install: one
+//! level up works, and a level past the experience table raises the
+//! character to the table's max level instead of reading past its end.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -92,4 +92,19 @@ fn level_past_the_table_is_the_max_level() {
     let r = dev.apply(&mut host.game, p, &DevCommand::LevelAdd(5));
     assert!(r.ok, "{}", r.text);
     assert_eq!(level(&host), max);
+}
+
+#[test]
+fn level_raises_one_level_at_a_time() {
+    let mut host = joined();
+    let GameData::Live(d) = data();
+    let mut dev = DevServer::new(DevCatalog::from_live(&d, |_| String::new()));
+    let p = host.game.player_of(0);
+    assert_eq!(level(&host), 1);
+    let r = dev.apply(&mut host.game, p, &DevCommand::Level(2));
+    assert!(r.ok, "{}", r.text);
+    assert_eq!(level(&host), 2, "{}", r.text);
+    let r = dev.apply(&mut host.game, p, &DevCommand::LevelAdd(1));
+    assert!(r.ok, "{}", r.text);
+    assert_eq!(level(&host), 3, "{}", r.text);
 }

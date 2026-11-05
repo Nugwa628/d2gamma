@@ -126,6 +126,11 @@ pub trait UnitHooks: StatHost {
     /// run right after [`UnitHooks::anim_rate`]. Provider: path.
     fn anim_velocity(&mut self, sim: &mut Sim<'_>, unit: UnitId) {}
 
+    /// Use 40 ms animation steps while retaining the host simulation clock.
+    fn classic_animation(&self) -> bool {
+        false
+    }
+
     /// The frame bonus (start index of the animation schedule).
     fn frame_bonus(&mut self, sim: &Sim<'_>, unit: UnitId) -> i32 {
         0
@@ -335,6 +340,10 @@ pub trait UnitHooks: StatHost {
     /// skills.
     fn cooldown_end(&mut self, sim: &mut Sim<'_>, unit: UnitId, a1: u32, a2: u32) {}
 
+    /// Event 14 callback [`super::dispatch::MOD_TICK`]: a tick a mod's block
+    /// skill asked for is due (`a1` is its job number). Provider: skills.
+    fn mod_tick(&mut self, sim: &mut Sim<'_>, unit: UnitId, a1: u32, a2: u32) {}
+
     // ---- other kinds ----------------------------------------------------
 
     /// Missile events (every type): the server-do function.
@@ -364,6 +373,12 @@ pub trait UnitHooks: StatHost {
     /// Hover free (when timed out). Provider:
     /// hover/chat.
     fn free_hover(&mut self, sim: &mut Sim<'_>, unit: UnitId) {}
+
+    /// Before the type-12 expiry walk of `unit` at `frame`: a state with
+    /// stack rules that loses one stack at a time gives its list a new
+    /// expiry here, so the walk does not free it. Provider: the mod kit's
+    /// state rules.
+    fn before_expiry(&mut self, sim: &mut Sim<'_>, unit: UnitId, frame: i32) {}
 
     /// After the type-12 expiry walk of `unit`,
     /// and after the regeneration tick frees a potion list: the

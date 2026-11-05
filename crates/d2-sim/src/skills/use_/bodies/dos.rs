@@ -297,6 +297,64 @@ pub fn curse<W: BodyWorld>(
     scan_point(w, t, ct, filter, u, range, &mut cb)
 }
 
+/// A curse as a mod's skill asks for it: the state `state` with up to six
+/// `(stat, value)` and `duration` ticks on every unit around the aim point
+/// within `range` that passes the filter `filter` and the curse tests of
+/// [`curse_unit`] (hostile, alive, awake, not a player's own). The same
+/// scan as [`curse`], with the numbers given instead of read from a skills
+/// row; the AI-curse cases (Dim Vision, Terror, Taunt) are the row body's
+/// alone. Returns 1, or 0 without a target point, a room or a known state.
+#[allow(clippy::too_many_arguments)]
+pub fn curse_pulse<W: BodyWorld>(
+    w: &mut W,
+    t: &SkillTables,
+    ct: &CombatTables,
+    u: W::Unit,
+    skill: i32,
+    lvl: i32,
+    state: i32,
+    duration: i32,
+    range: i32,
+    filter: u32,
+    stats: &[(i32, i32)],
+) -> i32 {
+    if !state_ok(w, state) {
+        return 0;
+    }
+    flag_40(w, u);
+    let mut cx = CurseCtx {
+        ai: false,
+        upd: false,
+        skill,
+        lvl,
+        duration,
+        stats: [0; 6],
+        values: [0; 6],
+        state,
+        events: [(-1, 0); 3],
+    };
+    for (i, &(s, v)) in stats.iter().take(6).enumerate() {
+        if !stat_ok(t, s) {
+            cx.stats[i] = -1;
+            break;
+        }
+        let Some(info) = w.stat_info(s) else {
+            break;
+        };
+        if info.updateanimrate {
+            cx.upd = true;
+        }
+        cx.stats[i] = s;
+        cx.values[i] = v;
+    }
+    // The first slot without a stat ends the list, as the row's `-1` does.
+    if let Some(end) = cx.stats.get_mut(stats.len()) {
+        *end = -1;
+    }
+    let mut cb = |w: &mut W, x: W::Unit| curse_unit(w, t, ct, u, &cx, x);
+    scan_point(w, t, ct, filter, u, range, &mut cb)
+}
+
 /// `can_switch(U, k)`.
 pub fn can_switch<W: BodyWorld>(w: &mut W, ct: &CombatTables, x: W::Unit, k: i32) -> bool {
     let ms = ct.monstats(w.class_id(x));

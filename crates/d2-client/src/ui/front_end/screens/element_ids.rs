@@ -8,7 +8,8 @@
 //! | Screen | Ids |
 //! |---|---|
 //! | trademark | `trademark.continue` |
-//! | main menu | `menu.single_player`, `menu.display_options`, `menu.credits`, `menu.exit` |
+//! | main menu | `menu.single_player`, `menu.display_options`, `menu.credits`, `menu.exit`, and with mods `menu.mods` (D2GAMMA MODS) or inside a mod `menu.back_to_d2gamma` |
+//! | D2Gamma Mods | `mods.mod(ID)` (a listed mod's row), `mods.play`, `mods.back` |
 //! | character select | `char_select.char(NAME)` (a listed character), `char_select.ok`, `char_select.exit`, `char_select.create_new`, `char_select.convert`, `char_select.delete`, the pop-ups' `char_select.yes` / `char_select.no` / `char_select.message_ok` |
 //! | difficulty (pop-up or screen) | `difficulty.normal`, `difficulty.nightmare`, `difficulty.hell` |
 //! | character create | `create.class.<class>` (`create.class.amazon`...), `create.ok`, `create.exit`, `create.hardcore`, `create.expansion`, `create.warning_ok`, `create.warning_cancel`, `create.message_ok` |
@@ -25,7 +26,7 @@
 
 use super::char_select::{ids as select, strings as select_strings};
 use super::create::{act as create, Class};
-use super::ids::{CHAR_CREATE, CHAR_SELECT, CREDITS, DIFFICULTY, MAIN_MENU, TRADEMARK};
+use super::ids::{CHAR_CREATE, CHAR_SELECT, CREDITS, DIFFICULTY, MAIN_MENU, MODS, TRADEMARK};
 use crate::ui::front_end::control::{Action, Control, ControlKind};
 use crate::ui::front_end::flow::Trigger;
 use crate::ui::front_end::{FrontEnd, ScreenId};
@@ -128,6 +129,7 @@ fn control_id(screen: ScreenId, controls: &[Control], i: usize) -> Option<String
             Trigger::SinglePlayer => "single_player".into(),
             Trigger::Online => "online".into(),
             Trigger::Credits => "credits".into(),
+            Trigger::Mods => "mods".into(),
             Trigger::Options => "display_options".into(),
             Trigger::CreateNew => "create_new".into(),
             Trigger::Exit
@@ -162,6 +164,22 @@ fn control_id(screen: ScreenId, controls: &[Control], i: usize) -> Option<String
                 let class = Class::from_id(u8::try_from(a - create::CLASS).ok()?)?;
                 format!("class.{}", class_name(class))
             }
+            _ => return None,
+        },
+        Action::Custom(a) if screen == MAIN_MENU && a == super::main_menu::ACT_BACK => {
+            "back_to_d2gamma".into()
+        }
+        Action::Custom(a) if screen == MODS => match a {
+            super::mods::act::BACK => "back".into(),
+            super::mods::act::PLAY => "play".into(),
+            super::mods::act::DOWNLOAD => "download".into(),
+            super::mods::act::DOWNLOAD_CANCEL => "download_cancel".into(),
+            super::mods::act::DOWNLOAD_OK => "download_ok".into(),
+            super::mods::act::COPY => "copy_character".into(),
+            super::mods::act::COPY_CONFIRM => "copy_confirm".into(),
+            super::mods::act::COPY_CANCEL => "copy_cancel".into(),
+            super::mods::act::COPY_PREV => "copy_prev".into(),
+            super::mods::act::COPY_NEXT => "copy_next".into(),
             _ => return None,
         },
         Action::Custom(_) => return None,

@@ -31,6 +31,10 @@ members = [
     "crates/d2-audit",
     "crates/d2-host-control",
     "crates/d2-limits",
+    "crates/d2-base-data",
+    "crates/d2-modkit",
+    "crates/mod-studio",
+    "crates/d2-item-text",
     "tools/depcheck",
     "tools/mpq-tool",
     "tools/data-tool",
@@ -76,6 +80,10 @@ d2-economy = { path = "crates/d2-economy" }
 d2-host-control = { path = "crates/d2-host-control" }
 d2-limits = { path = "crates/d2-limits" }
 d2-shared-stash = { path = "crates/d2-shared-stash" }
+d2-base-data = { path = "crates/d2-base-data" }
+d2-item-text = { path = "crates/d2-item-text" }
+d2-modkit = { path = "crates/d2-modkit" }
+d2-convert = { path = "tools/d2-convert" }
 
 # Bevy is pinned to one exact version and may only be used by d2-client.
 # Upgrades are their own task between milestones (see CONTRIBUTING.md).

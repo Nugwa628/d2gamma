@@ -54,7 +54,18 @@ pub fn key_message(w: &ClientWorld, c: u8, f: KeyFacts) -> Option<Vec<u8>> {
     if !w.belt_ready.get(usize::from(c)).copied().unwrap_or(false) {
         return None;
     }
-    let item = items::belt(w).get(&u16::from(c)).map(|i| i.key.guid);
+    slot_message(w, u16::from(c), f)
+}
+
+/// The C→S 0x26 bytes of using the item in belt slot `slot` (0–15, the
+/// bottom row first), if the use acts: a right click on the belt, and the
+/// belt keys after their column gate. With Shift in an expansion game the
+/// hireling drinks it (`[item, 0x8000, 0]`).
+pub fn slot_message(w: &ClientWorld, slot: u16, f: KeyFacts) -> Option<Vec<u8>> {
+    if w.local().is_none_or(|p| p.mode == 0x11) {
+        return None;
+    }
+    let item = items::belt(w).get(&slot).map(|i| i.key.guid);
     let facts = BeltUseFacts {
         expansion: w.expansion != 0,
         shift: f.shift,
@@ -173,5 +184,27 @@ mod tests {
         let p = w.local_player.unwrap();
         w.units.get_mut(&p).unwrap().mode = 0x11;
         assert_eq!(key_message(&w, 1, KeyFacts::default()), None, "dead");
+    }
+
+    // A right click on a belt slot uses its item without the column gate;
+    // with Shift in an expansion game the hireling drinks it (0x8000).
+    #[test]
+    fn a_belt_slot_use_feeds_the_hireling_with_shift() {
+        let mut w = world();
+        w.expansion = 1;
+        assert!(!w.belt_ready[1], "the column gate is not asked");
+        assert_eq!(
+            slot_message(&w, 1, KeyFacts::default()),
+            Some(vec![0x26, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        );
+        let shift = KeyFacts {
+            shift: true,
+            ui9_open: false,
+        };
+        assert_eq!(
+            slot_message(&w, 1, shift),
+            Some(vec![0x26, 9, 0, 0, 0, 0, 0x80, 0, 0, 0, 0, 0, 0])
+        );
+        assert_eq!(slot_message(&w, 0, shift), None, "an empty slot");
     }
 }

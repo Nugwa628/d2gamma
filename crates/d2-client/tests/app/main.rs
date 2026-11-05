@@ -11,6 +11,8 @@ mod app_a3_a5_waypoints;
 mod app_a3_quests;
 #[path = "../app_act_travel.rs"]
 mod app_act_travel;
+#[path = "../app_ai_arena.rs"]
+mod app_ai_arena;
 #[path = "../app_amazon.rs"]
 mod app_amazon;
 #[path = "../app_andariel.rs"]
@@ -55,6 +57,8 @@ mod app_first_move;
 mod app_floor_drop;
 #[path = "../app_frame_loop.rs"]
 mod app_frame_loop;
+#[path = "../app_game_dir_typo.rs"]
+mod app_game_dir_typo;
 #[path = "../app_gold.rs"]
 mod app_gold;
 #[path = "../app_hireling_restore.rs"]
@@ -161,10 +165,17 @@ mod app_unit_fx;
 mod app_unit_seed_order;
 #[path = "../app_walk_seam.rs"]
 mod app_walk_seam;
+#[path = "../app_walk_stand.rs"]
+mod app_walk_stand;
 #[path = "../app_waypoint_warp.rs"]
 mod app_waypoint_warp;
 
+#[path = "../app_check_mod.rs"]
+mod app_check_mod;
 #[path = "../app_coverage.rs"]
 mod app_coverage;
 #[path = "../app_sweep.rs"]
 mod app_sweep;
+
+#[path = "../app_showcase.rs"]
+mod app_showcase;

@@ -206,7 +206,12 @@ impl Play {
             .push(e);
     }
 
+    /// A player's click: the pointer moves onto `at` and one frame draws
+    /// its hover (a press reads the hover the previous frame drew), then
+    /// the press and the release.
     fn click(&mut self, at: Point) {
+        self.queue(UiEvent::CursorMoved(at));
+        self.step(1);
         self.queue(UiEvent::Press {
             button: PointerButton::Left,
             at,
@@ -407,12 +412,11 @@ impl Play {
                 .filter(|m| m[0] == 0x13)
                 .collect::<Vec<_>>()
         );
-        for _ in 0..80 {
-            self.step(1);
-            if app_support::npc_menu_len(&self.app) > 0 {
-                break;
-            }
-        }
+        let ms = self.ms.clone();
+        app_support::until_npc_menu(&mut self.app, 400, |app| {
+            app.update();
+            ms.fetch_add(40, Ordering::SeqCst);
+        });
         self.step(2);
         let n = app_support::npc_menu_len(&self.app);
         assert!(
@@ -533,26 +537,73 @@ impl Play {
         }
     }
 
-    /// Kills monster `guid`: its life set to 1 by a poke, the player
-    /// placed beside it, then right-skill casts (C→S 0x0D) on it until
-    /// it dies.
+    /// Kills monster `guid` and the living monsters within 10 sub-tiles
+    /// of it first (a boss's pack: they stand in the casts' way and their
+    /// hits break them): the player placed beside it, then each one's
+    /// life set to 1 by a poke and right-skill casts (C→S 0x0D) on it
+    /// until it dies.
     fn kill(&mut self, guid: u32) {
         let at = self.unit_pos(1, guid).expect("the monster");
         self.poke(&format!("pos @player {} {}", at.0 + 3, at.1 + 3));
         self.step(5);
+        let pack: Vec<u32> = app_support::with(&self.server, move |l| {
+            let g = &mut l.host_mut().game;
+            let mut pack = Vec::new();
+            for u in g.game.lists.units_of_type(d2_sim::units::UnitType::Monster) {
+                let near =
+                    test_fixtures::host::cheb(at, g.events.action.hooks().path_position(u)) <= 10;
+                match g.game.lists.unit(u).map(|e| e.guid) {
+                    Some(m) if near && m != guid => pack.push(m),
+                    _ => {}
+                }
+            }
+            pack
+        });
+        for m in pack {
+            if !self.dead(1, m) {
+                self.cast_until_dead(m);
+            }
+        }
+        self.cast_until_dead(guid);
+        assert!(self.dead(1, guid), "monster {guid} dies");
+        self.step(30);
+    }
+
+    /// Monster `guid`'s life set to 1 by a poke, then right-skill casts
+    /// (C→S 0x0D) on it until it dies, up to 40. Each cast runs to its
+    /// end (the player leaves the cast mode, `PlrMode` 10) before the
+    /// next is sent: a cast lasts its frames of game time, longer than a
+    /// fixed step at 60 Hz.
+    fn cast_until_dead(&mut self, guid: u32) {
+        /// `PlrMode` 10, the cast.
+        const CAST: u32 = 10;
         self.poke(&format!("stat 1/{guid} 6 0 256"));
         for _ in 0..40 {
             let mut m = vec![0x0D];
             m.extend_from_slice(&1u32.to_le_bytes());
             m.extend_from_slice(&guid.to_le_bytes());
             self.send(&m);
-            self.step(15);
+            self.step(2);
+            for _ in 0..240 {
+                if self.player_mode() != Some(CAST) {
+                    break;
+                }
+                self.step(1);
+            }
+            self.step(10);
             if self.dead(1, guid) {
                 break;
             }
         }
-        assert!(self.dead(1, guid), "monster {guid} dies");
-        self.step(30);
+    }
+
+    /// The server player's mode.
+    fn player_mode(&self) -> Option<u32> {
+        app_support::with(&self.server, |l| {
+            let g = &mut l.host_mut().game;
+            let (p, _) = single_player::local_player(g)?;
+            g.events.action.sys.units.get(p).map(|r| r.mode)
+        })
     }
 
     fn unit_pos(&self, ty: u8, guid: u32) -> Option<(i32, i32)> {
@@ -765,16 +816,14 @@ fn act4_and_act5_town_npcs_the_pick_missed_open_their_menus() {
 fn the_golden_bird_from_the_jungle_boss_to_the_potion_of_life() {
     let mut p = Play::start("");
     p.warp(76);
-    // A champion made by the boss spawn (the `spawn … champion` poke) is
-    // a special monster: the boss choice takes
-    // it. Class 19 stands in for the forest's own monsters.
-    let r = p.poke("spawn 19 @x+6 @y champion umod 16");
+    // The forest's population makes its bosses as its rooms come into
+    // play; the first one made is the quest's boss choice and carries
+    // the figurine.
+    p.stage_life();
     assert!(
-        matches!(r, d2_sim::poke::PokeResult::Ok(Some(_))),
-        "champion spawn: {r:?}"
+        p.bird_boss().is_some(),
+        "a forest boss carries the figurine"
     );
-    p.step(5);
-    assert!(p.bird_boss().is_some(), "the champion carries the figurine");
     let boss = p.bird_boss().unwrap();
     p.kill(boss);
     p.assert_clean("the bird boss's death");
@@ -782,20 +831,17 @@ fn the_golden_bird_from_the_jungle_boss_to_the_potion_of_life() {
     p.pick_up(b"j34 ");
     p.warp(75);
 
-    // The first talk with each NPC is its Act III introduction (chain 39,
-    // the Act III quest texts): the client replays the first text of the
-    // NPC's list, so the quest text comes with the second talk.
-    for class in [npc::CAIN3, npc::MESHIF2, npc::ALKOR] {
-        let intro = p.talk(class);
-        assert!(!intro.is_empty(), "NPC {class} introduces itself");
-    }
+    // Each NPC's list holds its Act III introduction (chain 39, the Act
+    // III quest texts) and its Golden Bird line, both to play: the
+    // greeting plays every one before the menu, so one talk brings both.
     let cain = p.talk(npc::CAIN3);
-    assert!(cain.contains(&527), "Cain on the figurine: {cain:?}");
+    assert_eq!(cain, [458, 527], "Cain's introduction, then the figurine");
     assert!(p.bit(20, 2));
     let meshif = p.talk(npc::MESHIF2);
-    assert!(
-        meshif.contains(&529),
-        "Meshif takes the figurine: {meshif:?}"
+    assert_eq!(
+        meshif,
+        [478, 529],
+        "Meshif's introduction, then the figurine"
     );
     p.step(10);
     assert!(p.holds(b"g34 "), "the Golden Bird given");
@@ -803,7 +849,7 @@ fn the_golden_bird_from_the_jungle_boss_to_the_potion_of_life() {
     let cain = p.talk(npc::CAIN3);
     assert!(cain.contains(&531), "Cain on the bird: {cain:?}");
     let alkor = p.talk(npc::ALKOR);
-    assert!(alkor.contains(&534), "Alkor takes the bird: {alkor:?}");
+    assert_eq!(alkor, [501, 534], "Alkor's introduction, then the bird");
     assert!(p.bit(20, 1), "the reward pending");
     p.step(100);
     let alkor = p.talk(npc::ALKOR);
@@ -838,12 +884,11 @@ const GIDBINN_DECOY: u32 = 252;
 fn the_blade_of_the_old_religion_from_hratli_to_ormus_and_asheara() {
     // The Golden Bird done: the sequence starts the Blade.
     let mut p = Play::start("0:20.0");
-    // Hratli's first talk is his gossip (16.0; the
-    // client replays the first text of the list), the second the Blade.
-    let gossip = p.talk(npc::HRATLI);
-    assert!(gossip.contains(&466), "Hratli's gossip: {gossip:?}");
+    // Hratli's list holds his gossip (16.0) and the Blade, both lines to
+    // play: the greeting plays every one before the menu, so one talk
+    // brings both.
     let hratli = p.talk(npc::HRATLI);
-    assert!(hratli.contains(&571), "Hratli starts the Blade: {hratli:?}");
+    assert_eq!(hratli, [466, 571], "Hratli's gossip, then the Blade");
     p.step(10);
     assert_eq!(p.chain(17).map(|c| c.1), Some(2), "status 2 after the chat");
     p.warp(78);
@@ -851,23 +896,37 @@ fn the_blade_of_the_old_religion_from_hratli_to_ormus_and_asheara() {
     let decoy = p.find_object(GIDBINN_DECOY);
     p.operate(decoy);
     // The boss timer (period 7) runs when the quest updater does, every
-    // 20th frame: 140 frames after the operate.
-    p.step(160);
-    let boss = app_support::with(&p.server, |l| {
-        let r = l.host().game.world.quests.record(17)?;
-        let e = &r.extra.act3.q3;
-        e.boss_spawned.then_some(e.boss_guid)
-    });
+    // 20 base-rate ticks (0.8 s at any tick rate): it fires at the 8th
+    // update after the operate, within 9 updater periods of game time.
+    let spawned = |p: &Play| {
+        app_support::with(&p.server, |l| {
+            let r = l.host().game.world.quests.record(17)?;
+            let e = &r.extra.act3.q3;
+            e.boss_spawned.then_some(e.boss_guid)
+        })
+    };
+    let frame = |p: &Play| {
+        app_support::with(&p.server, |l| {
+            let g = &l.host().game.game;
+            (g.frame, g.ticks(d2_sim::tick::period::QUESTS))
+        })
+    };
+    let (operated, period) = frame(&p);
+    while spawned(&p).is_none() && frame(&p).0 - operated <= 9 * period {
+        p.step(1);
+    }
+    let boss = spawned(&p);
     let boss = boss.expect("the decoy spawns the Gidbinn guardian");
     p.kill(boss);
     p.assert_clean("the guardian's death");
     p.pick_up(b"g33 ");
     assert!(p.bit(19, 5), "19.5: holds the Gidbinn");
     p.warp(75);
-    let intro = p.talk(npc::ORMUS);
-    assert!(!intro.is_empty(), "Ormus introduces himself");
+    // Ormus's and Asheara's lists hold their Act III introductions and
+    // their Blade lines, both to play: the greeting plays every one
+    // before the menu, so one talk brings both.
     let ormus = p.talk(npc::ORMUS);
-    assert!(ormus.contains(&587), "Ormus takes the Gidbinn: {ormus:?}");
+    assert_eq!(ormus, [514, 587], "Ormus's introduction, then the Gidbinn");
     assert!(p.bit(19, 6));
     assert!(!p.holds(b"g33 "));
     p.step(50);
@@ -875,10 +934,12 @@ fn the_blade_of_the_old_religion_from_hratli_to_ormus_and_asheara() {
     assert!(ormus.contains(&593), "Ormus' ring: {ormus:?}");
     p.step(10);
     assert!(p.holds(b"rin "), "the ring");
-    let intro = p.talk(npc::ASHEARA);
-    assert!(!intro.is_empty(), "Asheara introduces herself");
     let asheara = p.talk(npc::ASHEARA);
-    assert!(asheara.contains(&589), "Asheara's mercenary: {asheara:?}");
+    assert_eq!(
+        asheara,
+        [490, 589],
+        "Asheara's introduction, then the mercenary"
+    );
     assert!(p.bit(19, 0), "the quest done");
     p.assert_clean("the Blade");
 }

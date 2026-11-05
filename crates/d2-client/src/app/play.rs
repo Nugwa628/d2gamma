@@ -118,6 +118,9 @@ pub fn install_game(app: &mut impl Setup, link: DynLink) -> Result<(), BridgeErr
     // The client sends its own pings, as a connected client does.
     bridge.set_ping(true);
     let w = app.world_mut();
+    if let Some(m) = w.get_resource::<crate::mods::ClientMods>() {
+        bridge.set_rules(m.rules().clone());
+    }
     // A mod game's binary hands its mod messages to the bridge, which then
     // speaks the mod wire as its host does (MS13).
     if let Some(hook) = w
@@ -350,7 +353,7 @@ fn where_line(w: &crate::bridge::world::ClientWorld, walk: Option<&PreviewWalk>)
 
 /// The handler of a mod game without one: its S→C mod messages are
 /// dropped.
-struct DropModMessages;
+pub(crate) struct DropModMessages;
 
 impl crate::bridge::receive::ModMessages for DropModMessages {
     fn message(&mut self, _: &mut crate::bridge::world::ClientWorld, _: &[u8]) {}
@@ -666,6 +669,25 @@ pub fn register_live_client(app: &mut App, gpu: bool) {
     app.register("hardcore", super::hardcore::register_hardcore);
 }
 
+/// Installs the contract for every live client, including headless runners.
+/// The plain wire neither reads mod declarations nor sends a handshake.
+pub(crate) fn install_mod_network<L: crate::bridge::link::ServerLink>(
+    bridge: &mut crate::bridge::Bridge<L>,
+    source: &dyn d2_server::file_source::FileSource,
+    wire: d2_proto::envelope::Wire,
+) -> anyhow::Result<()> {
+    if wire != d2_proto::envelope::Wire::Mod {
+        return Ok(());
+    }
+    let definition = d2_server::mod_network::definition(source).map_err(anyhow::Error::msg)?;
+    let identity = d2_server::mod_network::identity(source, &definition);
+    bridge.mod_network = crate::bridge::mod_network::Network::new(definition, identity);
+    if bridge.wire() != wire {
+        bridge.set_mod_messages(Box::new(crate::app::play::DropModMessages));
+    }
+    Ok(())
+}
+
 /// [`add_live_client`]'s game on `app` (an app built with
 /// [`register_live_client`], or its `World` while it runs).
 pub fn install_live_client(
@@ -676,9 +698,14 @@ pub fn install_live_client(
     let d = c.data;
     let data = GameData::Live(d.clone());
     let archives = d.archives.clone();
-    let drlg_source = single_player::client_drlg_source(&data);
+    let rules = app
+        .world()
+        .get_resource::<crate::mods::ClientMods>()
+        .map(|m| m.rules().clone())
+        .unwrap_or_default();
+    let drlg_source = single_player::client_drlg_source_with_rules(&data, &rules);
     let level_rows = single_player::client_level_rows(&data);
-    let waypoint_map = single_player::client_waypoint_map(&data);
+    let waypoint_map = single_player::client_waypoint_map_with_rules(&data, &rules);
     let level_names = single_player::client_level_names(&data);
     let level_warps = single_player::client_level_warps(&data);
     let object_rows = single_player::client_object_rows(&data);
@@ -691,6 +718,22 @@ pub fn install_live_client(
     let (link, tap) = predict_link(link);
     install_game(app, link)?;
     send_create_game_flags(app, c.request, c.start_flags)?;
+    {
+        let mod_game = app
+            .world()
+            .get_resource::<crate::mods::ClientMods>()
+            .is_some_and(|m| !m.rules().is_original());
+        let wire = if mod_game {
+            d2_proto::envelope::Wire::Mod
+        } else {
+            d2_proto::envelope::Wire::Original
+        };
+        install_mod_network(
+            &mut app.world_mut().resource_mut::<BridgeResource>().0,
+            archives.source().as_ref(),
+            wire,
+        )?;
+    }
     add_client_data(app, drlg_source, level_rows.clone());
     app.world_mut()
         .resource_mut::<BridgeResource>()
@@ -807,7 +850,9 @@ pub fn install_live_client(
             app.world_mut()
                 .resource_mut::<BridgeResource>()
                 .0
-                .set_item_tables(std::sync::Arc::new(super::items::TableDecoder(t.tables())));
+                .set_item_tables(std::sync::Arc::new(super::items::TableDecoder::active(
+                    t.tables(),
+                )));
             item_parts.tips = Some(t);
         }
         Err(e) => warn!("item tips (D2RUST's own, unverified): {e}; no tool tips"),
@@ -819,7 +864,8 @@ pub fn install_live_client(
     }
     super::items::add_items(app, archives.source(), item_parts);
     let effects = super::missile_art::effect_rows(archives.as_ref()).map_err(anyhow::Error::msg)?;
-    super::missile_art::add_missiles(app, archives.source(), effects);
+    super::missile_art::add_missiles(app, archives.source(), effects)
+        .map_err(anyhow::Error::msg)?;
     palette::add_act_palettes(app, palettes);
     super::automap::add_automap(
         app,
@@ -840,6 +886,12 @@ pub fn install_live_client(
     ui::set_level_names(app, level_names);
     ui::set_shop_prices(app, c.prices);
     super::hire_stats::install_hire_stats(app, hire_rows, true, c.request.difficulty());
+    match d.tables.rows::<d2_data::tables::Pettype>() {
+        Ok(rows) => {
+            super::hire_stats::install_pet_icons(app, super::hire_stats::pet_icons(&rows));
+        }
+        Err(e) => warn!("pettype: {e}; the pet icons are the base game's"),
+    }
     let table = sound::sound_table_live(archives.as_ref()).map_err(anyhow::Error::msg)?;
     let audio = GameAudio::new(AudioParts::original(archives.source(), table));
     // The unit sounds' tables (`audio/unit_feed.rs`): `monsounds`, the
@@ -974,6 +1026,7 @@ pub fn register_play(app: &mut App, output: bool) {
         sound::add_output(app);
     }
     app.register("dev-overlay", super::dev::overlay::register_overlay);
+    app.register("mod-dev-reload", super::dev::reload::register);
     // A game started from the main menu is installed on the running app's
     // `World`, where `add_shared_stash` can no longer add its system.
     app.register("shared-stash", super::shared_stash::register_shared_stash);
@@ -1026,9 +1079,15 @@ pub fn install_play(
     let request = config.character.clone();
     let dev_on = config.dev_tools_on();
     // A mod game's client hooks, before the client that reads them is
-    // installed; D2Gamma's empty registry is not inserted.
-    if !config.mods.is_empty() {
-        app.world_mut().insert_resource(config.mods.clone());
+    // installed, with the game's rules; D2Gamma's empty registry is not
+    // inserted.
+    let mods = if config.mods.rules().is_original() {
+        config.mods.clone().with_rules(config.rules.clone())
+    } else {
+        config.mods.clone()
+    };
+    if !mods.is_empty() {
+        app.world_mut().insert_resource(mods);
     }
     // The automap files sit next to the character save.
     let automap_files = config.save_path.as_deref().and_then(|p| {
@@ -1089,7 +1148,14 @@ pub fn install_play(
             ),
             None => None,
         };
-        let chan = super::dev::install_server(&mut link, catalog.clone(), start)?;
+        // The names the monster AI overlay shows for the mod's graphs.
+        let graphs = match crate::kit_mod::active() {
+            Some(stack) => crate::kit_mod::host(stack)
+                .map(|m| m.ai_rules().clone())
+                .unwrap_or_default(),
+            None => Default::default(),
+        };
+        let chan = super::dev::install_server_with(&mut link, catalog.clone(), start, graphs)?;
         Some((chan, catalog))
     } else {
         super::send::install(&mut link, config.pokes, config.sends)?;
@@ -1153,7 +1219,6 @@ pub fn install_play(
     if let Some(h) = &saver {
         app.world_mut().insert_resource(h.clone());
     }
-    let wire = started.wire;
     install_live_client(
         app,
         link,
@@ -1168,15 +1233,6 @@ pub fn install_play(
             gpu: true,
         },
     )?;
-    // A mod game's host speaks the mod wire (MS13): the bridge speaks it
-    // too. install_game already installed the game's handler, if any;
-    // otherwise drop its S→C mod messages. D2Gamma stays on its own wire.
-    if wire == d2_proto::envelope::Wire::Mod {
-        let mut bridge = app.world_mut().resource_mut::<BridgeResource>();
-        if bridge.0.wire() != wire {
-            bridge.0.set_mod_messages(Box::new(DropModMessages));
-        }
-    }
     if let Some((recipe, server)) = stash {
         let tips = app
             .world()

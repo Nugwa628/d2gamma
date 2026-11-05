@@ -1,0 +1,22 @@
+{
+  "steps": [
+    {"do": "click", "text": "Tools & install paths"},
+    {"do": "fill", "text": "D2Gamma-Game executable", "value": "", "offset": [175, 0]},
+    {"do": "fill", "text": "Converted native install", "value": "@NATIVE@", "offset": [160, 0]},
+    {"do": "fill", "text": "Installed mods folder", "value": "@HOME@/mods", "offset": [150, 0]},
+    {"do": "click", "text": "Save paths"},
+    {"do": "click", "text": "Tools & install paths"},
+    {"do": "click", "text": "Import art & sound"},
+    {"do": "click", "text": "Native asset library"},
+    {"do": "fill", "text": "Source folder", "value": "templates/showcase/files/data"},
+    {"do": "click", "text": "Validate and import asset library"},
+    {"do": "wait_text", "text": "Imported 239 native asset files"},
+    {"do": "capture", "name": "07-asset-library"},
+    {"do": "click", "text": "PNG icon / mod picture"},
+    {"do": "fill", "text": "Source file", "value": "templates/showcase/files/icons/lantern.png"},
+    {"do": "fill", "text": "PNG destination", "value": "icons/lantern.png"},
+    {"do": "click", "text": "Validate and import PNG"},
+    {"do": "wait_text", "text": "Imported PNG icons/lantern.png"},
+    {"do": "capture", "name": "08-icon"}
+  ]
+}

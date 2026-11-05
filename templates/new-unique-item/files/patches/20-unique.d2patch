@@ -1,0 +1,30 @@
+d2patch 1
+# One new unique ring. "add #402" means: a new row after the 402 rows the
+# table has now. Every `set` says what the empty cell holds ([]) and what it
+# should hold.
+table uniqueitems
+add #402 emberheart
+
+# 100 = Lord of Destruction items; 1 = on; 6 = fairly rare.
+set emberheart version [] -> [100]
+set emberheart enabled [] -> [1]
+set emberheart rarity [] -> [6]
+# Drops from monsters of level 20 and up. Needs character level 15.
+set emberheart lvl [] -> [20]
+set emberheart [lvl req] [] -> [15]
+# The base item is a ring, so it uses the ring's picture and slot.
+set emberheart code [] -> [rin]
+set emberheart [cost mult] [] -> [4]
+set emberheart [cost add] [] -> [2500]
+
+# What it gives: +25 to 35 fire resistance, 20 to 30 percent better magic
+# find and 10 to 15 mana.
+set emberheart prop1 [] -> [res-fire]
+set emberheart min1 [] -> [25]
+set emberheart max1 [] -> [35]
+set emberheart prop2 [] -> [mag%]
+set emberheart min2 [] -> [20]
+set emberheart max2 [] -> [30]
+set emberheart prop3 [] -> [mana]
+set emberheart min3 [] -> [10]
+set emberheart max3 [] -> [15]

@@ -359,6 +359,13 @@ struct Shared {
     stash_kit: Option<super::shared_stash::Kit>,
     /// A mod game's own stash panel (`crate::mods::stash`).
     mod_stash: Option<crate::mods::stash::ModStash>,
+    /// A mod game's market link (`crate::mods::market_link`): when the mod
+    /// draws the market window, the market key and the Market buttons ask
+    /// it to open instead of D2Gamma's window.
+    mod_market: Option<crate::mods::ModMarket>,
+    /// A mod game's own inventory panel replaces the game's
+    /// (`ClientMods::has_own_inventory`): no tip over the game's layout.
+    own_inventory: bool,
     /// The market window ([`super::market`], [`market_ui`]).
     market: super::market::MarketUi,
     /// The overhead text bubbles ([`overhead_ui`]).
@@ -413,6 +420,11 @@ struct Shared {
     /// Ran (an `hst ` / `qf2 ` arrived in page 3): the
     /// animation starts at the cube's next draw.
     horadric_start: std::cell::Cell<bool>,
+    /// The pet types' icons (`pettype`, `merc_portrait`).
+    pet_icons: merc_portrait::PetIcons,
+    /// The portrait life bar's green, yellow and red in the act palette;
+    /// `None` until the host sets the palette (no bar).
+    merc_bar_colors: Option<[u8; 3]>,
 }
 
 impl Shared {
@@ -426,6 +438,12 @@ impl Shared {
     /// [`Self::ui_ms`] as the 32-bit millisecond clock.
     pub(super) fn ui_ms32(&self, frames: u64) -> u32 {
         self.ui_ms(frames) as u32
+    }
+
+    /// The mod's market link when the mod draws the market window
+    /// (`crate::mods::ModMarket::draws_window`).
+    pub(super) fn mod_window(&self) -> Option<&crate::mods::ModMarket> {
+        self.mod_market.as_ref().filter(|l| l.owns_window())
     }
 
     /// The shop's UI flag (the NPC menu box's Esc delegation).
@@ -513,6 +531,8 @@ pub struct OriginalUi {
 
 #[derive(Debug, thiserror::Error)]
 pub enum OriginalUiError {
+    #[error("mod UI: {0}")]
+    ModUi(String),
     #[error(transparent)]
     Layout(#[from] LayoutError),
     #[error(transparent)]
@@ -554,6 +574,10 @@ impl OriginalUi {
             .extend([super::panels::border::SIDE_FILE.to_string()]);
         // D2RUST's own cels (after it: no file's id moves).
         tables.files.extend(super::own_art::own_files());
+        // The base game's pet icons (after it: no file's id moves).
+        tables
+            .files
+            .extend(merc_portrait::PetIcons::default().files());
         // Mini panel start: the game entry set-up opens the mini panel (state 0x15) and
         // then the help button (0x22). Without a registry neither `Mini
         // Panel` nor `Help Menu` is set at the start; a check run replays
@@ -608,6 +632,8 @@ impl OriginalUi {
             shared_stash: Default::default(),
             stash_kit: None,
             mod_stash: None,
+            mod_market: None,
+            own_inventory: false,
             market: super::market::MarketUi::new(),
             bubbles: Default::default(),
             cube_opened: false,
@@ -631,6 +657,8 @@ impl OriginalUi {
             button_hover: Default::default(),
             popup_taken: Default::default(),
             horadric_start: Default::default(),
+            pet_icons: Default::default(),
+            merc_bar_colors: None,
         };
         Ok(Self {
             shared: Rc::new(RefCell::new(shared)),
@@ -663,6 +691,7 @@ impl OriginalUi {
     /// panels then take the place of the panels they replace.
     pub fn install(&self, root: &mut UiRoot) -> Result<(), UiError> {
         let sh = &self.shared;
+        mod_reads::attach(sh);
         root.add(Box::new(hud::WarnUi { sh: sh.clone() }))?;
         root.add(Box::new(quest_log_ui::QuestLogUi {
             sh: sh.clone(),
@@ -704,6 +733,11 @@ impl OriginalUi {
             sh: sh.clone(),
             own_hud: self.mods.hud_rows().is_some(),
         }))?;
+        root.add(Box::new(merc_portrait::MercPortraitUi {
+            sh: sh.clone(),
+            hover_since: Default::default(),
+        }))?;
+        root.open(merc_portrait::MERC_PORTRAIT_PANEL)?;
         root.add(Box::new(hud::HudUi { sh: sh.clone() }))?;
         // Only with a mod game's HUD lines, so D2RUST's own root is
         // unchanged.
@@ -713,14 +747,32 @@ impl OriginalUi {
             }))?;
             root.open(super::mod_hud::MOD_HUD_PANEL)?;
         }
-        root.add(Box::new(super::hire_list::HireListUi {
-            st: self.hire.clone(),
-            border: sh
-                .borrow()
-                .tables
-                .files
-                .id(super::box_border::BOXPIECES_FILE),
-        }))?;
+        // Only with a mod's state rules, so D2RUST's own root is unchanged.
+        if let Some(rules) = self.mods.rules().state_rules() {
+            let layers: Vec<std::path::PathBuf> = crate::kit_mod::layers()
+                .into_iter()
+                .map(Into::into)
+                .collect();
+            root.add(Box::new(super::state_icons::StateIconsUi::new(
+                rules.defs(),
+                &layers,
+            )))?;
+            root.open(super::state_icons::STATE_ICONS_PANEL)?;
+        }
+        // A mod game that shows the hire list in its own NPC menu draws
+        // it there (`mod_io::HireOffers`).
+        if self.mods.hire_list_in_npc_menu() {
+            root.add(Box::new(super::hire_list::NoHireList))?;
+        } else {
+            root.add(Box::new(super::hire_list::HireListUi {
+                st: self.hire.clone(),
+                border: sh
+                    .borrow()
+                    .tables
+                    .files
+                    .id(super::box_border::BOXPIECES_FILE),
+            }))?;
+        }
         root.open(super::hire_list::HIRE_PANEL)?;
         root.add(Box::new(npc_box::NpcMenuUi {
             sh: sh.clone(),
@@ -736,9 +788,18 @@ impl OriginalUi {
         // Over the game's panels (the stash it opens from among them).
         root.add(Box::new(market_ui::MarketPanelUi { sh: sh.clone() }))?;
         root.add(Box::new(msg_log_ui::MsgLogUi::new(sh.clone())))?;
-        root.add(Box::new(game_messages::MessagesUi { sh: sh.clone() }))?;
+        let feed = self.mods.panels().next().is_some();
+        root.add(Box::new(game_messages::MessagesUi {
+            sh: sh.clone(),
+            hidden: self.mods.chat_lines_hidden(),
+            feed,
+        }))?;
         root.open(game_messages::MESSAGES_PANEL)?;
-        root.add(Box::new(overhead_ui::OverheadUi { sh: sh.clone() }))?;
+        root.add(Box::new(overhead_ui::OverheadUi {
+            sh: sh.clone(),
+            hidden: self.mods.overhead_bubbles_hidden(),
+            feed,
+        }))?;
         root.open(overhead_ui::OVERHEAD_PANEL)?;
         // The text pass after the overhead bubbles.
         root.add(Box::new(npc_talk::DialogPanelUi {
@@ -960,6 +1021,13 @@ impl OriginalUi {
         self.shared.borrow_mut().hud.belt.parts = parts;
     }
 
+    /// The pet types' icons (`pettype`); the base game's until set. Only
+    /// the icon files registered at start draw
+    /// ([`merc_portrait::PetIcons::default`]).
+    pub fn set_pet_icons(&mut self, icons: merc_portrait::PetIcons) {
+        self.shared.borrow_mut().pet_icons = icons;
+    }
+
     /// The act palette the UI's tint colours
     /// are matched in, set by the host each frame.
     pub fn set_palette(&mut self, palette: &d2_formats::palette::Palette) {
@@ -967,6 +1035,11 @@ impl OriginalUi {
         let mut sh = self.shared.borrow_mut();
         sh.items.tint_colors = super::inv_grid::tint_indices(&p);
         sh.health_bar_color = super::inv_grid::nearest_index(&p, (0x50, 0, 0));
+        let bar = merc_portrait::BAR_RGB.map(|c| super::inv_grid::nearest_index(&p, c));
+        sh.merc_bar_colors = match bar {
+            [Some(g), Some(y), Some(r)] => Some([g, y, r]),
+            _ => None,
+        };
         sh.hud.show_items_blue = super::inv_grid::nearest_index(&p, (0, 0x40, 0x80));
         sh.stash_kit = super::shared_stash::Kit::of(&p);
         sh.market.prices.inks = super::market::price_graph::Inks::of(&p);
@@ -1053,6 +1126,13 @@ impl OriginalUi {
         self.shared.borrow().messages.pending_notes()
     }
 
+    /// A mod game's own inventory panel replaced the game's, so the game
+    /// draws no inventory item tips of its own (tests).
+    #[cfg(test)]
+    pub(crate) fn draws_own_inventory_tips(&self) -> bool {
+        !self.shared.borrow().own_inventory
+    }
+
     /// The mod game registered panels (`crate::mods::PanelFactory`): they
     /// get the frame's key-downs and the per-frame tick.
     pub fn has_mod_panels(&self) -> bool {
@@ -1101,7 +1181,10 @@ impl OriginalUi {
             let files = sh.tables.files.clone();
             sh.mod_stash = Some(crate::mods::stash::ModStash::new(factory.make(&files)));
         }
+        sh.mod_market = mods.market_link().cloned();
+        sh.own_inventory = mods.has_own_inventory();
         drop(sh);
+        self.npcm.borrow_mut().box_hidden = mods.npc_menu_box_hidden();
         self.mods = mods;
     }
 
@@ -1174,6 +1257,10 @@ impl OriginalUi {
         if !sh.market.key.is_chord(key, sh.items.ctrl) {
             return false;
         }
+        if let Some(link) = sh.mod_window() {
+            link.ask_open(crate::mods::OpenAsk::Key);
+            return true;
+        }
         if sh.market.toggle().is_ok() {
             sh.outputs.push(super::panels::PanelOutput::Sound(4));
         }
@@ -1183,10 +1270,10 @@ impl OriginalUi {
     /// The app's market step each frame: the game is `online` or not; the
     /// window's asks go to `source` and its answers come back; lines for
     /// the message area go there.
-    pub fn pump_market(
+    pub fn pump_market<'s>(
         &mut self,
         online: bool,
-        source: Option<&mut (dyn crate::market::source::MarketSource + 'static)>,
+        source: Option<&mut (dyn crate::market::source::MarketSource + 's)>,
     ) {
         let mut sh = self.shared.borrow_mut();
         let sh = &mut *sh;
@@ -1481,6 +1568,11 @@ impl OriginalUi {
                 // it was absent or 0.
                 self.set_ui(u32::from(help_screen::STATE), 2, false)?;
                 self.shared.borrow_mut().hud.help.setting = 1;
+            } else if a == ActionId(Action::OpenChat.index() as u16) && self.mods_chat_prompt() {
+                // A mod game's own chat prompt opens with the chat state
+                // (the chat window of a game on a realm takes the key
+                // before).
+                self.set_ui(u32::from(super::states::id::CHAT), 0, false)?;
             } else if let Some(ui) = hotkey_state(a) {
                 // The Character, Inventory, Party, Skill Tree and
                 // Hireling keys pass jump 1, and the Quest Log key too
@@ -1496,9 +1588,42 @@ impl OriginalUi {
                 }
             }
         }
+        self.apply_mod_requests(root)?;
         self.flush_hooks(root);
         root.sync_states(&self.shared.borrow().states);
         Ok(())
+    }
+
+    /// The mod game shows the hire list in its own NPC menu
+    /// (`ClientMods::with_hire_list_in_npc_menu`).
+    pub(super) fn mods_hire_in_npc_menu(&self) -> bool {
+        self.mods.hire_list_in_npc_menu()
+    }
+
+    /// The mod game has panels of its own (they read `mod_io`'s feeds).
+    pub(super) fn mods_have_panels(&self) -> bool {
+        self.mods.panels().next().is_some()
+    }
+
+    /// The NPC (GUID) the client's NPC interaction is with, while one is.
+    pub(super) fn npc_menu_guid(&self) -> Option<u32> {
+        self.more.interact_active.then_some(self.more.interact_npc)
+    }
+
+    /// The frame's camera inputs: the host's anchor and the open mode.
+    pub(super) fn camera_inputs(&self) -> (Option<crate::rules::camera::FrameAnchor>, u8) {
+        let sh = self.shared.borrow();
+        (sh.bubbles.anchor, sh.states.open_mode().get())
+    }
+
+    /// The mod game has its own chat prompt (`GamePanel::ChatPrompt`).
+    pub(super) fn mods_chat_prompt(&self) -> bool {
+        self.mods.has_chat_prompt()
+    }
+
+    /// Plays UI sound `id` (a mod panel's request, `mod_io`).
+    pub(super) fn push_ui_sound(&mut self, id: i32) {
+        self.outcome.sounds.push(SoundRequest::Ui(id));
     }
 
     /// Hands the close hooks' messages to the root, in call order.
@@ -2580,22 +2705,26 @@ impl ModelCharacter<'_> {
     /// The Holy Shield term is not modelled here (state 101 is rare on the
     /// character screen; it needs the skill formula).
     fn defense(&self) -> i32 {
-        let w = self.world;
-        let t = |id| w.total(self.key, id, 0);
-        let base = t(31).wrapping_add(t(2) / 4);
-        let p = t(171).wrapping_add(t(16));
-        let bonus = if base > 0 {
-            p.wrapping_mul(base) / 100
-        } else {
-            p.wrapping_mul(base) / -100
-        };
-        let total = base.wrapping_add(bonus);
-        let ovr = t(182);
-        if ovr != 0 {
-            total.wrapping_add(total.wrapping_mul(ovr) / 100)
-        } else {
-            total
-        }
+        character_defense(self.world, self.key)
+    }
+}
+
+/// The character panel's defense of `key` ([`ModelCharacter`]'s stat 31).
+pub(super) fn character_defense(w: &ClientWorld, key: UnitKey) -> i32 {
+    let t = |id| w.total(key, id, 0);
+    let base = t(31).wrapping_add(t(2) / 4);
+    let p = t(171).wrapping_add(t(16));
+    let bonus = if base > 0 {
+        p.wrapping_mul(base) / 100
+    } else {
+        p.wrapping_mul(base) / -100
+    };
+    let total = base.wrapping_add(bonus);
+    let ovr = t(182);
+    if ovr != 0 {
+        total.wrapping_add(total.wrapping_mul(ovr) / 100)
+    } else {
+        total
     }
 }
 
@@ -2948,7 +3077,14 @@ impl Panel for TopUi {
             let class = Facts::of(ctx.world).class;
             let s = sh.config.screen;
             let files = &sh.tables.files;
-            let mut lines = sh.items.hover_lines(ctx.world, files, &s, class, sh.mouse);
+            // A mod game's own inventory panel draws its tips itself: the
+            // game's layout is not where its items are.
+            let own = sh.own_inventory;
+            let mut lines = if own {
+                Vec::new()
+            } else {
+                sh.items.hover_lines(ctx.world, files, &s, class, sh.mouse)
+            };
             let mut anchor = sh
                 .items
                 .hover_anchor(ctx.world, files, &s, class, sh.mouse)
@@ -2956,6 +3092,7 @@ impl Panel for TopUi {
             let mut hovered = sh
                 .items
                 .layout(class, &s)
+                .filter(|_| !own)
                 .and_then(|l| sh.items.item_at(ctx.world, files, &l, sh.mouse));
             // A stash or cube item's tip, as the inventory's.
             if lines.is_empty() {
@@ -3052,6 +3189,8 @@ pub mod gold_dialog;
 pub mod hud;
 #[path = "market_ui.rs"]
 pub mod market_ui;
+#[path = "mod_reads.rs"]
+pub mod mod_reads;
 #[path = "options_menu.rs"]
 pub mod options_menu;
 #[path = "overhead_ui.rs"]
@@ -3088,6 +3227,8 @@ pub mod skill_hover;
 #[path = "skill_hover_lines.rs"]
 pub mod skill_hover_lines;
 use cursor_ui::cursor_files;
+#[path = "merc_portrait.rs"]
+pub mod merc_portrait;
 #[path = "quest_log_ui.rs"]
 pub mod quest_log_ui;
 #[cfg(test)]

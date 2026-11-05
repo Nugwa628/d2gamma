@@ -19,6 +19,7 @@ use crate::stats::states::state;
 use crate::units::modes::{monster_mode, player_mode};
 use crate::units::{UnitId, UnitType};
 
+use crate::combat::cc;
 use crate::combat::damage::element_hit_class;
 use crate::combat::CombatWorld;
 use crate::monsters::ai::{AiModes, ModeTarget};
@@ -76,11 +77,54 @@ pub fn reaction<X: Pending>(
         }
         return;
     }
-    match cv.game.lists.unit(d).map(|e| e.ty) {
+    // A cast past its point is not interrupted; a hit that kills still kills.
+    if !will_die && cast_committed(cv, d) {
+        return;
+    }
+    let ty = cv.game.lists.unit(d).map(|e| e.ty);
+    // A defender class that takes declared crowd control only reacts to the
+    // interrupt and knockback its hit's source declared.
+    if ty.is_some_and(|t| cc::is_declared(cv.v.h.rules.global_rules(), t)) {
+        cc::strip_reaction(rec);
+    }
+    // A defender in the mod's crowd-control immunity state does not react at all.
+    if cv
+        .v
+        .h
+        .rules
+        .cc_immune_state()
+        .is_some_and(|s| cv.v.stats.has_state(d, u32::from(s)))
+    {
+        cc::strip_all_reactions(rec);
+    }
+    match ty {
         Some(UnitType::Monster) => monster_hit(cv, a, d, rec),
         Some(UnitType::Player) => player_hit(cv, a, d, rec),
         _ => {}
     }
+}
+
+/// Whether the unit `d` is casting and has passed its uninterruptible point
+/// (`cast` in `rules.toml`; [`crate::skills::cast_point`]): the cast cannot be
+/// cancelled by a hit or by a new action. Nothing is read when the rules have no
+/// point, so a game without them behaves as before.
+pub fn cast_committed<X: Pending>(cv: &CombatView<'_, X>, d: UnitId) -> bool {
+    let rules = &cv.v.h.rules.global_rules().cast;
+    if rules.is_off() {
+        return false;
+    }
+    let Some(r) = cv.v.units.get(d) else {
+        return false;
+    };
+    let Some(ty) = cv.game.lists.unit(d).map(|e| e.ty) else {
+        return false;
+    };
+    if !crate::skills::cast_point::is_skill_mode(ty, r.mode) {
+        return false;
+    }
+    cv.v.h.used_skill_of(d).is_some_and(|e| {
+        crate::skills::cast_point::committed(rules, e.skill, r.anim.frame, r.anim.frame_count)
+    })
 }
 
 /// Unit flag 0x8000, the "soft" hit: the client is told with S->C 0x0C.
@@ -166,6 +210,10 @@ fn monster_hit<X: Pending>(
         return;
     }
     let has_mode = |cv: &CombatView<'_, X>, m: u8| cv.v.h.x.class_has_mode(class as i32, m);
+    let knockback = cv.v.h.rules.global_rules().monsters.knockback.active();
+    if !knockback {
+        rec.result &= !result::KNOCKBACK;
+    }
     // A knockback on a class with no knockback mode becomes a get-hit.
     if rec.result & result::KNOCKBACK != 0 && !has_mode(cv, MONSTER_KB) {
         rec.result = (rec.result & !result::KNOCKBACK) | result::GET_HIT;
@@ -178,9 +226,14 @@ fn monster_hit<X: Pending>(
             .monstats
             .get(class as usize)
             .is_some_and(|m| m.baseid == SANDLEAPER_BASE);
-        if leaper && !cv.v.stats.has_state(d, STATE_FREEZE) {
+        if knockback && leaper && !cv.v.stats.has_state(d, STATE_FREEZE) {
             rec.result |= result::KNOCKBACK;
         }
+    }
+    let rules = cv.v.h.rules.global_rules();
+    let unit_rules = rules.unit(UnitType::Monster);
+    if !unit_rules.hit_recovery.timing().active() {
+        rec.result &= !result::GET_HIT;
     }
     let f = rec.result;
     // A fatal hit kills the monster.
@@ -196,7 +249,8 @@ fn monster_hit<X: Pending>(
     // Block: a soft hit, a class that never blocks or one with no block
     // mode only sets the AI state; otherwise the block mode is requested.
     if f & result::BLOCK != 0 {
-        if f & result::SOFT_HIT != 0
+        if !cv.v.h.rules.global_rules().block_animation
+            || f & result::SOFT_HIT != 0
             || NO_BLOCK_CLASSES.contains(&class)
             || !has_mode(cv, MONSTER_BL)
         {
@@ -336,7 +390,7 @@ fn player_hit<X: Pending>(cv: &mut CombatView<'_, X>, a: UnitId, d: UnitId, rec:
     }
     // Block.
     if f & (result::BLOCK | result::WEAPON_BLOCK) != 0 {
-        if f & result::SOFT_HIT != 0 {
+        if !cv.v.h.rules.global_rules().block_animation || f & result::SOFT_HIT != 0 {
             return;
         }
         let frame = cv.game.frame;
@@ -362,13 +416,23 @@ fn player_hit<X: Pending>(cv: &mut CombatView<'_, X>, a: UnitId, d: UnitId, rec:
         return;
     }
     // Knockback.
-    if f & result::KNOCKBACK != 0 {
+    if f & result::KNOCKBACK != 0 && cv.v.h.rules.global_rules().players.knockback.active() {
         let t = attacker_target(cv, a);
         player_request(cv, d, None, PLAYER_KB, t);
         return;
     }
     // Get-hit.
-    if f & result::GET_HIT != 0 {
+    if f & result::GET_HIT != 0
+        && cv
+            .v
+            .h
+            .rules
+            .global_rules()
+            .players
+            .hit_recovery
+            .timing()
+            .active()
+    {
         if cv.v.state_list(d, STATE_STUNNED as u16).is_none() && !enters_get_hit(cv, d, rec) {
             soft(cv, d);
         } else {
@@ -715,8 +779,8 @@ fn hireling_kill_share<X: Pending>(
     use crate::combat::pct;
     use crate::combat::vitals::level_factor;
     use crate::world::hirelings::level::{exp_delta_message, GAIN_CAP, NON_KILLER_SHARE};
-    use crate::world::hirelings::rows::threshold;
     use crate::world::hirelings::stat;
+    use crate::world::npc::npc_rules::merc_exp;
     let Some((h, id)) =
         v.h.hireling_ai
             .ids
@@ -754,8 +818,9 @@ fn hireling_kill_share<X: Pending>(
         // H is `p`'s, with a row at alvl: the gain is capped by a step of
         // its level table.
         if let Some(r) = row(alvl) {
-            let step = (threshold(r.exp_lvl, alvl.wrapping_add(1))
-                .wrapping_sub(threshold(r.exp_lvl, alvl)) as u32)
+            let rules = &v.h.rules;
+            let step = (merc_exp(rules, &r, alvl.wrapping_add(1))
+                .wrapping_sub(merc_exp(rules, &r, alvl)) as u32)
                 >> 6;
             g = (g as u32).min(step) as i32;
         }
@@ -784,7 +849,7 @@ fn hireling_kill_share<X: Pending>(
     let mut lvl = alvl;
     loop {
         let next = lvl.wrapping_add(1);
-        if threshold(r.exp_lvl, next) as u32 > new {
+        if merc_exp(&v.h.rules, &r, next) as u32 > new {
             break;
         }
         lvl = next;

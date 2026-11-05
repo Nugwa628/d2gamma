@@ -79,6 +79,20 @@ impl TickRate {
         (upto(i + 1) - upto(i)) as i32
     }
 
+    /// Animation advancement with optional 40 ms steps. The game clock and movement
+    /// keep their actual rate. Integer base-frame boundaries alternate two and three
+    /// host ticks at 60 Hz; the total advancement over a second is unchanged.
+    pub fn animation_share(self, speed: i32, tick: i32, classic: bool) -> i32 {
+        if !classic || self.is_base() {
+            return self.share(speed, tick);
+        }
+        let hz = i64::from(self.hz);
+        let t = i64::from(tick);
+        let base = i64::from(crate::TICKS_PER_SECOND);
+        let steps = ((t + 1) * base).div_euclid(hz) - (t * base).div_euclid(hz);
+        (i64::from(speed) * steps) as i32
+    }
+
     /// The amount `ticks` ticks at this rate add up to, for an amount stated
     /// per base-rate tick (`v · ticks · 25 / hz`, rounded down): the closed
     /// form of [`Self::share`] summed from a start, for a clock that reads

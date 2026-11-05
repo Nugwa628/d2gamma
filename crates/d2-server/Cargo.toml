@@ -8,6 +8,8 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+d2-modkit.workspace = true
+d2-item-text.workspace = true
 d2-sim.workspace = true
 d2-data.workspace = true
 d2-formats.workspace = true
@@ -15,6 +17,7 @@ d2-native.workspace = true
 d2-proto.workspace = true
 d2-net.workspace = true
 thiserror.workspace = true
+mlua = { version = "0.11", features = ["luau", "vendored", "send"] }
 
 [lints]
 workspace = true

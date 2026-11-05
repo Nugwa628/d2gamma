@@ -1,13 +1,13 @@
 //! [`HostStates`] on the skill use view.
 
 use crate::combat::CombatWorld;
-use crate::rules::{HostStates, StateRemove, StateSpec, StateStat};
+use crate::rules::{HostStates, RuledState, StateRemove, StateSpec, StateStat};
 use crate::skills::use_::bodies::{self, callback, group, BodyWorld};
 use crate::skills::SkillUnits;
 use crate::stats::lists::ListId;
 use crate::stats::{key_layer, key_stat};
 use crate::units::UnitId;
-use crate::wiring::action::units::MOD_STATE_REMOVED;
+use crate::wiring::action::units::{MOD_STATE_REMOVED, MOD_TIMED_BUFF_REMOVED};
 use crate::wiring::action::Pending;
 use crate::wiring::interaction::{UseRest, UseView};
 
@@ -38,6 +38,19 @@ pub(in crate::wiring::interaction) fn run_remove_callback<X: Pending + UseRest>(
         }
         return;
     }
+    if cb == crate::wiring::action::units::MOD_FORM_REMOVED {
+        BodyWorld::state_on(w, u, state, false);
+        let rules = w.cv.v.h.rules.clone();
+        if let (Some(p), Ok(state)) = (rules.skills(), u16::try_from(state)) {
+            p.form_removed(w, u, state);
+        }
+        return;
+    }
+    let cb = if cb == MOD_TIMED_BUFF_REMOVED {
+        callback::BUFF
+    } else {
+        cb
+    };
     let t = w.cv.v.h.tables.clone();
     bodies::remove_callback(w, &t.skills, &t.combat, u, state, cb, l);
 }
@@ -131,10 +144,84 @@ impl<X: Pending + UseRest> HostStates for UseView<'_, X> {
         BodyWorld::queue_update(self, u);
         true
     }
+    fn enter_trigger(&mut self) -> bool {
+        self.enter()
+    }
+    fn leave_trigger(&mut self) {
+        self.leave();
+    }
+    fn apply_ruled_state(&mut self, source: UnitId, target: UnitId, spec: &RuledState) -> bool {
+        self.apply_ruled(source, target, spec).is_some()
+    }
+    fn state_stacks(&self, u: UnitId, state: u16) -> u16 {
+        match BodyWorld::state_list(self, u, i32::from(state)) {
+            Some(l) => BodyWorld::list_stacks(self, l).max(1),
+            None => 0,
+        }
+    }
+    fn add_state_stacks(
+        &mut self,
+        source: UnitId,
+        target: UnitId,
+        spec: &RuledState,
+        count: u16,
+    ) -> u16 {
+        let s = i32::from(spec.state);
+        let Some(l) = BodyWorld::state_list(self, target, s) else {
+            // Not on: the state comes on with one stack, then the rest.
+            if self.apply_ruled(source, target, spec).is_none() {
+                return 0;
+            }
+            return self.add_state_stacks(source, target, spec, count.saturating_sub(1));
+        };
+        let Some(def) = BodyWorld::state_def(self, s) else {
+            return 1;
+        };
+        let current = BodyWorld::list_stacks(self, l).max(1);
+        let next = current
+            .saturating_add(count)
+            .min(def.max_stacks as u16)
+            .max(current);
+        if next != BodyWorld::list_stacks(self, l) {
+            self.set_stacks_of(l, target, s, &def, next);
+        }
+        next
+    }
+    fn remove_state_stacks(&mut self, u: UnitId, state: u16, count: u16) -> u16 {
+        let s = i32::from(state);
+        let Some(l) = BodyWorld::state_list(self, u, s) else {
+            return 0;
+        };
+        let current = BodyWorld::list_stacks(self, l).max(1);
+        let Some(def) = BodyWorld::state_def(self, s) else {
+            // A state without stack rules has one stack.
+            if count > 0 {
+                HostStates::clear_state(self, u, state);
+                return 0;
+            }
+            return current;
+        };
+        let left = current.saturating_sub(count);
+        if left == 0 {
+            HostStates::clear_state(self, u, state);
+            return 0;
+        }
+        if left != current {
+            self.set_stacks_of(l, u, s, &def, left);
+        }
+        left
+    }
+    /// The mod's own removal: the state's end is not told to its triggers
+    /// (they would answer their own action).
     fn clear_state(&mut self, u: UnitId, state: u16) {
         let s = i32::from(state);
         if let Some(l) = BodyWorld::state_list(self, u, s) {
+            let queued = self.cv.v.h.removed_lists.len();
             BodyWorld::detach_free(self, u, l);
+            let h = &mut *self.cv.v.h;
+            if h.removed_lists.iter().skip(queued).any(|e| e.3 == l) {
+                h.quiet_lists.push(l);
+            }
         }
         BodyWorld::state_on(self, u, s, false);
     }
@@ -168,5 +255,43 @@ impl<X: Pending + UseRest> HostStates for UseView<'_, X> {
     }
     fn clear_state_events(&mut self, u: UnitId, state: u16) {
         bodies::unregister(self, u, 1, i32::from(state));
+    }
+}
+
+impl<X: Pending + UseRest> UseView<'_, X> {
+    /// Puts the state on through the engine's standard apply
+    /// ([`bodies::apply_state`]), which honours the state's stack rules.
+    fn apply_ruled(&mut self, source: UnitId, target: UnitId, spec: &RuledState) -> Option<ListId> {
+        let ct = self.cv.v.h.tables.combat.clone();
+        bodies::apply_state(
+            self,
+            &ct,
+            bodies::StateRequest {
+                source,
+                target,
+                skill: spec.skill,
+                level: spec.level,
+                duration: spec.base_ticks,
+                stat: -1,
+                value: 0,
+                state: i32::from(spec.state),
+                callback: 0,
+            },
+        )
+    }
+
+    /// Writes `stacks` on the list with the state's per-stack values and
+    /// tells the client.
+    fn set_stacks_of(
+        &mut self,
+        l: ListId,
+        u: UnitId,
+        state: i32,
+        def: &crate::rules::StateDef,
+        stacks: u16,
+    ) {
+        BodyWorld::set_list_stacks(self, l, stacks);
+        bodies::stack_state::write_effects(self, l, def, stacks);
+        BodyWorld::mark_state_changed(self, u, state);
     }
 }

@@ -1,0 +1,211 @@
+version = 1
+
+# monstats aip1..aip5 of the vampire1 row 131 (Normal): 55, 20, 24, 25, 3.
+# aip5 = 3 is a bit field: bit 1 lets it cast skill 1 and skill 4 (the bolts) at its second target, bit 2 lets it upgrade
+# with skill 2. The body keeps its phase in its AI params: 1 normal, 2 retreating (below a third of its life, until 75 percent).
+# The bolts go to the *second target* (the nearest enemy, within 20), as in the body.
+# A state holds at most eight actions, so the swinging part is its own state, `melee`.
+[[ai]]
+index = 28
+name = "Vampire (lifted)"
+target = "enemy"
+
+# The body stands (15 frames at a time) until its target comes within aip3 = 24; only then does it set its phase to 1.
+[[ai.state]]
+name = "dormant"
+
+[[ai.state.transition]]
+to = "normal"
+when = [{ kind = "distance_below", value = 24 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6
+
+[[ai.state]]
+name = "normal"
+
+[[ai.state.transition]]
+to = "retreat"
+when = [{ kind = "life_below", percent = 33 }]
+
+[[ai.state.transition]]
+to = "melee"
+when = [{ kind = "in_melee" }]
+
+[[ai.state.transition]]
+to = "near"
+when = [{ kind = "distance_below", value = 9 }]
+
+# The body's near-but-not-in-reach step, worked out for the target 9 to 23 subtiles away (one player in the arena is both the target
+# and the second target). Per 100 thinks: 80 take the "other" branch (farther than 20 walk toward it, else half circle, half stand),
+# 20 take the cast branch (the upgrade 25 percent, then a bolt 75 percent, half skill 1 and half skill 4, else circle; with no second
+# target in 20, walk). That comes to: upgrade 5, skill 1 5.6, skill 4 5.6, circle 43.8, stand 40; and farther than 20: walk 95, upgrade 5.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "distance_above", value = 24 }]
+
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "distance_above", value = 20 }, { kind = "random", percent = 95 }]
+
+[[ai.state.action]]
+kind = "use_skill"
+slot = 2
+when = [{ kind = "distance_above", value = 20 }]
+
+[[ai.state.action]]
+kind = "use_skill"
+slot = 2
+when = [{ kind = "random", percent = 5 }]
+
+[[ai.state.action]]
+kind = "use_skill"
+slot = 1
+at = "second"
+when = [{ kind = "second_distance_below", value = 21 }, { kind = "random", percent = 6 }]
+
+[[ai.state.action]]
+kind = "use_skill"
+slot = 4
+at = "second"
+when = [{ kind = "second_distance_below", value = 21 }, { kind = "random", percent = 6 }]
+
+[[ai.state.action]]
+kind = "move_around"
+steps = 4
+when = [{ kind = "random", percent = 52 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4
+
+# Closer than 9: the same, and 40 of every 100 back off 8 steps.
+[[ai.state]]
+name = "near"
+
+[[ai.state.transition]]
+to = "retreat"
+when = [{ kind = "life_below", percent = 33 }]
+
+[[ai.state.transition]]
+to = "melee"
+when = [{ kind = "in_melee" }]
+
+[[ai.state.transition]]
+to = "normal"
+when = [{ kind = "distance_above", value = 8 }]
+
+[[ai.state.action]]
+kind = "use_skill"
+slot = 2
+when = [{ kind = "random", percent = 5 }]
+
+[[ai.state.action]]
+kind = "use_skill"
+slot = 1
+at = "second"
+when = [{ kind = "second_distance_below", value = 21 }, { kind = "random", percent = 6 }]
+
+[[ai.state.action]]
+kind = "use_skill"
+slot = 4
+at = "second"
+when = [{ kind = "second_distance_below", value = 21 }, { kind = "random", percent = 6 }]
+
+[[ai.state.action]]
+kind = "move_away"
+steps = 8
+when = [{ kind = "random", percent = 48 }]
+
+[[ai.state.action]]
+kind = "move_around"
+steps = 4
+when = [{ kind = "random", percent = 54 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4
+
+[[ai.state]]
+name = "melee"
+
+[[ai.state.transition]]
+to = "retreat"
+when = [{ kind = "life_below", percent = 33 }]
+
+[[ai.state.transition]]
+to = "normal"
+when = [{ kind = "distance_above", value = 4 }]
+
+# In reach: aip1 = 55% act: of those 70% swing 1, else cast a bolt (skill 1 or skill 4); else 33% circle, else stand 10 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "random", percent = 39 }]
+
+[[ai.state.action]]
+kind = "use_skill"
+slot = 1
+at = "second"
+when = [{ kind = "second_distance_below", value = 21 }, { kind = "random", percent = 13 }]
+
+[[ai.state.action]]
+kind = "use_skill"
+slot = 4
+at = "second"
+when = [{ kind = "second_distance_below", value = 21 }, { kind = "random", percent = 15 }]
+
+[[ai.state.action]]
+kind = "move_around"
+steps = 4
+when = [{ kind = "random", percent = 33 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4
+
+[[ai.state]]
+name = "retreat"
+
+[[ai.state.transition]]
+to = "normal"
+when = [{ kind = "life_above", percent = 75 }]
+
+# Close (nearer than 14): back off 8 steps; farther than aip3 = 24, or 80% of the time: stand 15 frames; else the upgrade
+# (skill 2, aip4 = 25%), a bolt at the second target (half skill 1, half skill 4), else circle.
+[[ai.state.action]]
+kind = "move_away"
+steps = 8
+when = [{ kind = "distance_below", value = 14 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6
+when = [{ kind = "distance_above", value = 24 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6
+when = [{ kind = "random", percent = 80 }]
+
+[[ai.state.action]]
+kind = "use_skill"
+slot = 2
+when = [{ kind = "random", percent = 25 }]
+
+[[ai.state.action]]
+kind = "use_skill"
+slot = 1
+at = "second"
+when = [{ kind = "second_distance_below", value = 21 }, { kind = "random", percent = 50 }]
+
+[[ai.state.action]]
+kind = "use_skill"
+slot = 4
+at = "second"
+when = [{ kind = "second_distance_below", value = 21 }]
+
+[[ai.state.action]]
+kind = "move_around"
+steps = 4

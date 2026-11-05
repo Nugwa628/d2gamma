@@ -27,7 +27,7 @@ pub(crate) const MIGRATIONS: &[&str] = &[
 ];
 
 /// The realm database of `mod_id` under the main server's data folder:
-/// `<data>/realms/<mod_id>/realm.sqlite`. Mod IDs are 1 to 32 characters
+/// `<data>/realms/<mod_id>/realm.sqlite`. Mod IDs are 1 to 40 characters
 /// of `a-z`, `0-9`, `-` and `_`.
 pub fn realm_db_path(data: &Path, mod_id: &str) -> Result<PathBuf, Error> {
     check_mod_id(mod_id)?;
@@ -35,7 +35,7 @@ pub fn realm_db_path(data: &Path, mod_id: &str) -> Result<PathBuf, Error> {
 }
 
 fn check_mod_id(mod_id: &str) -> Result<(), Error> {
-    let ok = (1..=32).contains(&mod_id.len())
+    let ok = (1..=40).contains(&mod_id.len())
         && mod_id
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_');

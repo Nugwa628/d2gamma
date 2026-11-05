@@ -71,6 +71,10 @@ pub struct Isc {
 /// The itemstatcost rows by stat id. A stat without a row reads as all
 /// zero (`Save Bits` 0: never written).
 pub trait IscTable {
+    /// Explicit mod codec selection. Base streams retain nine-bit ids.
+    fn wide_stats(&self) -> bool {
+        false
+    }
     fn isc(&self, stat: u16) -> Isc;
     /// The stat has an `itemstatcost` row (the reader ends a list at an id
     /// without one).
@@ -653,7 +657,10 @@ fn full(
             }
         }
         if c == 0 || list.is_some() || runeword {
-            w.raw(9, TERMINATOR);
+            w.raw(
+                if t.wide_stats() { 16 } else { 9 },
+                if t.wide_stats() { 0xFFFF } else { TERMINATOR },
+            );
         }
     }
 }
@@ -690,7 +697,7 @@ fn put_list(w: &mut BitWriter, list: &[StatEntry], t: &dyn IscTable) {
             .find(|e| e.stat == s && e.param == 0)
             .map_or(0, |e| e.value)
     };
-    for e in list.iter().take(511) {
+    for e in list.iter().take(if t.wide_stats() { 65535 } else { 511 }) {
         let (s, v) = (e.stat, e.value);
         let c = t.isc(s);
         if c.save_bits == 0
@@ -699,7 +706,7 @@ fn put_list(w: &mut BitWriter, list: &[StatEntry], t: &dyn IscTable) {
         {
             continue;
         }
-        w.raw(9, u32::from(s));
+        w.raw(if t.wide_stats() { 16 } else { 9 }, u32::from(s));
         match s {
             17 | 48 | 50 | 52 | 54 | 57 => {
                 isc_put(w, t, s, v >> c.valshift);

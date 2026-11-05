@@ -82,7 +82,12 @@ impl Session {
 
     fn join_answer(&mut self, r: LobbyRequest, wait: Duration) -> Result<JoinOk, OnlineError> {
         let body = self.request(r.body(), &[kind::JOIN_OK, kind::JOIN_NODE], wait)?;
-        JoinOk::parse(&body).ok_or(OnlineError::Malformed)
+        let joined = JoinOk::parse(&body).ok_or(OnlineError::Malformed)?;
+        if let JoinTo::Node(node) = &joined.to {
+            d2_net::mod_identity::check(node.mod_identity.as_ref(), self.mod_identity())
+                .map_err(OnlineError::from)?;
+        }
+        Ok(joined)
     }
 
     /// Subscribe to the game list: a snapshot comes, then updates, as

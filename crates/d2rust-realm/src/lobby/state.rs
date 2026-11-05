@@ -452,6 +452,7 @@ impl LobbyState {
     /// The list entry of `g` as `c` sees it.
     pub fn info(&self, c: &LobbyChar, g: &OpenGame) -> GameInfo {
         GameInfo {
+            mod_identity: None,
             game_id: g.id,
             name: g.name.clone(),
             difficulty: g.difficulty,

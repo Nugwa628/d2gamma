@@ -104,7 +104,10 @@ impl Entry {
     /// Difficulties open: 1 Normal, 2 + Nightmare, 3 + Hell (the thresholds of
     /// the save's progression byte, [`d2_formats::d2s::status::difficulties`]).
     pub fn difficulties_open(&self) -> u8 {
-        d2_formats::d2s::status::difficulties(self.status).count_ones() as u8
+        crate::kit_mod::ruleset().difficulties().map_or_else(
+            || d2_formats::d2s::status::difficulties(self.status).count_ones() as u8,
+            |d| d.count() as u8,
+        )
     }
     /// Paper doll `(class', mode)`: softcore mode 5; hardcore
     /// alive mode 1 (expansion front end); hardcore dead class' 8 / 9, mode 5.
@@ -906,7 +909,7 @@ impl CharSelect {
                     difficulties_open: open,
                     entry: e,
                 });
-                if open > 1 {
+                if open > 1 && crate::kit_mod::ruleset().difficulties().is_none() {
                     // The difficulty box opens over the list.
                     self.model.as_mut()?.popup = Popup::Difficulty { hell: open >= 3 };
                     return self.again();

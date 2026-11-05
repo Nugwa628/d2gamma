@@ -3,6 +3,9 @@
 # box, without root.
 #
 #   server-ctl setup [--node]        first install: folders, config, identity, scheduler (--node: a game server)
+#                                    --node --program NAME: a mod game's own game server program (default
+#                                    d2rust-node); --release BASE, --release-tag PREFIX, --release-package
+#                                    NAME: the folder's release channel (below)
 #   server-ctl --realm NAME COMMAND  the same for a second realm on this box (a mod's), see below; setup
 #                                    takes --port N (required) and --label TEXT
 #   server-ctl install <binary>      add a version, check it, switch to it, restart (rolls back if it won't start)
@@ -35,7 +38,9 @@
 #   d2rust-realm.cfg (0600)   identity/   data/   game/   logs/   backups/   run/
 #   data/realms/<mod>/realm.sqlite    one database per mod realm (its characters and economy)
 #   release-signers   release.token (optional, 0600)   downloads/      used by `upgrade` and `fetch`
-#   program           d2rust-realm, or d2rust-node for a game server (`setup --node`)
+#   program           d2rust-realm, or the game server's program (`setup --node`: d2rust-node, or a
+#                     mod game's own, `--program mygame-node`); its config is <program>.cfg
+#   channel           optional: the folder's release channel (`setup --release ...`), below
 #
 # A game server's folder is the same, with d2rust-node.cfg (`update_command = server-ctl`) and no
 # backups. During an upgrade its d2rust-node fetches the version (`server-ctl fetch V`), and at zero
@@ -50,6 +55,13 @@
 # The realm's name is written to the folder's `realm` file by `setup`, so the units, cron and
 # every later command in that folder need no flag. Install, upgrade, rollback and backup touch
 # only that folder's realm. Without --realm nothing changes: ~/d2rust-server, d2rust-realm.service.
+#
+# A mod game's game server (`setup --node --program mygame-node`) is the same with the mod's program
+# (bin/mygame-node-<version>, mygame-node.cfg made from d2rust-node.cfg.example) and, with
+# `--release BASE --release-tag PREFIX --release-package NAME`, its own release channel in the
+# folder's `channel` file: `fetch V` and `upgrade V` download <BASE>/<PREFIX>V/<NAME>-V-linux-x86_64.tar.gz
+# (with SHA256SUMS.linux, signed as D2Gamma's releases are, by a key in release-signers) holding
+# <NAME>-V/bin/<program>. Without a channel file: D2Gamma's releases (server-V, d2rust-server-V).
 #
 # Two ways to keep the server running, picked by `setup` (and again by every `install`);
 # D2RUST_SERVER_MODE=systemd|cron|none forces one (none: no scheduler, for tests):
@@ -73,8 +85,24 @@ case "$REALM" in
         printf 'server-ctl: realm name %s: 1-15 of a-z and 0-9, not "backup"\n' "$REALM" >&2
         exit 2 ;;
 esac
-SETUP_NODE=
-[ "${1:-}" = setup ] && [ "${2:-}" = --node ] && SETUP_NODE=1
+SETUP_NODE= SETUP_PROGRAM=d2rust-node
+if [ "${1:-}" = setup ] && [ "${2:-}" = --node ]; then
+    SETUP_NODE=1
+    prev=
+    for a in "$@"; do
+        [ "$prev" = --program ] && SETUP_PROGRAM=$a
+        prev=$a
+    done
+    unset prev a
+fi
+# A program name: a-z, 0-9 and '-', 1-31 long.
+valid_program() {
+    case "$1" in "" | -* | *[!a-z0-9-]* | ????????????????????????????????*) return 1 ;; esac
+}
+if [ -n "$SETUP_NODE" ] && { ! valid_program "$SETUP_PROGRAM" || [ "$SETUP_PROGRAM" = d2rust-realm ]; }; then
+    printf 'server-ctl: --program %s: a game server program name (a-z, 0-9, -)\n' "$SETUP_PROGRAM" >&2
+    exit 2
+fi
 HERE_DIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)
 if [ -n "${D2RUST_SERVER_HOME:-}" ]; then
     HOME_DIR=$D2RUST_SERVER_HOME
@@ -88,11 +116,12 @@ else
 fi
 # The folder's own realm (written by `setup --realm`), when none was named.
 [ -n "$REALM" ] || REALM=$(cat "$HOME_DIR/realm" 2>/dev/null)
-# The program it runs: the main server, or a game server (`setup --node` writes `program`).
+# The program it runs: the main server, or a game server (`setup --node` writes `program`):
+# d2rust-node or a mod game's own game server program.
 PROGRAM=$(cat "$HOME_DIR/program" 2>/dev/null)
-[ -n "$SETUP_NODE" ] && PROGRAM=d2rust-node
-[ "$PROGRAM" = d2rust-node ] || PROGRAM=d2rust-realm
-is_node() { [ "$PROGRAM" = d2rust-node ]; }
+[ -n "$SETUP_NODE" ] && PROGRAM=$SETUP_PROGRAM
+valid_program "$PROGRAM" || PROGRAM=d2rust-realm
+is_node() { [ "$PROGRAM" != d2rust-realm ]; }
 # The units' base name: d2rust-realm, or d2rust-realm-mymod for a second realm.
 UNIT_BASE=$PROGRAM${REALM:+-$REALM}
 CFG=$HOME_DIR/$PROGRAM.cfg
@@ -112,9 +141,17 @@ START_WAIT=${D2RUST_SERVER_START_WAIT:-45}
 # the release key, whose public half the admin puts once into release-signers
 # (`d2rust-release ssh-ed25519 AAAA...`). release.token, when the repository needs a login to
 # download, holds a read-only download token; it is sent on stdin, never on a command line.
-RELEASE_BASE=${D2RUST_RELEASE_BASE:-}
+# A folder's `channel` file (`setup --release`) names another channel: `base=`, `tag=` and
+# `package=` lines; $D2RUST_RELEASE_BASE (tests) overrides the base.
+CHANNEL=$HOME_DIR/channel
+channel_value() { sed -n "s/^$1=//p" "$CHANNEL" 2>/dev/null | head -n 1; }
+RELEASE_BASE=$(channel_value base)
+RELEASE_BASE=${D2RUST_RELEASE_BASE:-$RELEASE_BASE}
 [ -z "$RELEASE_BASE" ] && [ -s "$HOME_DIR/release-base" ] && RELEASE_BASE=$(tr -d '\r\n' <"$HOME_DIR/release-base")
-RELEASE_TAG=server-
+RELEASE_TAG=$(channel_value tag)
+RELEASE_TAG=${RELEASE_TAG:-server-}
+RELEASE_PACKAGE=$(channel_value package)
+RELEASE_PACKAGE=${RELEASE_PACKAGE:-d2rust-server}
 RELEASE_NAMESPACE=d2rust-release
 SIGNERS=$HOME_DIR/release-signers
 TOKEN_FILE=$HOME_DIR/release.token
@@ -152,17 +189,27 @@ supervisor_pid() {
 }
 
 cmd_setup() {
-    local port= label=
+    local port= label= base= tag= package=
     shift
     while [ $# -gt 0 ]; do
         case "$1" in
             --node) ;;
+            --program) [ -n "$SETUP_NODE" ] && [ $# -ge 2 ] || die "--program NAME goes with --node"; shift ;;
             --port) [ $# -ge 2 ] || die "--port needs a port"; port=$2; shift ;;
             --label) [ $# -ge 2 ] || die "--label needs a text"; label=$2; shift ;;
+            --release) [ $# -ge 2 ] || die "--release needs a base URL"; base=$2; shift ;;
+            --release-tag) [ $# -ge 2 ] || die "--release-tag needs a prefix"; tag=$2; shift ;;
+            --release-package) [ $# -ge 2 ] || die "--release-package needs a name"; package=$2; shift ;;
             *) die "setup: unknown option $1" ;;
         esac
         shift
     done
+    case "$base" in "" | https://* | file://*) ;; *) die "--release $base: an https:// URL" ;; esac
+    case "$tag" in *[!A-Za-z0-9._-]*) die "--release-tag $tag: letters, digits, . _ -" ;; esac
+    if [ -n "$package" ] && ! valid_program "$package"; then die "--release-package $package: a-z, 0-9, -"; fi
+    if [ -z "$base" ] && { [ -n "$tag" ] || [ -n "$package" ]; }; then
+        die "--release-tag and --release-package go with --release BASE"
+    fi
     case "$port" in *[!0-9]*) die "--port $port: a UDP port number" ;; esac
     if [ -n "$REALM" ] && ! is_node && [ ! -f "$CFG" ] && [ -z "$port" ]; then
         die "setup --realm $REALM needs --port N: the other realm already listens on 6112"
@@ -178,6 +225,10 @@ cmd_setup() {
         chmod 700 "$HOME_DIR" "$HOME_DIR/identity" "$HOME_DIR/data" "$HOME_DIR/backups"
     fi
     printf '%s\n' "$PROGRAM" >"$HOME_DIR/program"
+    # The release channel, when named: kept across a setup that names none.
+    if [ -n "$base" ]; then
+        printf 'base=%s\ntag=%s\npackage=%s\n' "$base" "${tag:-server-}" "${package:-d2rust-server}" >"$HOME_DIR/channel"
+    fi
     if [ -n "$REALM" ]; then
         printf '%s\n' "$REALM" >"$HOME_DIR/realm"
     else
@@ -192,6 +243,11 @@ cmd_setup() {
         here=$(dirname "$(readlink -f "$0")")
         example=$here/$PROGRAM.cfg.example
         [ -f "$example" ] || example=$HOME_DIR/$PROGRAM.cfg.example
+        # A mod game's game server reads the same keys as d2rust-node.
+        if is_node && [ ! -f "$example" ]; then
+            example=$here/d2rust-node.cfg.example
+            [ -f "$example" ] || example=$HOME_DIR/d2rust-node.cfg.example
+        fi
         [ -f "$example" ] || die "no $PROGRAM.cfg.example next to server-ctl"
         cp "$example" "$CFG"
         chmod 600 "$CFG"
@@ -539,16 +595,16 @@ fetch() {
 
 valid_version() { expr "$1" : '[0-9][0-9.]*$' >/dev/null; }
 
-# Downloads release `server-<version>` into downloads/<version> and checks it: the signature of
-# SHA256SUMS.linux first (nothing of the package is read before it checks out), the tarball's sum,
-# its VERSION and GLIBC. The checked package is downloads/V/d2rust-server-V; anything that fails
-# leaves nothing behind.
+# Downloads release `<tag><version>` (`server-` unless the folder's channel names another) into
+# downloads/<version> and checks it: the signature of SHA256SUMS.linux first (nothing of the
+# package is read before it checks out), the tarball's sum, its VERSION and GLIBC. The checked
+# package is downloads/V/<package>-V; anything that fails leaves nothing behind.
 stage_release() {
     local ver=$1
     [ -n "$RELEASE_BASE" ] || die "no release download base: set D2RUST_RELEASE_BASE or write it into $HOME_DIR/release-base"
     [ -s "$SIGNERS" ] || die "no $SIGNERS: the admin adds the release key once (tools/server/README.md)"
     command -v ssh-keygen >/dev/null || die "upgrade needs ssh-keygen (openssh-client) to check the signature"
-    local name=d2rust-server-$ver
+    local name=$RELEASE_PACKAGE-$ver
     local tarball=$name-linux-x86_64.tar.gz
     local dl=$HOME_DIR/downloads/$ver f
     refuse() { rm -rf "$dl"; die "$@"; }
@@ -582,7 +638,7 @@ stage_release() {
 # Installed and healthy: this script and the config examples come from the same package as `ver`.
 adopt_package() {
     local ver=$1
-    local pkg=$HOME_DIR/downloads/$ver/d2rust-server-$ver
+    local pkg=$HOME_DIR/downloads/$ver/$RELEASE_PACKAGE-$ver
     if [ -f "$pkg/server-ctl" ]; then
         cp "$pkg/server-ctl" "$SELF.new" && chmod 755 "$SELF.new" && mv -f "$SELF.new" "$SELF"
     fi
@@ -644,7 +700,7 @@ cmd_upgrade() {
         return
     fi
     stage_release "$ver"
-    cmd_install "$HOME_DIR/downloads/$ver/d2rust-server-$ver/bin/$PROGRAM"
+    cmd_install "$HOME_DIR/downloads/$ver/$RELEASE_PACKAGE-$ver/bin/$PROGRAM"
     adopt_package "$ver"
     say "upgraded to $ver"
 }
@@ -725,7 +781,7 @@ cmd_upgrade_job() {
         sleep 0.5
     done
     say "$(date -u +%FT%TZ) every game saved: installing $ver"
-    if ! (cmd_install "$HOME_DIR/downloads/$ver/d2rust-server-$ver/bin/$PROGRAM"); then
+    if ! (cmd_install "$HOME_DIR/downloads/$ver/$RELEASE_PACKAGE-$ver/bin/$PROGRAM"); then
         result "failed: $ver did not install (see above); the game servers follow the main server's version"
         exit 1
     fi
@@ -782,7 +838,7 @@ cmd_pre_start() {
     [ -f "$RUN/swap" ] || return 0
     v=$(tr -d ' \r\n' <"$RUN/swap")
     rm -f "$RUN/swap"
-    local bin=$HOME_DIR/downloads/$v/d2rust-server-$v/bin/$PROGRAM
+    local bin=$HOME_DIR/downloads/$v/$RELEASE_PACKAGE-$v/bin/$PROGRAM
     if ! valid_version "$v" || [ ! -x "$bin" ]; then
         say "$(date -u +%FT%TZ) swap to $v: nothing staged; staying on $(basename "$(readlink "$CURRENT")")"
         return 0
@@ -922,10 +978,22 @@ cmd_node_name() {
     "$CURRENT" --config "$CFG" --node-name "$1" "$2"
 }
 
-cmd_logs() {
-    local f=$LOGS/$PROGRAM.log
+# The server's own log file: logs/<program>.log, where the program is the one setup named or, when
+# there is none by that name, the one the installed binary says it is (its --version line starts
+# with the program's name: a mod game's realm runs in the d2rust-realm slot and logs under its
+# own name). The console output when neither exists.
+server_log_file() {
+    local f=$LOGS/$PROGRAM.log name
+    if [ ! -f "$f" ] && [ -x "$CURRENT" ]; then
+        name=$("$CURRENT" --version 2>/dev/null | head -n 1 | cut -d' ' -f1)
+        valid_program "$name" && f=$LOGS/$name.log
+    fi
     [ -f "$f" ] || f=$LOGS/console.log
-    tail -n "${1:-50}" "$f"
+    printf '%s' "$f"
+}
+
+cmd_logs() {
+    tail -n "${1:-50}" "$(server_log_file)"
 }
 
 case "${1:-}" in

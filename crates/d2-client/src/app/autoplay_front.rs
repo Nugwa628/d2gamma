@@ -55,11 +55,7 @@ pub enum FrontStep {
 impl FrontPhase {
     /// The front end on the main menu, its screens wired to `--save-dir`.
     pub fn start(args: &HostArgs) -> Result<Self> {
-        let game_dir = args
-            .game_dir
-            .clone()
-            .or_else(|| std::env::var_os("D2_GAME_DIR").map(PathBuf::from));
-        Self::start_with(args, GameData::select(game_dir.as_deref())?)
+        Self::start_with(args, args.data()?)
     }
 
     pub(crate) fn start_with(args: &HostArgs, data: GameData) -> Result<Self> {
@@ -76,7 +72,13 @@ impl FrontPhase {
             .clone()
             .or_else(|| std::env::var_os("D2_GAME_DIR").map(PathBuf::from));
         let GameData::Live(live) = &data;
-        let handles = StartHandles::default();
+        let handles = StartHandles {
+            files: Some(std::sync::Arc::new(super::front_session::CodecFiles::new(
+                crate::kit_mod::character_codec(),
+                live.clone(),
+            ))),
+            ..StartHandles::default()
+        };
         let reg = front_start::registry(&save_dir, &handles);
         let mut front = FrontEnd::new(
             live.archives.lod(),

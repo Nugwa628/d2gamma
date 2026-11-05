@@ -312,6 +312,7 @@ mod tests {
             miss_code: Vec::new(),
             level_cap: 20,
             stat_count: 0,
+            data_rules: d2_data::bin::DataRules::Original,
         };
         let entries = [
             entry(5, 3, -1),

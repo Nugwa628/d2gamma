@@ -71,9 +71,13 @@ pub fn muted() -> bool {
 
 /// `plugins` without Bevy's audio plugin when this process is muted: no
 /// output device is opened. Every window app's `DefaultPlugins` goes
-/// through here.
+/// through here, so it is also where a mod's window icon joins them
+/// ([`crate::app::window_icon`]; D2Gamma and a mod with no icon add nothing).
 pub fn plugins(plugins: impl PluginGroup) -> PluginGroupBuilder {
-    let b = plugins.build();
+    let mut b = plugins.build();
+    if let Some(icon) = crate::app::window_icon::plugin() {
+        b = b.add(icon);
+    }
     if muted() {
         b.disable::<bevy::audio::AudioPlugin>()
     } else {

@@ -4,9 +4,11 @@
 //! overlay ([`overlay`]). Only `play::run` (the interactive window)
 //! installs them; every check runner and test never does.
 
+pub mod ai_watch;
 pub mod info;
 pub mod overlay;
 pub mod panel;
+pub mod reload;
 pub mod server;
 pub mod slots;
 
@@ -47,8 +49,21 @@ pub fn install_server<C: d2_server::seams::Clock + Send + 'static>(
     catalog: DevCatalog,
     start: Option<slots::DevStart>,
 ) -> Result<DevChannel, ThreadStopped> {
+    install_server_with(link, catalog, start, Default::default())
+}
+
+/// [`install_server`], with the mod's behaviour graphs for the names the
+/// monster AI overlay (`aiview`) shows.
+pub fn install_server_with<C: d2_server::seams::Clock + Send + 'static>(
+    link: &mut super::server_thread::ThreadLink<super::single_player::Link<C>>,
+    catalog: DevCatalog,
+    start: Option<slots::DevStart>,
+    graphs: d2_sim::rules::data_mod::AiRules,
+) -> Result<DevChannel, ThreadStopped> {
     let chan: DevChannel = Arc::new(Mutex::new(DevQueue::default()));
-    let server = DevServer::new(catalog).with_start(start);
+    let server = DevServer::new(catalog)
+        .with_start(start)
+        .with_graphs(graphs);
     link.set_before_pump(server::hook(server, chan.clone()))?;
     Ok(chan)
 }

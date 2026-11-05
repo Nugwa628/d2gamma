@@ -21,6 +21,8 @@ pub mod char_desc;
 pub mod char_feed;
 pub mod chat;
 pub mod cursor;
+pub mod data_bindings;
+pub mod data_panels;
 pub mod draw;
 pub mod edge;
 pub mod edit_box;
@@ -42,6 +44,7 @@ pub mod layout;
 pub mod market;
 pub mod messages;
 pub mod mod_hud;
+pub mod mod_io;
 pub mod original;
 pub mod own_art;
 pub mod panel;
@@ -54,6 +57,7 @@ pub mod show_items;
 pub mod skill_desc;
 pub mod skill_desc_more;
 pub mod skill_tree_ui;
+pub mod state_icons;
 pub mod states;
 pub mod text;
 pub mod ui_clock;
@@ -81,8 +85,8 @@ pub use draw::{
 pub use frame::{scale_mode, set_scale_mode, FrameError, FramePos, Presentation, ScaleMode};
 pub use geom::{Point, Rect, FRAME, FRAME_H, FRAME_W};
 pub use panel::{
-    ActionId, ClientIntent, NoStrings, Panel, PanelAction, PanelId, PanelTick, PointerButton,
-    StringLookup, UiCtx, UiEvent, UiInput, UiResponse, WidgetId,
+    ActionId, ClientIntent, NoStrings, OutsideClose, Panel, PanelAction, PanelId, PanelTick,
+    PointerButton, StringLookup, UiCtx, UiEvent, UiInput, UiResponse, WidgetId,
 };
 pub use root::{NoPanelRules, PanelRules, Routed, UiError, UiHit, UiRoot};
 pub use text::{

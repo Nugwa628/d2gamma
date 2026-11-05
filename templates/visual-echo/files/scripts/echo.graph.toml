@@ -1,0 +1,167 @@
+version = 1
+
+[[nodes]]
+id = "kill"
+kind = "event"
+event = "kill"
+next = "player_branch"
+x = 30
+y = 30
+
+[[nodes]]
+id = "is_player"
+kind = "condition"
+op = "equal"
+x = 310
+y = 30
+[nodes.inputs]
+a = { node = "kill", pin = "unit_type" }
+b = 0
+
+[[nodes]]
+id = "player_branch"
+kind = "branch"
+yes = "roll"
+x = 590
+y = 30
+[nodes.inputs]
+condition = { node = "is_player", pin = "value" }
+
+[[nodes]]
+id = "roll"
+kind = "api"
+name = "random"
+next = "branch"
+x = 870
+y = 30
+[nodes.inputs]
+unit = { node = "kill", pin = "unit" }
+upper = 100
+
+[[nodes]]
+id = "chance"
+kind = "condition"
+op = "less"
+x = 30
+y = 330
+[nodes.inputs]
+a = { node = "roll", pin = "value" }
+b = 10
+
+[[nodes]]
+id = "branch"
+kind = "branch"
+yes = "pulse"
+x = 310
+y = 330
+[nodes.inputs]
+condition = { node = "chance", pin = "value" }
+
+[[nodes]]
+id = "pulse"
+kind = "api"
+name = "ui_variable"
+next = "message"
+x = 590
+y = 330
+[nodes.inputs]
+unit = { node = "kill", pin = "unit" }
+name = "pulse"
+value = 1
+
+[[nodes]]
+id = "message"
+kind = "api"
+name = "message"
+next = "schedule"
+x = 870
+y = 330
+[nodes.inputs]
+unit = { node = "kill", pin = "unit" }
+text = "A lucky echo answers your victory."
+
+[[nodes]]
+id = "schedule"
+kind = "api"
+name = "timer"
+x = 30
+y = 630
+[nodes.inputs]
+unit = { node = "kill", pin = "unit" }
+frames = 120
+cookie = 71
+
+[[nodes]]
+id = "timer"
+kind = "event"
+event = "timer"
+next = "timer_branch"
+x = 310
+y = 630
+
+[[nodes]]
+id = "is_our_timer"
+kind = "condition"
+op = "equal"
+x = 590
+y = 630
+[nodes.inputs]
+a = { node = "timer", pin = "id" }
+b = 71
+
+[[nodes]]
+id = "timer_branch"
+kind = "branch"
+yes = "clear"
+x = 870
+y = 630
+[nodes.inputs]
+condition = { node = "is_our_timer", pin = "value" }
+
+[[nodes]]
+id = "clear"
+kind = "api"
+name = "ui_variable"
+x = 30
+y = 930
+[nodes.inputs]
+unit = { node = "timer", pin = "unit" }
+name = "pulse"
+value = 0
+
+[[nodes]]
+id = "buff_end"
+kind = "event"
+event = "buff_end"
+next = "buff_player_branch"
+x = 310
+y = 930
+
+[[nodes]]
+id = "buff_player"
+kind = "condition"
+op = "equal"
+x = 590
+y = 930
+[nodes.inputs]
+a = { node = "buff_end", pin = "unit_type" }
+b = 0
+
+[[nodes]]
+id = "buff_player_branch"
+kind = "branch"
+yes = "buff_notice"
+x = 870
+y = 930
+[nodes.inputs]
+condition = { node = "buff_player", pin = "value" }
+
+[[nodes]]
+id = "buff_notice"
+kind = "api"
+name = "message"
+x = 30
+y = 1230
+[nodes.inputs]
+unit = { node = "buff_end", pin = "unit" }
+text = "A buff has ended."

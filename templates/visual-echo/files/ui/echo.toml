@@ -1,0 +1,14 @@
+version = 1
+name = "visual_echo"
+[[elements]]
+id = "pulse"
+kind = "bar"
+x = 55
+y = 95
+width = 150
+height = 8
+color = 117
+[elements.bind]
+source = "var.echo.graph.toml/pulse"
+minimum = 0
+maximum = 1

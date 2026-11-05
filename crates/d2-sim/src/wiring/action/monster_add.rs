@@ -267,6 +267,7 @@ impl<X: Pending> View<'_, X> {
         for m in self.unit_states_message(UnitType::Monster as u8, guid, unit) {
             self.h.x.send(receiver, &m);
         }
+        self.mod_stat_totals(receiver, unit);
         // The pending event records belong to part A.
         self.send_event_records(game, receiver, unit);
         // Part B. Without the path provider no monster has a path record,
@@ -438,7 +439,7 @@ impl<X: Pending> View<'_, X> {
                 continue;
             };
             let mut w = bitstream::BitWriter::new(bitstream::BUFFER);
-            bitstream::write_into(&mut w, &view, &t.isc);
+            bitstream::write_into(&mut w, &view, t);
             let Ok(bits) = w.finish() else { continue };
             let category = if dual && loc == 5 { 6 } else { row.component };
             if let Ok(m) =

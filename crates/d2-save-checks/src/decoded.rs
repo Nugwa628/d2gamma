@@ -127,16 +127,16 @@ impl Decoded {
 
 /// Character stat ids of the stats section.
 pub mod stat {
-    pub const STRENGTH: u16 = 0;
-    pub const ENERGY: u16 = 1;
-    pub const DEXTERITY: u16 = 2;
-    pub const VITALITY: u16 = 3;
-    pub const STATPTS: u16 = 4;
-    pub const NEWSKILLS: u16 = 5;
-    pub const LEVEL: u16 = 12;
-    pub const EXPERIENCE: u16 = 13;
-    pub const GOLD: u16 = 14;
-    pub const GOLDBANK: u16 = 15;
+    pub use d2_sim::stats::ids::DEXTERITY;
+    pub use d2_sim::stats::ids::ENERGY;
+    pub use d2_sim::stats::ids::EXPERIENCE;
+    pub use d2_sim::stats::ids::GOLD;
+    pub use d2_sim::stats::ids::GOLDBANK;
+    pub use d2_sim::stats::ids::LEVEL;
+    pub use d2_sim::stats::ids::NEWSKILLS;
+    pub use d2_sim::stats::ids::STATPTS;
+    pub use d2_sim::stats::ids::STRENGTH;
+    pub use d2_sim::stats::ids::VITALITY;
 }
 
 /// A character stat's base value (layer 0); 0 when the save has no body or

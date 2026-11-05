@@ -1,0 +1,7 @@
+id = "ai-lift-succubus-witch"
+name = "AI 119 SuccubusWitch, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "SuccubusWitch as a graph: AI 119 (SuccubusWitch)."
+api = 1
+kind = "full"

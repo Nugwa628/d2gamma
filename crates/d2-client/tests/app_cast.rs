@@ -85,7 +85,13 @@ fn a_right_skill_at_a_point_costs_mana_and_creates_the_missile() {
         "mana spent: drop {drop}, cost {cost}, regen {regen}; errors: {errors}"
     );
     assert!(most > 0, "the server made the missile; errors: {errors}");
-    assert!(r.s2c_contains_since(mark, 0x4D), "{errors}");
+    // The caster's own client hears nothing of its cast: it starts the
+    // cast at its own click, so the server sends it no skill message
+    // (S→C 0x4C / 0x4D) for a skill without the dodge flag.
+    assert!(
+        !r.s2c_since(mark, 0x4D) && !r.s2c_since(mark, 0x4C),
+        "{errors}"
+    );
     // The cast mode is the server player's. The client's own player
     // enters it at its click, not from a server message: the game's
     // server sends its own client nothing, and this rig sends the 0x0C

@@ -1,0 +1,48 @@
+version = 1
+
+# monstats aip1..aip4 of the sandleaper1 row 78: 20, 50, 30, 50. Skill 1 is Leap.
+# The body sets its velocity to 75 for the far walk and wanders near its target; the graph walks at the target (75 percent faster).
+[[ai]]
+index = 17
+name = "SandLeaper (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "leap"
+
+# Under 5 subtiles from the target: aip1 = 20 percent leap.
+[[ai.state.action]]
+kind = "use_skill"
+slot = 1
+when = [{ kind = "distance_below", value = 5 }, { kind = "random", percent = 20 }]
+
+# In reach: aip2 = 50 percent swing 2, else stand 10 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 2
+when = [{ kind = "in_melee" }, { kind = "random", percent = 50 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4
+when = [{ kind = "in_melee" }]
+
+# Farther than 10: close in, 75 percent faster.
+[[ai.state.action]]
+kind = "move_to"
+speed = 75
+when = [{ kind = "distance_above", value = 10 }]
+
+# Else aip3 = 30 percent walk at the target; aip4 = 50 percent of the rest circle it; else stand 10 frames.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 30 }]
+
+[[ai.state.action]]
+kind = "move_around"
+steps = 4
+when = [{ kind = "random", percent = 50 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4

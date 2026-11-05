@@ -202,12 +202,17 @@ fn deferred_features_are_rejected() {
             .map(|f| (f.code, f.line, f.col))
             .collect::<Vec<_>>()
     };
-    for stmt in ["remove #0 pt1", "delcol cost"] {
+    for stmt in ["erase #0 pt1", "delcol cost"] {
         assert_eq!(codes(stmt), [(Code::P04, 3, 1)], "{stmt}");
     }
     assert_eq!(codes("addcol x int"), []);
+    assert_eq!(codes("remove #0 pt1"), []);
+    assert_eq!(codes("disable #0 pt1"), []);
+    let (layer, f) = parse_layer("a.d2patch", b"d2patch 1\ntable soundenviron\n", 1);
+    assert!(f.is_empty());
+    assert!(apply_stack(&mut base(), &[layer], "s.d2stack").is_empty());
     assert_eq!(codes("addcol x"), [(Code::P05, 3, 9)]);
-    for table in ["soundenviron", "string", "patchstring", "expansionstring"] {
+    for table in ["string", "patchstring", "expansionstring"] {
         let text = format!("d2patch 1\ntable {table}\n");
         let (layer, f) = parse_layer("a.d2patch", text.as_bytes(), 1);
         assert!(f.is_empty(), "{f:?}");
@@ -240,7 +245,8 @@ fn deferred_features_are_rejected() {
     let compiled = r.compiled.as_ref().unwrap().table("sounds").unwrap();
     assert_eq!(compiled.compiled.count, n + 1);
     let live = r.live.as_ref().unwrap();
-    assert_eq!(live.sounds, i.loaded.sounds);
+    assert_eq!(live.sounds.records.len(), n + 1);
+    assert_eq!(live.sounds.records[n].cells[0], b"zz_new_sound");
     assert_eq!(live.soundenviron, i.loaded.soundenviron);
 
     let s = stack("deferred", "d", &[("a.d2patch", L1)]);

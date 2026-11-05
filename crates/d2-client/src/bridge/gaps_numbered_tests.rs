@@ -189,6 +189,8 @@ fn client_world_holds_only_stated_fields() {
         // itemstatcost op tables for the percent ops.
         stat_ops: _,
         tip_anims: _,
+        // The game's rules (the client's skill reads).
+        rules,
         // D2RUST's own, unverified: session messages for the loading flow
         // (L9, L10).
         session_total,
@@ -294,7 +296,12 @@ fn client_world_holds_only_stated_fields() {
         view_ready,
         // A scene view's hidden players and monsters.
         actors_hidden,
+        ui_variables,
+        synced_values,
     } = ClientWorld::default();
+    assert!(ui_variables.is_empty());
+    assert!(synced_values.is_empty());
+    assert!(rules.0.is_original());
     assert!(!actors_hidden);
     assert!(gfx_ready.is_none());
     assert!(view_ready.is_none());
@@ -346,6 +353,7 @@ fn client_world_holds_only_stated_fields() {
         position,
         server_point,
         stats,
+        mod_totals,
         seed,
         queue,
         last_mode_request,
@@ -384,6 +392,7 @@ fn client_world_holds_only_stated_fields() {
         // (+0x6C).
         palette_index,
         state_lists,
+        state_stacks,
         timed_lists,
         // (`cltstfunc` 9);.
         temp_lists,
@@ -441,6 +450,8 @@ fn client_world_holds_only_stated_fields() {
     assert!(turned_toward.is_none() && !path_stopped);
     assert!(direction_of.is_none() && !room_freed && !flag_200 && !flag_flat && !flag_20);
     assert!(flag_2.is_none() && states.is_empty() && state_lists.is_empty());
+    assert!(state_stacks.is_empty());
+    assert!(mod_totals.is_empty());
     assert_eq!(palette_index, 0);
     assert!(timed_lists.is_empty() && temp_lists.is_empty());
     assert_eq!(k, key);

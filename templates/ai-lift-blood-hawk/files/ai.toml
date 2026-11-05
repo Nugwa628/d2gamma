@@ -1,0 +1,60 @@
+version = 1
+
+# monstats aip1..aip5 of the foulcrow1 row 15 (Normal): 30, 90, 5, 50, 100. The body keeps a flag in an AI param: a walk at the target
+# sets it, and the next think in reach strikes at once. The graph keeps that with two states: the first think after the hawk is
+# in reach (`thinks_at_least` is not yet 2) strikes; the later thinks back off 95 percent of the time (aip3 = 5 percent strike).
+# The body asks for speed 50 before it backs away and speed 100 before the lunge; `move_away` has no speed.
+[[ai]]
+index = 5
+name = "BloodHawk (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "circle"
+
+[[ai.state.transition]]
+to = "strike"
+when = [{ kind = "in_melee" }]
+
+# aip1 = 30%: lunge at the target.
+[[ai.state.action]]
+kind = "move_to"
+speed = 100
+when = [{ kind = "random", percent = 30 }]
+
+# Farther than 3: aip2 = 90% wander 4 steps, else 3.
+[[ai.state.action]]
+kind = "wander"
+radius = 4
+when = [{ kind = "distance_above", value = 3 }, { kind = "random", percent = 90 }]
+
+[[ai.state.action]]
+kind = "wander"
+radius = 3
+when = [{ kind = "distance_above", value = 3 }]
+
+# Nearer: back off 4 steps; when it cannot, strike.
+[[ai.state.action]]
+kind = "move_away"
+steps = 4
+
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+
+[[ai.state]]
+name = "strike"
+
+[[ai.state.transition]]
+to = "circle"
+when = [{ kind = "out_of_melee" }]
+
+# After the first think: back off 4 steps at 95 percent.
+[[ai.state.action]]
+kind = "move_away"
+steps = 4
+when = [{ kind = "thinks_at_least", count = 2 }, { kind = "random", percent = 95 }]
+
+[[ai.state.action]]
+kind = "attack"
+attack = 1

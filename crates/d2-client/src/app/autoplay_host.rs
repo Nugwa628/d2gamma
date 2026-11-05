@@ -101,6 +101,8 @@ pub struct HostArgs {
     pub seed: Option<u32>,
     pub difficulty: u8,
     pub game_dir: Option<PathBuf>,
+    pub native: Option<PathBuf>,
+    pub source: Option<String>,
     /// `--res WxH`: the play frame (default 800 × 600), as `play --res`.
     pub res: Option<crate::rules::camera::FrameSize>,
     /// `--front`: start on the front end's main menu
@@ -131,6 +133,8 @@ pub fn parse_args(args: &[String]) -> Result<HostArgs> {
                     .with_context(|| format!("--difficulty {v}"))?;
             }
             "--game-dir" => a.game_dir = Some(PathBuf::from(value()?)),
+            "--native" => a.native = Some(PathBuf::from(value()?)),
+            "--source" => a.source = Some(value()?.clone()),
             "--front" => a.front = true,
             "--save-dir" => a.save_dir = Some(PathBuf::from(value()?)),
             "--res" => {
@@ -153,6 +157,37 @@ pub fn parse_args(args: &[String]) -> Result<HostArgs> {
         bail!("autoplay-host needs one of --save FILE, --new CLASS NAME or --front");
     }
     Ok(a)
+}
+
+impl HostArgs {
+    /// Open the same layers and data rules as the windowed mod game.
+    pub(crate) fn data(&self) -> Result<GameData> {
+        let choice = crate::assets::choose_source(
+            self.native.as_deref(),
+            self.source.as_deref(),
+            |key| std::env::var(key).ok(),
+            crate::assets::default_native_dir(),
+        )
+        .map_err(anyhow::Error::msg)?;
+        match choice {
+            crate::assets::SourceChoice::Native(dir) => Ok(GameData::open_with(
+                &single_player::GameSource::Native(
+                    dir.clone(),
+                    single_player::Layers::List(crate::kit_mod::layers_for(&dir)?),
+                ),
+                crate::kit_mod::ruleset().data_rules(),
+            )?),
+            _ if crate::kit_mod::active().is_some() => bail!(
+                "a mod needs the converted native game folder (--native DIR); autoplay-host cannot run a mod from the game archives"
+            ),
+            _ => {
+                let dir = self.game_dir.clone().or_else(|| {
+                    std::env::var_os("D2_GAME_DIR").map(PathBuf::from)
+                });
+                Ok(GameData::select(dir.as_deref())?)
+            }
+        }
+    }
 }
 
 /// Selects the nearest matching client-model unit without a frame boundary.
@@ -216,6 +251,38 @@ fn snapshot_approach(
         crate::bridge::world::UnitKey::new(sel.unit_type, guid as u32),
         cell,
     ))
+}
+
+/// An exit's tile unit is created only when its room streams in. The map's
+/// enabled warp links identify a room to explore without inventing a unit
+/// or sending an interaction until the real tile reaches the client.
+fn unstreamed_warp_room(map: &Value, from: (u16, u16), sel: &UnitSel) -> Option<(u16, u16)> {
+    if sel.unit_type != 5 {
+        return None;
+    }
+    map["levels"]
+        .as_array()?
+        .iter()
+        .flat_map(|l| l["rooms"].as_array().into_iter().flatten())
+        .filter(|r| r["grid"].is_null())
+        .filter(|r| {
+            r["warps"].as_array().is_some_and(|warps| {
+                warps.iter().any(|w| {
+                    w["on"] == true
+                        && w["class"].as_u64().is_some_and(|c| {
+                            sel.any() || sel.classes[..usize::from(sel.count)].contains(&(c as u32))
+                        })
+                })
+            })
+        })
+        .filter_map(|r| {
+            let rect = r["rect"].as_array()?;
+            Some((
+                (rect[0].as_u64()? + rect[2].as_u64()? / 2) as u16,
+                (rect[1].as_u64()? + rect[3].as_u64()? / 2) as u16,
+            ))
+        })
+        .min_by_key(|&(x, y)| from.0.abs_diff(x).max(from.1.abs_diff(y)))
 }
 
 /// Project a ground click, removing the unit drawer's extra eight rows.
@@ -357,7 +424,7 @@ impl Host {
             .game_dir
             .clone()
             .or_else(|| std::env::var_os("D2_GAME_DIR").map(PathBuf::from));
-        let data = GameData::select(dir.as_deref())?;
+        let data = args.data()?;
         let start = play_start::resolve(
             &CliStart {
                 save: args.save.clone(),
@@ -390,7 +457,15 @@ impl Host {
         hardcore: bool,
         seed: Option<u32>,
     ) -> Result<Self> {
-        Self::start_configured(data, character, start_flags, hardcore, seed, false)
+        Self::start_configured(
+            data,
+            character,
+            start_flags,
+            hardcore,
+            seed,
+            false,
+            crate::kit_mod::ruleset(),
+        )
     }
 
     /// Diagnostic runners opt in to coverage; D2_COVERAGE=0 supports parity probes.
@@ -402,16 +477,25 @@ impl Host {
         seed: Option<u32>,
     ) -> Result<Self> {
         let enabled = !std::env::var_os("D2_COVERAGE").is_some_and(|v| v == "0");
-        Self::start_configured(data, character, start_flags, hardcore, seed, enabled)
+        Self::start_configured(
+            data,
+            character,
+            start_flags,
+            hardcore,
+            seed,
+            enabled,
+            crate::kit_mod::ruleset(),
+        )
     }
 
-    fn start_configured(
+    pub(crate) fn start_configured(
         data: GameData,
         character: single_player::Character,
         start_flags: Option<u32>,
         hardcore: bool,
         seed: Option<u32>,
         enabled: bool,
+        rules: d2_sim::rules::Ruleset,
     ) -> Result<Self> {
         let seed = single_player::game_seed(&character, seed);
         let hardcore = hardcore
@@ -420,8 +504,11 @@ impl Host {
         let GameData::Live(live) = data.clone();
         let ms = Arc::new(AtomicU32::new(START_MS));
         let speeds = single_player::walk_speeds(&data, &character)?;
-        let (mut link, started) =
-            single_player::start_with(data, seed, character.clone(), StepClock(ms.clone()))?;
+        let (mut link, started) = single_player::GameBuilder::new(data)
+            .seed(seed)
+            .character(character.clone())
+            .rules(rules.clone())
+            .start(StepClock(ms.clone()))?;
         if hardcore {
             link.with(|l| l.host_mut().game.events.action.hooks().x.hardcore = true)?;
         }
@@ -434,6 +521,9 @@ impl Host {
         let received = SentLog::default();
         let mut app = App::new();
         app.insert_resource(crate::bridge::mirror::ScriptedClock(ms.clone()));
+        if !rules.is_original() {
+            app.insert_resource(crate::mods::ClientMods::default().with_rules(rules.clone()));
+        }
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Image>()
             .init_resource::<ButtonInput<MouseButton>>()
@@ -757,6 +847,13 @@ impl Host {
                 }
                 let mut approach = 0;
                 let mut walking = false;
+                let initial_level = self
+                    .app
+                    .world()
+                    .resource::<BridgeResource>()
+                    .0
+                    .world()
+                    .player_level();
                 let unit = loop {
                     // Clear panels before sampling the camera: movement can
                     // continue during these passes, so an earlier projection
@@ -767,6 +864,18 @@ impl Host {
                     }
                     let world = self.app.world();
                     let model = world.resource::<BridgeResource>().0.world();
+                    // An approach click can itself activate an exit. Its
+                    // return tile may have the same class; selecting it again
+                    // would immediately undo the successful crossing.
+                    if sel.unit_type == 5
+                        && initial_level
+                            .zip(model.player_level())
+                            .is_some_and(|(from, to)| from != to)
+                    {
+                        return Ok(Some(
+                            json!({"k":"ok", "cmd":"interactunit", "level": model.player_level()}),
+                        ));
+                    }
                     let cam = world
                         .get_resource::<crate::world_view::WorldViewState>()
                         .and_then(|s| s.anchor)
@@ -794,8 +903,6 @@ impl Host {
                         .flat_map(|l| l["rooms"].as_array().into_iter().flatten())
                         .flat_map(|r| r["presets"].as_array().into_iter().flatten().cloned())
                         .collect();
-                    let (target, cell) = snapshot_approach(units, &cam, &sel)
-                        .or_else(|_| snapshot_approach(&json!(presets), &cam, &sel))?;
                     let player = units
                         .as_array()
                         .context("snapshot units")?
@@ -806,9 +913,16 @@ impl Host {
                         player["x"].as_u64().context("player x")? as u16,
                         player["y"].as_u64().context("player y")? as u16,
                     );
-                    if from.0.abs_diff(cell.0).max(from.1.abs_diff(cell.1)) <= reach
-                        && loaded == Some(target)
-                    {
+                    let (target, cell) = snapshot_approach(units, &cam, &sel)
+                        .or_else(|_| snapshot_approach(&json!(presets), &cam, &sel))
+                        .ok()
+                        .map(|(unit, cell)| (Some(unit), cell))
+                        .or_else(|| unstreamed_warp_room(&map, from, &sel).map(|cell| (None, cell)))
+                        .context("interactunit: no such unit in client or host snapshot")?;
+                    if let Some(target) = target.filter(|&unit| {
+                        loaded == Some(unit)
+                            && from.0.abs_diff(cell.0).max(from.1.abs_diff(cell.1)) <= reach
+                    }) {
                         break target;
                     }
                     if approach == 64 {
@@ -1055,6 +1169,34 @@ mod tests {
     }
 
     #[test]
+    fn unstreamed_warp_exploration_requires_matching_enabled_link() {
+        let Command::InteractUnit(sel) = parse_command("interactunit 5 255").unwrap() else {
+            panic!("warp selector")
+        };
+        let map = json!({"levels":[{"rooms":[
+            {"rect":[580,540,40,40],"grid":null,"presets":[],
+             "warps":[{"class":255,"on":true}]},
+            {"rect":[500,500,40,40],"grid":null,
+             "warps":[{"class":254,"on":true}]}
+        ]}]});
+        assert_eq!(
+            unstreamed_warp_room(&map, (533, 533), &sel),
+            Some((600, 560))
+        );
+        let mut disabled = map.clone();
+        disabled["levels"][0]["rooms"][0]["warps"][0]["on"] = json!(false);
+        assert_eq!(unstreamed_warp_room(&disabled, (533, 533), &sel), None);
+        disabled = map.clone();
+        disabled["levels"][0]["rooms"][0]["grid"] = json!({"cells":"."});
+        assert_eq!(unstreamed_warp_room(&disabled, (533, 533), &sel), None);
+        let Command::InteractUnit(monster) = parse_command("interactunit 1 255").unwrap() else {
+            panic!("monster selector")
+        };
+        assert_eq!(unstreamed_warp_room(&map, (533, 533), &monster), None);
+        assert_eq!(unstreamed_warp_room(&json!({}), (533, 533), &sel), None);
+    }
+
+    #[test]
     fn walking_projection_clicks_the_planned_cell_at_each_resolution() {
         use crate::rules::camera::{moving_to_client, Camera, FrameSize, OpenMode};
         for size in FrameSize::ALL {
@@ -1165,6 +1307,20 @@ mod tests {
         assert_eq!(a.new, Some(("amazon".into(), "Bot".into())));
         assert_eq!(a.seed, Some(7));
         assert_eq!(a.res, None);
+        assert_eq!(a.native, None);
+        assert_eq!(a.source, None);
+        let native = parse_args(&args(&[
+            "--new",
+            "amazon",
+            "Bot",
+            "--native",
+            "converted",
+            "--source",
+            "native",
+        ]))
+        .unwrap();
+        assert_eq!(native.native, Some(PathBuf::from("converted")));
+        assert_eq!(native.source.as_deref(), Some("native"));
         let a = parse_args(&args(&["--new", "amazon", "Bot", "--res", "1068x600"])).unwrap();
         assert_eq!(a.res, Some(crate::rules::camera::FrameSize::WIDE));
         assert!(parse_args(&args(&["--new", "amazon", "Bot", "--res", "1024x768"])).is_err());
@@ -1172,10 +1328,12 @@ mod tests {
         assert!(parse_args(&args(&["--save", "a", "--new", "ama", "B"])).is_err());
         assert_eq!(parse_command("step 5"), Ok(Command::Step(5)));
         assert_eq!(parse_command("walklevel 2"), Ok(Command::WalkLevel(2)));
+        assert_eq!(parse_command("walklevel 137"), Ok(Command::WalkLevel(137)));
+        assert_eq!(parse_command("walklevel 255"), Ok(Command::WalkLevel(255)));
         for bad in [
             "walklevel",
             "walklevel 0",
-            "walklevel 137",
+            "walklevel 256",
             "walklevel x",
             "walklevel 2 3",
         ] {

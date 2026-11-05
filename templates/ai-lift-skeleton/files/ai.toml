@@ -1,0 +1,37 @@
+version = 1
+
+# monstats aip1..aip4 of the skeleton5 row, skeleton6 to 8 and hellbovine (Normal): 99, 5, 95, 33.
+# (skeleton1 to skeleton4 have their own numbers: 60/15/75/75, 70/12/80/25, 80/9/85/50, 90/7/90/66.)
+[[ai]]
+index = 2
+name = "Skeleton (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "hunt"
+
+# In reach: aip3 = 95% swing, of which aip4 = 33% swing 1 and the rest swing 2.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 31 }]
+
+[[ai.state.action]]
+kind = "attack"
+attack = 2
+when = [{ kind = "in_melee" }, { kind = "random", percent = 93 }]
+
+# and else stand aip2 = 5 frames.
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.2
+when = [{ kind = "in_melee" }]
+
+# Out of reach: aip1 = 99% walk toward the target, else stand 5 frames.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 99 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.2

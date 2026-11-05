@@ -97,6 +97,9 @@ impl<H: LifecycleHooks, R: NpcRest + QuestRest + PlayerQuestsRef> HirelingWorld
     fn expansion(&self) -> bool {
         self.desk.econ.fields.expansion
     }
+    fn rules(&self) -> &crate::rules::Ruleset {
+        self.desk.econ.hooks.rules()
+    }
     /// The player list in order, without players in state 7.
     fn players(&self) -> Vec<UnitId> {
         let e = &self.desk.econ;

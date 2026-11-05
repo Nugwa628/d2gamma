@@ -6,7 +6,7 @@ reads them at run time. Before any architectural change, read [docs/ARCHITECTURE
 Players see the game as **D2Gamma**: the exe `D2Gamma-Game.exe`, the window title and version line
 (`launch::NAME`), and the player's folder `Documents\D2Gamma`. Crate names, code identifiers, `D2RUST_*`
 environment variables, file formats and the multiplayer protocol ids keep the earlier name, d2rust. Older code
-comments and docs still say D2RUST, and mean D2Gamma.
+comments and docs still say D2Gamma, and mean D2Gamma.
 
 ## The code describes itself
 
@@ -47,7 +47,9 @@ Code comments cite these by number ("rule 6").
 8. **Original behaviour is the default.** Changes to how the game plays go in data layers or behind explicit rule
    switches, never as edits to the original-behaviour code paths. Mod data is expressed as patches applied to the
    player's own tables at load time; full modified Blizzard tables never go in the repository or a release. Each mod
-   is its own game (its own binary on these crates, `docs/mods/mod-game.md`); the D2Gamma exe never loads a mod.
+   is its own game (its own binary on these crates, `docs/mods/mod-game.md`). The D2Gamma exe plays the base game
+   alone unless the player starts a mod-kit mod with `--mod <id>` / `--mod-dir` (`docs/mods/mod-kit-loading.md`);
+   it never selects a mod by itself.
 9. **The file check confirms the player has the game.** It never compares an install against fixed hashes and
    never scans beyond the game folder.
 
@@ -67,12 +69,13 @@ Code comments cite these by number ("rule 6").
 ## Repository layout
 
 ```
-docs/                 architecture, clean room, required files, playtest, local run, mods, test tools
+docs/                 architecture, clean room, required files, playtest, local run, mods, mod kit, test tools
 tables/               small number tables the game logic embeds (include_str!)
 crates/               the game, its servers and their libraries (see README.md)
 tools/                developer tools: d2-convert, mpq-tool, d2s-tool, data-tool, depcheck, img-diff,
                       autoplay, perf, playcheck, soak, scenarios, mp-test, local servers
 fuzz/                 cargo-fuzz targets (a separate workspace)
 examples/mod-game/    a small mod game
+templates/            example mod-kit mods (the Mod Studio templates)
 game/                 your local Diablo II install for development (gitignored, never committed)
 ```

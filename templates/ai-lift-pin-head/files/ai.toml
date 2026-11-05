@@ -1,0 +1,48 @@
+version = 1
+
+# monstats aip1..aip5 of the blunderbore1 row 186 (Normal): 75, 15, 60, 12, 40. Skill 1 is Smite. The body keeps a flag in an AI param:
+# it is cleared by any think out of reach and set at the first think in reach; after that the body stands (aip2 = 15 frames) 25
+# percent of the time instead of acting. The graph keeps that with two states and the think counter.
+[[ai]]
+index = 39
+name = "PinHead (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "approach"
+
+[[ai.state.transition]]
+to = "fight"
+when = [{ kind = "in_melee" }]
+
+# Out of reach: aip3 = 60% walk toward the target, else stand aip4 = 12 frames.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 60 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.48
+
+[[ai.state]]
+name = "fight"
+
+[[ai.state.transition]]
+to = "approach"
+when = [{ kind = "out_of_melee" }]
+
+# After the first think in reach: 25 percent (100 - aip1) stand 15 frames.
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6
+when = [{ kind = "thinks_at_least", count = 2 }, { kind = "random", percent = 25 }]
+
+# Smite at aip5 = 40 percent, else a swing.
+[[ai.state.action]]
+kind = "use_skill"
+slot = 1
+when = [{ kind = "random", percent = 40 }]
+
+[[ai.state.action]]
+kind = "attack"
+attack = 1

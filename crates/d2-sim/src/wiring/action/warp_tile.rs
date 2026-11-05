@@ -96,6 +96,24 @@ impl<X: Pending> View<'_, X> {
         self.create_tile(game, room, class, x, y, 0, 0).is_some()
     }
 
+    /// A newly streamed warp destination may not have had its population
+    /// walk yet. Create only its arrival tiles, leaving objects, monsters and
+    /// the one-shot population flags to their normal pass.
+    pub(crate) fn spawn_warp_tiles(&mut self, game: &mut Game, room: RoomId) {
+        let Some(act) = game.lists.room(room).map(|r| r.act) else {
+            return;
+        };
+        let found = self.h.drlg.with_act(act, &mut game.lists, |d, svc| {
+            let r = d.drlg_room_of(room)?;
+            Some((d.active_room(r)?.subtiles, svc.types.preset_units(d, r)))
+        });
+        if let Some(Some((origin, units))) = found {
+            for p in units.iter().filter(|p| p.unit_type == TILE_PRESET) {
+                self.spawn_tile_preset(game, room, (origin.x + p.x, origin.y + p.y), p.class);
+            }
+        }
+    }
+
     /// The preset creator sets unit flags 0x3000000 on every unit it
     /// creates: flag 0x2000000 makes the unit `S` of the compress, so a
     /// preset object of a level without `SaveMonsters` (the towns) is

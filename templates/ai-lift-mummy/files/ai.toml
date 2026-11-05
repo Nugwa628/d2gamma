@@ -1,0 +1,36 @@
+version = 1
+
+# monstats aip1..aip5 of the mummy1 row (Normal): 5, 60, 100, 65, 10. The other mummies differ in aip1 (10 to 25), aip2 and aip4.
+[[ai]]
+index = 21
+name = "Mummy (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "shuffle"
+
+# Farther than aip1 = 5 from the target: aip2 = 60% wander a few steps, else stand aip5 = 10 frames.
+[[ai.state.action]]
+kind = "wander"
+radius = 3
+when = [{ kind = "distance_above", value = 6 }, { kind = "random", percent = 60 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4
+when = [{ kind = "distance_above", value = 6 }]
+
+# In reach: aip3 = 100% swing, aip4 = 65% of them swing 1, the others swing 2.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 65 }]
+
+[[ai.state.action]]
+kind = "attack"
+attack = 2
+when = [{ kind = "in_melee" }]
+
+# Near but not in reach: walk toward the target.
+[[ai.state.action]]
+kind = "move_to"

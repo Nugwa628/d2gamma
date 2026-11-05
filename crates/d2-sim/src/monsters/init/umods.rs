@@ -430,7 +430,7 @@ pub fn choose_umods<H: InitHost + ?Sized>(
     champion_allowed: bool,
 ) {
     let diff = h.info().difficulty;
-    if diff >= 3 {
+    if diff >= 3 && h.rules().difficulties().is_none() {
         return;
     }
     let Some(existing) = h.monsters().get(unit).map(|m| m.umod_count()) else {
@@ -439,7 +439,7 @@ pub fn choose_umods<H: InitHost + ?Sized>(
     if existing >= 8 {
         return;
     }
-    let d = usize::from(diff);
+    let d = usize::from(diff.min(2));
     // Step 1.
     if champion_allowed {
         let chance = cx.tables.monumod.first().map_or(0, |r| r.constants as i32);

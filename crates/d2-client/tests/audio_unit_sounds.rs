@@ -359,11 +359,12 @@ fn a_walking_zombie_steps_in_time_with_its_walk_animation() {
     for j in 1..=(8 * period + 8) {
         let f = ((j as i32) * s) % f_all;
         if dist(f) < dist(f + s) && dist(f) < dist(f - s) {
-            // Client update C = tick = j + 1 (the mode set is at tick 2).
-            let c = j + 1;
-            if last == 0 || c - last >= window {
-                want.push(u64::from(c));
-                last = c;
+            // The frame of the mode set (server tick 2) reads f = 0, so
+            // f = j · s is read at server tick j + 2.
+            let tick = j + 2;
+            if last == 0 || tick - last >= window {
+                want.push(u64::from(tick));
+                last = tick;
             }
         }
     }
@@ -383,10 +384,12 @@ fn a_walking_zombie_steps_in_time_with_its_walk_animation() {
     let ticks: Vec<u64> = steps.iter().map(|s| s.0).collect();
     assert!(want.len() >= 7, "oracle {want:?}");
     assert_eq!(ticks, want);
-    // Every step is at the monster's point and starts the tick requested.
+    // Every step is at the monster's point and starts the tick requested:
+    // the sound tick that follows server tick C's update is T = C − 2
+    // (the game's first server tick runs none, T counts from 0).
     assert!(steps
         .iter()
-        .all(|s| s.2 == NEAR && u64::from(s.1) + 1 == s.0));
+        .all(|s| s.2 == NEAR && u64::from(s.1) + 2 == s.0));
 }
 
 #[test]

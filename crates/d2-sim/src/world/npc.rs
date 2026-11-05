@@ -19,6 +19,7 @@ use crate::world::quests::{QuestFlags, TextList};
 use crate::world::{tsv_num, tsv_rows, TsvError};
 
 pub mod hire;
+pub mod npc_rules;
 pub mod provider;
 pub mod services;
 
@@ -101,12 +102,12 @@ pub const UNIT_MONSTER: u8 = 1;
 
 /// Stat ids used here.
 pub mod stat {
-    pub const LIFE: u16 = 6;
-    pub const MANA: u16 = 8;
-    pub const STAMINA: u16 = 10;
-    pub const LEVEL: u16 = 12;
-    pub const GOLD: u16 = 14;
-    pub const ITEM_194: u16 = 194;
+    pub use crate::stats::ids::GOLD;
+    pub use crate::stats::ids::HITPOINTS as LIFE;
+    pub use crate::stats::ids::LEVEL;
+    pub use crate::stats::ids::MANA;
+    pub use crate::stats::ids::NUMSOCKETS as ITEM_194;
+    pub use crate::stats::ids::STAMINA;
 }
 
 /// Node states of an interaction list.
@@ -498,6 +499,10 @@ pub trait NpcWorld {
     fn player_name(&self, player: UnitId) -> Vec<u8>;
     /// Act change to `level` with `arg`.
     fn act_change(&mut self, player: UnitId, level: u32, arg: u32);
+    fn data_act_travel(&mut self, player: UnitId, npc: u16, action: u32) -> bool {
+        let _ = (player, npc, action);
+        false
+    }
     /// Activate the level's waypoint.
     fn activate_waypoint(&mut self, player: UnitId, level: u32);
 
@@ -875,12 +880,16 @@ impl NpcControl {
         };
         let count = list.nodes.len();
         let single = count == 1;
+        let interacting = list.state(player).is_some();
         // The mod's action first; `None` runs D2RUST's.
         let rules = w.rules().clone();
         if let Some(p) = rules.npcs() {
             if let Some(r) = p.menu_action(self, w, player, npc, class, action, item) {
                 return r;
             }
+        }
+        if interacting && w.data_act_travel(player, class, action) {
+            return Ok(0);
         }
         let roles = NpcRoles::for_player(&*w, class, player);
         match action {

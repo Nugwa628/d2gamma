@@ -25,6 +25,7 @@ use crate::game::{LiveData, Sim};
 mod vstat {
     pub const STATPTS: u16 = 4;
     pub const NEWSKILLS: u16 = 5;
+    pub const EXPERIENCE: u16 = 13;
     pub const GOLD: u16 = 14;
     pub const VELOCITYPERCENT: u16 = 67;
 }
@@ -461,10 +462,22 @@ fn set_level(s: &mut Sim, p: UnitId, n: u32) -> Result<String, String> {
     }
     let game = &mut s.game;
     s.events.action.combat(game, |cv, _| {
+        use d2_sim::combat::vitals::{add_experience, VitalsUnits};
         let Some(t) = cv.v.h.vitals.clone() else {
             return Err("level: no vitals tables".to_string());
         };
-        d2_sim::combat::vitals::set_experience_for_target_level(cv, &t, p, n - 1);
+        // The experience of level n (threshold row n - 1, the max level's
+        // past the table). Not `set_experience_for_target_level`: it adds
+        // nothing unless its row is above the level now, so one level up
+        // (row n - 1 = the level now) would never happen.
+        let class = cv.class_id(p);
+        let rules = VitalsUnits::rules(cv).clone();
+        let row = (n - 1).min(t.max_level_in(&rules, class).saturating_sub(1));
+        let need = t.threshold_in(&rules, class, row);
+        let have = cv.base_stat(p, vstat::EXPERIENCE) as u32;
+        if need > have {
+            add_experience(cv, &t, p, need - have);
+        }
         Ok(())
     })?;
     let got = base(s, p, stat::LEVEL);

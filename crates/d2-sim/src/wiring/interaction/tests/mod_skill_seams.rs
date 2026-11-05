@@ -9,11 +9,14 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use crate::rules::{
-    AuraPulse, ModRules, Ruleset, SkillCharge, SkillFn, SkillHost, SkillProvider, Summon,
+    AuraPulse, FormSkill, ModRules, Ruleset, SkillCharge, SkillFn, SkillHost, SkillProvider,
+    Summon, UnitForm,
 };
 use crate::skills::list::{ListOwner, SkillList};
 use crate::skills::use_::bodies::{self, b3_lvl30, BodyStat, BodyTables, BodyWorld};
-use crate::skills::use_::SkillFunctions;
+use crate::skills::use_::form::NO_STATE;
+use crate::skills::use_::{SkillFunctions, UseState, UseWorld};
+use crate::stats::states::{group, StateTable};
 use crate::units::hooks::Sim;
 use crate::units::lifecycle::LifecycleHooks;
 use crate::units::{UnitId, UnitType};
@@ -369,6 +372,151 @@ fn start_dash_needs_a_path() {
     assert_eq!(r, i32::from(has));
 }
 
+#[test]
+fn set_path_masks_sets_the_masks_asked() {
+    let mut fx = Fx::with(super::stat_data(), skills());
+    fx.sim.hooks().enable_paths().expect("embedded tables");
+    let p = fx.spawn(UnitType::Player, 10, 10);
+    let masks = |fx: &Fx| {
+        let d = fx.sim.sys.hooks.paths.as_ref().and_then(|ps| ps.dynamic(p));
+        d.map(|d| (d.move_mask, d.foot_mask))
+    };
+    let r = run(&mut fx, p, |w, u| {
+        i32::from(w.set_path_masks(u, Some(0x1C09), Some(0x80)))
+    });
+    assert_eq!(r, 1);
+    assert_eq!(masks(&fx), Some((0x1C09, 0x80)));
+    // `None` keeps a mask.
+    run(&mut fx, p, |w, u| {
+        i32::from(w.set_path_masks(u, None, Some(0)))
+    });
+    assert_eq!(masks(&fx), Some((0x1C09, 0)));
+    run(&mut fx, p, |w, u| {
+        i32::from(w.set_path_masks(u, Some(0), None))
+    });
+    assert_eq!(masks(&fx), Some((0, 0)));
+}
+
+/// Sets params 1 and 2 of the player's entry of skill 0: the leap's point.
+fn leap_point(fx: &mut Fx, p: UnitId, at: (i32, i32)) {
+    let l = fx
+        .sim
+        .sys
+        .hooks
+        .skill_lists
+        .get_mut(&p)
+        .expect("a skill list");
+    let i = l.native(0).expect("skill 0");
+    l.entries[i].params[0] = at.0;
+    l.entries[i].params[1] = at.1;
+}
+
+#[test]
+fn leap_land_lands_on_the_entrys_point() {
+    let mut fx = Fx::with(super::stat_data(), skills());
+    fx.sim.hooks().enable_paths().expect("embedded tables");
+    let p = fx.spawn(UnitType::Player, 10, 10);
+    give_skill(&mut fx, p);
+    run(&mut fx, p, |w, u| {
+        i32::from(w.set_path_masks(u, Some(0), Some(0)))
+    });
+    // In flight: the point is ahead.
+    leap_point(&mut fx, p, (20, 10));
+    let r = run(&mut fx, p, |w, u| i32::from(w.leap_land(u, 0)));
+    assert_eq!(r, 0);
+    // On the point: landed, with the walk masks back.
+    leap_point(&mut fx, p, (10, 10));
+    let r = run(&mut fx, p, |w, u| i32::from(w.leap_land(u, 0)));
+    assert_eq!(r, 1);
+    let d = fx.sim.sys.hooks.paths.as_ref().and_then(|ps| ps.dynamic(p));
+    assert_eq!(d.map(|d| (d.move_mask, d.foot_mask)), Some((0x1C09, 0x80)));
+}
+
+#[test]
+fn leap_land_needs_the_skill() {
+    let mut fx = Fx::with(super::stat_data(), skills());
+    fx.sim.hooks().enable_paths().expect("embedded tables");
+    let p = fx.spawn(UnitType::Player, 10, 10);
+    let r = run(&mut fx, p, |w, u| i32::from(w.leap_land(u, 0)));
+    assert_eq!(r, 0);
+}
+
+/// Params 1..4 of the player's entry of skill 0.
+fn entry_params(fx: &mut Fx, p: UnitId) -> [i32; 4] {
+    let l = fx.sim.sys.hooks.skill_lists.get(&p).expect("a skill list");
+    let i = l.native(0).expect("skill 0");
+    l.entries[i].params
+}
+
+/// Sets params 3 and 4 of the player's entry of skill 0: the leap
+/// attack's kept target (type 6: none).
+fn leap_target(fx: &mut Fx, p: UnitId, ty: i32, guid: i32) {
+    let l = fx
+        .sim
+        .sys
+        .hooks
+        .skill_lists
+        .get_mut(&p)
+        .expect("a skill list");
+    let i = l.native(0).expect("skill 0");
+    l.entries[i].params[2] = ty;
+    l.entries[i].params[3] = guid;
+}
+
+#[test]
+fn leap_next_target_finds_the_entrys_target() {
+    let mut fx = Fx::with(super::stat_data(), skills());
+    let p = fx.spawn(UnitType::Player, 10, 10);
+    give_skill(&mut fx, p);
+    // Nothing kept and nobody around: no target, the entry keeps none.
+    leap_target(&mut fx, p, 6, 0);
+    let r = run(&mut fx, p, |w, u| i32::from(w.leap_next_target(u, 0)));
+    assert_eq!(r, 0);
+    assert_eq!(entry_params(&mut fx, p)[2], 6);
+    // The kept target is found again and stays kept.
+    let m = fx.spawn(UnitType::Monster, 12, 10);
+    let guid = fx.sim.sys.units.get(m).unwrap().guid as i32;
+    leap_target(&mut fx, p, 1, guid);
+    let r = run(&mut fx, p, |w, u| i32::from(w.leap_next_target(u, 0)));
+    assert_eq!(r, 1);
+    assert_eq!(entry_params(&mut fx, p)[2..], [1, guid]);
+}
+
+#[test]
+fn leap_next_target_needs_the_skill() {
+    let mut fx = Fx::with(super::stat_data(), skills());
+    let p = fx.spawn(UnitType::Player, 10, 10);
+    let r = run(&mut fx, p, |w, u| i32::from(w.leap_next_target(u, 0)));
+    assert_eq!(r, 0);
+}
+
+#[test]
+fn leap_strike_needs_a_target() {
+    let mut fx = Fx::with(super::stat_data(), skills());
+    let p = fx.spawn(UnitType::Player, 10, 10);
+    give_skill(&mut fx, p);
+    leap_target(&mut fx, p, 6, 0);
+    let r = run(&mut fx, p, |w, u| i32::from(w.leap_strike(u, 0, 1)));
+    assert_eq!(r, 0);
+    let m = fx.spawn(UnitType::Monster, 11, 10);
+    let guid = fx.sim.sys.units.get(m).unwrap().guid as i32;
+    leap_target(&mut fx, p, 1, guid);
+    let r = run(&mut fx, p, |w, u| i32::from(w.leap_strike(u, 0, 1)));
+    assert_eq!(r, 1);
+}
+
+#[test]
+fn set_path_masks_needs_a_path() {
+    let (mut fx, p, _) = pet_fx();
+    let has = fx
+        .sim
+        .skill_use(&mut fx.game, |w| BodyWorld::has_path(w, p));
+    let r = run(&mut fx, p, |w, u| {
+        i32::from(w.set_path_masks(u, Some(0), Some(0)))
+    });
+    assert_eq!(r, i32::from(has));
+}
+
 // ---- world actions -------------------------------------------------------------------
 
 #[test]
@@ -419,6 +567,7 @@ fn aura_pulse_puts_the_state_on_the_units_around() {
                 skill: 0,
                 level: 1,
                 state: STATE,
+                target_state: STATE,
                 range: 5,
                 frames: 25,
                 filter: 0x3,
@@ -432,6 +581,81 @@ fn aura_pulse_puts_the_state_on_the_units_around() {
         assert!(fx.sim.sys.stats.has_state(u, u32::from(STATE)));
     }
     assert!(fx.sim.with(&mut fx.game, |_, v| v.stat(m, ARMORCLASS)) >= 50);
+}
+
+#[test]
+fn timed_buff_refreshes_stats_clears_its_group_and_leaves_other_units_alone() {
+    let (mut fx, p, m) = pet_fx();
+    let bodies = Arc::make_mut(fx.sim.sys.hooks.bodies.as_mut().unwrap());
+    bodies.state_group[30] = 1;
+    bodies.state_group[31] = 1;
+    let cast = |fx: &mut Fx, state, value| {
+        run(fx, p, move |w, u| {
+            i32::from(w.timed_buff(
+                u,
+                &crate::rules::BuffPulse {
+                    skill: 0,
+                    level: 5,
+                    state,
+                    frames: 13,
+                    stats: &[(ARMORCLASS, value)],
+                    events: &[],
+                },
+            ))
+        })
+    };
+    assert_eq!(cast(&mut fx, 30, 17), 1);
+    assert!(fx.sim.sys.stats.has_state(p, 30));
+    assert!(!fx.sim.sys.stats.has_state(m, 30));
+    assert_eq!(fx.sim.with(&mut fx.game, |_, v| v.stat(p, ARMORCLASS)), 17);
+    assert_eq!(cast(&mut fx, 31, 29), 1);
+    assert!(!fx.sim.sys.stats.has_state(p, 30));
+    assert!(fx.sim.sys.stats.has_state(p, 31));
+    assert_eq!(fx.sim.with(&mut fx.game, |_, v| v.stat(p, ARMORCLASS)), 29);
+    assert_eq!(cast(&mut fx, 31, 31), 1);
+    assert_eq!(fx.sim.with(&mut fx.game, |_, v| v.stat(p, ARMORCLASS)), 31);
+}
+
+#[test]
+fn timed_buff_replaces_callbacks_and_expiry_unregisters_them() {
+    let (mut fx, p, _) = pet_fx();
+    let cast = |fx: &mut Fx, event| {
+        run(fx, p, move |w, u| {
+            i32::from(w.timed_buff(
+                u,
+                &crate::rules::BuffPulse {
+                    skill: 0,
+                    level: 5,
+                    state: 30,
+                    frames: 13,
+                    stats: &[],
+                    events: &[(event, 2)],
+                },
+            ))
+        })
+    };
+    assert_eq!(cast(&mut fx, 1), 1);
+    assert_eq!(fx.sim.sys.hooks.handlers[&p].len(), 1);
+    assert_eq!(fx.sim.sys.hooks.handlers[&p][0].event, 1);
+    assert_eq!(cast(&mut fx, 2), 1);
+    assert_eq!(fx.sim.sys.hooks.handlers[&p].len(), 1);
+    assert_eq!(fx.sim.sys.hooks.handlers[&p][0].event, 2);
+    let expires = fx.sim.skill_use(&mut fx.game, |w| {
+        let list = w.state_list(p, 30).expect("buff state list");
+        assert_eq!(w.list_expire(list), bodies::after(w, 13));
+        w.list_expire(list)
+    });
+    for _ in 0..=expires {
+        fx.frame();
+    }
+    assert!(!fx.sim.sys.stats.has_state(p, 30));
+    assert!(fx
+        .sim
+        .sys
+        .hooks
+        .handlers
+        .get(&p)
+        .is_none_or(|h| h.is_empty()));
 }
 
 #[test]
@@ -638,4 +862,192 @@ fn a_mod_hears_of_a_resurrection() {
     fx.sim.sys.hooks.rules = Ruleset::Mod(Arc::new(RespecMod));
     tell_resurrected(&mut fx, p);
     assert_eq!(fx.sim.with(&mut fx.game, |_, v| v.stat(p, 300)), 1);
+}
+
+// ---- the form test (use state test 7) ---------------------------------------
+
+/// A state with the `restrict` flag (a form), and one without.
+const FORM_STATE: u16 = 139;
+const OTHER_STATE: u16 = 140;
+
+/// A mod game whose form test answers `answer`, after reading the
+/// skill's columns and the unit's form.
+#[derive(Debug)]
+struct FormMod(Option<bool>, Arc<Mutex<Vec<FormSeen>>>);
+
+/// What [`FormMod`] read: `restrict`, the states, in a form, has
+/// [`OTHER_STATE`].
+type FormSeen = (u8, [u16; 3], bool, bool);
+
+impl SkillProvider for FormMod {
+    fn has(&self, _: SkillFn, _: u16) -> bool {
+        false
+    }
+    fn form_ok(&self, k: &FormSkill, u: &dyn UnitForm) -> Option<bool> {
+        let seen = (k.restrict, k.states, u.in_form(), u.has_state(OTHER_STATE));
+        self.1.lock().unwrap().push(seen);
+        self.0
+    }
+}
+
+impl ModRules for FormMod {
+    fn name(&self) -> &str {
+        "form-mod"
+    }
+    fn skills(&self) -> Option<&dyn SkillProvider> {
+        Some(self)
+    }
+}
+
+/// A player with skill 0 (`restrict` and `State1`…`State3` as given),
+/// mana for it, and the states `on`: its use state.
+fn form_use_state(restrict: u8, states: [u16; 3], on: &[u16], rules: Ruleset) -> UseState {
+    let mut sk = skills();
+    sk.skills[0].restrict = restrict;
+    [
+        sk.skills[0].state1,
+        sk.skills[0].state2,
+        sk.skills[0].state3,
+    ] = states;
+    let mut data = (*super::stat_data()).clone();
+    data.states = StateTable::synthetic(
+        super::N_STATES,
+        &[
+            (
+                u32::from(super::S_CURABLE),
+                super::super::npc_world::STATE_CURABLE,
+            ),
+            (u32::from(FORM_STATE), group::RESTRICT),
+        ],
+    );
+    let mut fx = Fx::with(Arc::new(data), sk);
+    let p = fx.spawn(UnitType::Player, 10, 10);
+    give_skill(&mut fx, p);
+    fx.set(p, &[(8, 100 << 8)]);
+    fx.sim.sys.hooks.rules = rules;
+    let on = on.to_vec();
+    fx.sim.skill_use(&mut fx.game, move |w| {
+        for &s in &on {
+            BodyWorld::state_on(w, p, i32::from(s), true);
+        }
+        let e = UseWorld::find_entry(w, p, 0).expect("skill 0");
+        UseWorld::use_state(w, p, &e)
+    })
+}
+
+#[test]
+fn use_state_runs_the_form_test() {
+    let none = [NO_STATE; 3];
+    let o = || Ruleset::Original;
+    // restrict 0: only outside a form.
+    assert_eq!(form_use_state(0, none, &[], o()), UseState::Usable);
+    let st = form_use_state(0, none, &[FORM_STATE], o());
+    assert_eq!(st, UseState::Shape);
+    // A state without the flag is no form.
+    let st = form_use_state(0, none, &[OTHER_STATE], o());
+    assert_eq!(st, UseState::Usable);
+    // restrict 1: always.
+    let st = form_use_state(1, none, &[FORM_STATE], o());
+    assert_eq!(st, UseState::Usable);
+    // restrict 2: in a form that has one of the skill's states.
+    let s = [FORM_STATE, NO_STATE, NO_STATE];
+    let st = form_use_state(2, s, &[FORM_STATE], o());
+    assert_eq!(st, UseState::Usable);
+    assert_eq!(form_use_state(2, s, &[], o()), UseState::Shape);
+    let other = [OTHER_STATE, NO_STATE, NO_STATE];
+    let st = form_use_state(2, other, &[FORM_STATE], o());
+    assert_eq!(st, UseState::Shape);
+}
+
+#[test]
+fn a_mod_answers_the_form_test() {
+    let s = [OTHER_STATE, 7, NO_STATE];
+    let seen = seen::<FormSeen>();
+    let rules = |a| Ruleset::Mod(Arc::new(FormMod(a, seen.clone())));
+    // The mod refuses what D2RUST's rule passes ...
+    let st = form_use_state(3, s, &[FORM_STATE, OTHER_STATE], rules(Some(false)));
+    assert_eq!(st, UseState::Shape);
+    // ... passes what it refuses ...
+    let st = form_use_state(0, s, &[FORM_STATE], rules(Some(true)));
+    assert_eq!(st, UseState::Usable);
+    // ... and no answer keeps D2RUST's rule.
+    let st = form_use_state(0, s, &[FORM_STATE], rules(None));
+    assert_eq!(st, UseState::Shape);
+    let seen = seen.lock().unwrap();
+    assert_eq!(
+        *seen,
+        [(3, s, true, true), (0, s, true, false), (0, s, true, false)]
+    );
+}
+
+#[test]
+fn data_form_changes_real_skill_gating_on_entry_toggle_and_expiry() {
+    let mut sk = skills();
+    sk.skills.push(sk.skills[0].clone());
+    sk.skills[0].restrict = 2;
+    sk.skills[0].state1 = FORM_STATE;
+    sk.skills[0].state2 = NO_STATE;
+    sk.skills[0].state3 = NO_STATE;
+    let mut data = (*super::stat_data()).clone();
+    data.states =
+        StateTable::synthetic(super::N_STATES, &[(u32::from(FORM_STATE), group::RESTRICT)]);
+    let mut fx = Fx::with(Arc::new(data), sk);
+    let p = fx.spawn(UnitType::Player, 10, 10);
+    give_skill(&mut fx, p);
+    let rows = fx.sim.sys.hooks.tables.skills.skills.clone();
+    fx.sim
+        .sys
+        .hooks
+        .skill_lists
+        .get_mut(&p)
+        .unwrap()
+        .set_base(&rows, ListOwner::player(0), 1, 5);
+    fx.set(p, &[(8, 100 << 8)]);
+    let mut groups = vec![0; super::N_STATES];
+    groups[usize::from(FORM_STATE)] = 1;
+    fx.sim.sys.hooks.bodies = Some(Arc::new(BodyTables {
+        stats: vec![BodyStat::default(); 359],
+        state_group: groups,
+        state_aura: vec![false; super::N_STATES],
+        ..BodyTables::default()
+    }));
+    let text=format!("[[skill]]\nid=1\n[[skill.part]]\nkind='form'\nstate={FORM_STATE}\nframes='13'\ndelay='0'\n[[skill.part.stat]]\nstat=31\nvalue='3*lvl'\n");
+    fx.sim.sys.hooks.rules = crate::rules::DataMod::from_files(
+        "form",
+        &crate::rules::DataModFiles {
+            skills: Some(("skills.toml", &text)),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .into_ruleset();
+    let usable = |fx: &mut Fx| {
+        fx.sim.skill_use(&mut fx.game, |w| {
+            let entry = UseWorld::find_entry(w, p, 0).unwrap();
+            UseWorld::use_state(w, p, &entry)
+        })
+    };
+    let cast = |fx: &mut Fx| {
+        fx.sim.skill_use(&mut fx.game, |w| {
+            w.srvdo(crate::rules::BLOCK_SLOT, p, 1, 5, false, false, false)
+        })
+    };
+    assert_eq!(usable(&mut fx), UseState::Shape);
+    assert_eq!(cast(&mut fx), 1);
+    assert_eq!(usable(&mut fx), UseState::Usable);
+    assert_eq!(fx.sim.sys.stats.unit_total(p, 31, 0), 15);
+    assert_eq!(cast(&mut fx), 0);
+    assert_eq!(usable(&mut fx), UseState::Shape);
+    assert_eq!(fx.sim.sys.stats.unit_total(p, 31, 0), 0);
+    assert_eq!(cast(&mut fx), 1);
+    let expire = fx.sim.skill_use(&mut fx.game, |w| {
+        w.list_expire(w.state_list(p, i32::from(FORM_STATE)).unwrap())
+    });
+    for _ in 0..=expire {
+        fx.frame();
+    }
+    assert_eq!(usable(&mut fx), UseState::Shape);
+    assert!(!fx.sim.sys.stats.has_state(p, u32::from(FORM_STATE)));
+    assert_eq!(fx.sim.sys.stats.unit_total(p, 31, 0), 0);
+    fx.assert_clean();
 }

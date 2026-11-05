@@ -134,3 +134,61 @@ fn a_bad_wide_state_is_rejected() {
     assert_eq!(r.rejected, 1);
     assert!(m.unit(P).states.is_empty());
 }
+
+#[test]
+fn a_stack_count_is_stored_updated_and_cleared() {
+    use d2_sim::units::wide_states::stack_count_message;
+    let mut m = model();
+    recv_on(&mut m, Wire::Mod, &change(StateChange::Delayed, 380, &[]));
+    // The sim's builder and the protocol's agree on the bytes.
+    let three = stack_count_message(PLAYER, 1, 380, 3);
+    assert_eq!(three, d2_proto::wide_state::stacks(PLAYER, 1, 380, 3));
+    let r = recv_on(&mut m, Wire::Mod, &three);
+    assert_eq!((r.messages, r.handled), (1, 1));
+    assert_eq!(m.unit(P).state_stacks[&380], 3);
+    // A later count replaces it; a byte state takes a count as well.
+    recv_on(&mut m, Wire::Mod, &stack_count_message(PLAYER, 1, 380, 5));
+    recv_on(&mut m, Wire::Mod, &stack_count_message(PLAYER, 1, 7, 2));
+    assert_eq!(m.unit(P).state_stacks[&380], 5);
+    assert_eq!(m.unit(P).state_stacks[&7], 2);
+    // Zero clears one; the state ending clears its count (wide and byte).
+    recv_on(&mut m, Wire::Mod, &stack_count_message(PLAYER, 1, 7, 0));
+    assert!(!m.unit(P).state_stacks.contains_key(&7));
+    recv_on(&mut m, Wire::Mod, &change(StateChange::End, 380, &[]));
+    assert!(m.unit(P).state_stacks.is_empty());
+    recv_on(&mut m, Wire::Mod, &change(StateChange::Delayed, 12, &[]));
+    recv_on(&mut m, Wire::Mod, &stack_count_message(PLAYER, 1, 12, 4));
+    recv_on(&mut m, Wire::Mod, &change(StateChange::End, 12, &[]));
+    assert!(m.unit(P).state_stacks.is_empty());
+    assert!(m.log.rejected.is_empty(), "{:?}", m.rejected());
+}
+
+#[test]
+fn a_stack_count_of_the_wrong_size_is_rejected() {
+    let mut m = model();
+    // A count body of one byte: size byte 11.
+    let msg = d2_proto::wide_state::encode(d2_proto::wide_state::Op::Stacks, PLAYER, 1, 380, &[2])
+        .unwrap();
+    let r = recv_on(&mut m, Wire::Mod, &msg);
+    assert_eq!(r.rejected, 1);
+    assert!(m.unit(P).state_stacks.is_empty());
+}
+
+#[test]
+fn a_stack_count_for_a_unit_out_of_view_is_ignored() {
+    use d2_sim::units::wide_states::stack_count_message;
+    let mut m = model();
+    let msg = stack_count_message(PLAYER, 99, 380, 3);
+    let r = recv_on(&mut m, Wire::Mod, &msg);
+    assert_eq!((r.messages, r.handled, r.rejected), (1, 1, 0));
+    assert!(m.unit(P).state_stacks.is_empty());
+}
+
+#[test]
+fn the_original_wire_refuses_a_stack_count() {
+    use d2_sim::units::wide_states::stack_count_message;
+    let mut m = model();
+    let msg = stack_count_message(PLAYER, 1, 380, 3);
+    let r = recv_on(&mut m, Wire::Original, &msg);
+    assert_eq!((r.messages, r.discarded_bytes), (0, msg.len()));
+}

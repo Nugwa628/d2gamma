@@ -1,0 +1,15 @@
+[package]
+name = "d2-item-text"
+description = "Renderer-free engine item tooltip text"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+[dependencies]
+d2-data.workspace = true
+d2-sim.workspace = true
+d2-proto.workspace = true
+thiserror.workspace = true
+[lints]
+workspace = true

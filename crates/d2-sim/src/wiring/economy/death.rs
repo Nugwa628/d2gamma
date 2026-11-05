@@ -347,6 +347,10 @@ fn drop_of<X: Pending, F: FreeSpot>(
         sim.data.expansion,
         std::mem::take(&mut h.uniques),
     );
+    // Native loot tables have three columns; configured extra difficulties use Hell.
+    if h.rules.difficulties().is_some() {
+        fields.difficulty = fields.difficulty.min(2);
+    }
     let facts = fields.treasure_facts(living_players(sim), d.players_setting);
     let data = TreasureData {
         tcs: &t.tcs,

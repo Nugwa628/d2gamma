@@ -221,6 +221,7 @@ fn skills() -> SkillTables {
         miss_code: Vec::new(),
         level_cap: LEVEL_CAP_114D,
         stat_count: N_STATS as _,
+        data_rules: d2_data::bin::DataRules::Original,
     }
 }
 

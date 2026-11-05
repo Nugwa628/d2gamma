@@ -90,6 +90,7 @@ impl RealmTickets {
         now: SystemTime,
     ) -> Result<JoinNode, IssueError> {
         Ok(JoinNode {
+            mod_identity: None,
             game_id: g.game,
             node: g.node.0.clone(),
             addr: to.addr.clone(),

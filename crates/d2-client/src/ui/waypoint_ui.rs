@@ -69,6 +69,20 @@ pub fn rows_of(map: Option<&WaypointMap>, open: &WaypointOpen, tab: u8) -> Vec<W
     let Some(map) = map else {
         return Vec::new();
     };
+    if map.configured_acts() {
+        return map
+            .rows()
+            .into_iter()
+            .filter(|r| r.2 == tab)
+            .take(MAX_ROWS)
+            .map(|(id, level, _, _, _)| WpRow {
+                level: level as u16,
+                known: level != open.current && open.record.test(u32::from(id)).unwrap_or(false),
+                current: level == open.current,
+                name: Vec::new(),
+            })
+            .collect();
+    }
     let data = Known {
         map,
         record: &open.record,
@@ -197,6 +211,28 @@ impl Panel for WaypointUi {
             None => &NoMeasure,
         };
         panel.draw(&sh.tables, &sh.env(), &view, ctx.strings, measure, out);
+        if let Some(a) = crate::kit_mod::ruleset()
+            .acts()
+            .and_then(|a| a.rows().get(usize::from(panel.tab)))
+        {
+            let s = sh.config.screen;
+            let sy = s.sy() - s.panel_dy();
+            out.push(crate::ui::UiDraw::Rect(crate::ui::draw::RectRequest {
+                x0: s.sx(),
+                y0: -sy,
+                x1: s.sx() + 320,
+                y1: 31 - sy,
+                color: 0,
+                mode: 0,
+            }));
+            out.push(crate::ui::panels::text(
+                format!("<  {}  >", a.name).encode_utf16().collect(),
+                s.sx() + 24,
+                22 - sy,
+                1,
+                0,
+            ));
+        }
         // After the rows: the close hover's filled rectangle and
         // the "Cancel" tip, `s` = half its width A.
         let s = sh.config.screen;
@@ -245,13 +281,49 @@ impl Panel for WaypointUi {
             self.panel.tab
         };
         let env = WpEnv::new(&sh.config.screen, sh.env().exp);
-        waypoint_elements(
+        let mut elements = waypoint_elements(
             &env,
             &hit_rows(&rows_of(sh.waypoint_map.as_ref(), &open, tab)),
-        )
+        );
+        if crate::kit_mod::ruleset().acts().is_some() {
+            elements.retain(|e| !e.id.starts_with("waypoint.tab("));
+            elements.push(UiElement::new(
+                "waypoint.previous",
+                Rect::new(env.sx, -env.sy, 160, 31),
+            ));
+            elements.push(UiElement::new(
+                "waypoint.next",
+                Rect::new(env.sx + 160, -env.sy, 160, 31),
+            ));
+        }
+        elements
     }
 
     fn event(&mut self, e: UiEvent, _ctx: &UiCtx) -> UiResponse {
+        if let Some(acts) = crate::kit_mod::ruleset().acts() {
+            self.sync();
+            let sh = self.sh.borrow();
+            let screen = sh.config.screen;
+            let delta = match e {
+                UiEvent::Wheel { steps, .. } => Some(-steps.signum()),
+                UiEvent::Press {
+                    button: PointerButton::Left,
+                    at,
+                } if at.y + screen.sy() - screen.panel_dy() <= 30
+                    && at.x >= screen.sx()
+                    && at.x < screen.sx() + 320 =>
+                {
+                    Some(if at.x - screen.sx() < 160 { -1 } else { 1 })
+                }
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                self.panel.tab =
+                    (i32::from(self.panel.tab) + delta).rem_euclid(acts.count() as i32) as u8;
+                self.panel.selected = None;
+                return UiResponse::Consumed;
+            }
+        }
         let (press, at) = match e {
             UiEvent::Press {
                 button: PointerButton::Left,
@@ -416,5 +488,32 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod data_act_tests {
+    use super::*;
+    #[test]
+    fn configured_waypoint_rows_use_explicit_bits_and_new_towns() {
+        let acts=d2_sim::rules::acts::Acts::from_toml("version=1\n[[acts]]\nname='Beyond'\nstart=137\nend=150\ntown=137\nwaypoints=[{id=111,level=137},{id=110,level=138}]").unwrap();
+        let mut map = WaypointMap::from_pairs(Vec::new());
+        map.apply_acts(&acts);
+        let rows = map.rows();
+        assert_eq!(rows[1], (111, 137, 0, true, 13));
+        let mut record = WaypointRecord::allocate();
+        record.set(111).unwrap();
+        let open = WaypointOpen {
+            guid: 7,
+            record,
+            current: 138,
+            seq: 1,
+            tab: 0,
+        };
+        let rows = rows_of(Some(&map), &open, 0);
+        assert_eq!(rows.iter().map(|r| r.level).collect::<Vec<_>>(), [138, 137]);
+        assert!(rows[1].known);
+        assert!(!rows[0].known);
+        assert!(rows[0].current);
     }
 }

@@ -33,21 +33,21 @@ use crate::units::UnitType;
 /// Stats read and written here (`itemstatcost` rows).
 pub mod stat {
     /// Current life.
-    pub const LIFE: u16 = 6;
-    /// Current mana.
-    pub const MANA: u16 = 8;
+    pub use crate::stats::ids::HITPOINTS as LIFE;
     /// Unit level.
-    pub const LEVEL: u16 = 12;
+    pub use crate::stats::ids::LEVEL;
+    /// Current mana.
+    pub use crate::stats::ids::MANA;
     /// Velocity percent (movement speed).
-    pub const VELOCITYPERCENT: i32 = 67;
+    pub const VELOCITYPERCENT: i32 = crate::stats::ids::VELOCITYPERCENT as i32;
     /// Attack rate.
-    pub const ATTACKRATE: i32 = 68;
+    pub const ATTACKRATE: i32 = crate::stats::ids::ATTACKRATE as i32;
     /// Other animation rate.
-    pub const OTHER_ANIMRATE: i32 = 69;
+    pub const OTHER_ANIMRATE: i32 = crate::stats::ids::OTHER_ANIMRATE as i32;
     /// Stat list value last sent to the client for a state's display.
-    pub const UNSENTPARAM1: i32 = 84;
+    pub const UNSENTPARAM1: i32 = crate::stats::ids::UNSENTPARAM1 as i32;
     /// Item slow percent.
-    pub const ITEM_SLOW: u16 = 150;
+    pub use crate::stats::ids::ITEM_SLOW;
 }
 
 /// States set here.
@@ -181,6 +181,12 @@ pub trait EventWorld: BodyWorld {
     ) -> Option<i32> {
         let _ = (func, c, r);
         None
+    }
+    /// A mod game's triggers for `event` happening to `u`
+    /// ([`crate::rules::SkillProvider::unit_event`]), asked after the unit's
+    /// handlers ran. Default: none.
+    fn mod_unit_event(&mut self, event: u8, u: Self::Unit, other: Option<Self::Unit>) {
+        let _ = (event, u, other);
     }
 }
 
@@ -808,6 +814,8 @@ fn freeze<W: EventWorld>(w: &mut W, tb: EventTables<'_>, c: EventCall<W::Unit>) 
         freeze_len: len,
         ..DamageRecord::default()
     };
+    // The item's own freeze property.
+    super::cc::declare_freeze(&mut r2, len);
     apply(w.combat(), tb.combat, h, o, true, &mut r2);
     1
 }
@@ -1623,6 +1631,7 @@ pub fn run<W: EventWorld>(
             w.remove_handler(u, &h);
         }
     }
+    w.mod_unit_event(event, u, other);
     last
 }
 

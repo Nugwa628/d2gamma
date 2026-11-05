@@ -1,0 +1,31 @@
+version = 1
+
+# monstats aip1..aip4 of the doomknight1 row (Normal): 90, 10, 80, 10.
+# The dkfig rows (classes 700 and 701) have the same numbers; the oblivion knight (AI 74) is another AI.
+[[ai]]
+index = 72
+name = "DoomKnight (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "march"
+
+# In reach: aip1 = 90% swing, else stand aip2 = 10 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 90 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4
+when = [{ kind = "in_melee" }]
+
+# Out of reach: aip3 = 80% walk toward the target, else stand aip4 = 10 frames.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 80 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4

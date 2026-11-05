@@ -18,6 +18,26 @@ use super::dispatch::HandlerError;
 use super::skills::{SkillEntry, SkillFx};
 use super::world::{ClientWorld, ModelInputs, UnitKey};
 
+/// The rules the game runs under, as the client's own skill reads use
+/// them ([`ClientSkills`], the use state's form test). A handle
+/// like `item_tables`: always equal, so model comparisons ignore it.
+#[derive(Clone, Default)]
+pub struct RulesRef(pub d2_sim::rules::Ruleset);
+
+impl std::fmt::Debug for RulesRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RulesRef({})", !self.0.is_original())
+    }
+}
+
+impl PartialEq for RulesRef {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for RulesRef {}
+
 /// The client model as the skills formulas read it (context): stats are the model's totals, states its bits and state
 /// lists, the skill list the unit's. The client model holds no item
 /// stat lists or body items: the item reads answer none / 0.
@@ -108,6 +128,9 @@ impl SkillUnits for ClientSkills<'_> {
     }
     fn seed(&mut self, _u: UnitKey) -> &mut Seed {
         &mut self.seed
+    }
+    fn rules(&self) -> &d2_sim::rules::Ruleset {
+        &self.world.rules.0
     }
     fn skill_list(&self, u: UnitKey) -> Vec<SimEntry> {
         self.world

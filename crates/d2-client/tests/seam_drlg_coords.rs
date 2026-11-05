@@ -245,6 +245,12 @@ fn client_rooms_equal_the_servers_after_the_join() {
 #[ignore = "real data: needs D2_GAME_DIR (tools/realdata-gate.sh)"]
 fn client_rooms_follow_the_server_across_the_level_border() {
     let (mut bridge, ms) = start();
+    // The client's own point is the client's to step (the play mode's
+    // prediction, not run here), so it stays at the join point: its
+    // position check would answer the walking player's server points
+    // with C→S 0x5F at that point, and the server would walk the player
+    // back to it. The model's own 0x5F is dropped.
+    bridge.set_drop_own(vec![0x5F]);
     // The install's own charstats and stats: nothing is staged.
     // The route is planned over the rooms active so far: re-plan from
     // where the player stands until it is in the Blood Moor.

@@ -63,6 +63,7 @@ pub enum WaypointError {
 pub struct WaypointMap {
     /// Per level id (= record number): (`Waypoint` byte, `Act` byte).
     levels: Vec<(u8, u8)>,
+    towns: Option<crate::drlg::TownLevels>,
 }
 
 impl WaypointMap {
@@ -70,12 +71,39 @@ impl WaypointMap {
     pub fn new(levels: &[Levels]) -> Self {
         Self {
             levels: levels.iter().map(|l| (l.waypoint, l.act)).collect(),
+            towns: None,
         }
     }
 
     /// From (`Waypoint`, `Act`) per level id; for tests and fakes.
     pub fn from_pairs(levels: Vec<(u8, u8)>) -> Self {
-        Self { levels }
+        Self {
+            levels,
+            towns: None,
+        }
+    }
+
+    /// Replace table waypoint ownership with the complete data registry.
+    pub fn apply_acts(&mut self, acts: &crate::rules::acts::Acts) {
+        let count = acts
+            .rows()
+            .iter()
+            .map(|a| a.end as usize)
+            .max()
+            .unwrap_or(0);
+        self.levels = vec![(NO_WAYPOINT, 0); count];
+        for (id, a) in acts.rows().iter().enumerate() {
+            for level in a.start..a.end {
+                self.levels[level as usize].1 = id as u8;
+            }
+            for w in &a.waypoints {
+                self.levels[w.level as usize].0 = w.id;
+            }
+        }
+        self.towns = Some(acts.towns());
+    }
+    pub fn configured_acts(&self) -> bool {
+        self.towns.is_some()
     }
 
     /// The levels record count.
@@ -110,7 +138,13 @@ impl WaypointMap {
                 let wp = self.index_of_level(l)?;
                 (self.level_of_index(wp.into()) == Some(l)).then(|| {
                     let act = self.act(l).unwrap_or(0);
-                    (wp, l, act, is_town(l), tile_code(l))
+                    {
+                        let town = self
+                            .towns
+                            .as_ref()
+                            .map_or_else(|| is_town(l), |t| t.is_town(l));
+                        (wp, l, act, town, travel_tile(l, town))
+                    }
                 })
             })
             .collect();
@@ -190,13 +224,20 @@ impl WaypointRecord {
     /// or 0x0101 wipes the record to zero (magic ends 0x0000); then bit 0
     /// is set.
     pub fn load_copy(src: &[u8; 16]) -> Result<Self, WaypointError> {
+        let mut r = Self::load_mod_copy(src)?;
+        r.0[2] |= 1;
+        Ok(r)
+    }
+
+    /// Validate and normalize a configured act record without granting a
+    /// built-in waypoint bit. The act registry defines the home waypoint.
+    pub fn load_mod_copy(src: &[u8; 16]) -> Result<Self, WaypointError> {
         let mut r = Self(*src);
         match r.magic() {
             MAGIC => {}
             0x0000 | 0x0101 => r.0 = [0; 16],
             m => return Err(WaypointError::BadMagic(m)),
         }
-        r.0[2] |= 1;
         Ok(r)
     }
 
@@ -212,15 +253,24 @@ impl WaypointRecord {
     }
 }
 
-/// A player's three records, one per difficulty. Owned by the player
+/// A player's records, one per difficulty. Owned by the player
 /// unit (provider: the units group).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct WaypointRecords(pub [WaypointRecord; 3]);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WaypointRecords(pub Vec<WaypointRecord>);
+impl Default for WaypointRecords {
+    fn default() -> Self {
+        Self(vec![WaypointRecord::default(); 3])
+    }
+}
 
 impl WaypointRecords {
     /// The record of difficulty `d`.
     pub fn get_mut(&mut self, d: u8) -> &mut WaypointRecord {
-        &mut self.0[usize::from(d)]
+        let d = usize::from(d);
+        if d >= self.0.len() {
+            self.0.resize(d + 1, WaypointRecord::default());
+        }
+        &mut self.0[d]
     }
 }
 
@@ -245,7 +295,7 @@ pub fn write_section(records: &mut WaypointRecords) -> Result<[u8; 80], Waypoint
     s[0..2].copy_from_slice(b"WS");
     s[2..6].copy_from_slice(&1u32.to_le_bytes());
     s[6..8].copy_from_slice(&0x50u16.to_le_bytes());
-    for (d, r) in records.0.iter_mut().enumerate() {
+    for (d, r) in records.0.iter_mut().take(3).enumerate() {
         let o = 8 + 24 * d;
         s[o..o + 16].copy_from_slice(&r.out_copy()?);
     }
@@ -480,7 +530,7 @@ impl WaypointData {
             // The matching node is freed and the head set to null, so every
             // other node is dropped too.
             arrivals.0.clear();
-        } else if facts.level.is_some_and(is_town) {
+        } else if facts.level.is_some_and(|l| world.town_level(l)) {
             world.set_object_mode(object, 2);
         }
     }
@@ -528,6 +578,41 @@ impl WaypointData {
             _ => {}
         }
         Ok(1)
+    }
+
+    /// A waypoint given without operating it (a mod game's auto pickup,
+    /// [`crate::rules::EventHost::learn_waypoint`]): learned for the
+    /// game's difficulty as [`WaypointData::operate`] does, and an unlit
+    /// one (mode 0) lit with its opening animation; no menu. False for an
+    /// object that is no waypoint (operate function 23) of a waypoint
+    /// level, or a unit without records.
+    pub fn learn<W: WaypointWorld>(
+        &self,
+        world: &mut W,
+        object: UnitId,
+        facts: &ObjectFacts,
+        player: UnitId,
+    ) -> Result<bool, WaypointError> {
+        let is_waypoint = self
+            .objects
+            .get(usize::from(facts.class))
+            .is_some_and(|o| o.operate_fn == OPERATE_FN);
+        let Some(wp) = facts.level.and_then(|l| self.map.index_of_level(l)) else {
+            return Ok(false);
+        };
+        let d = world.difficulty();
+        let Some(records) = world.records(player).filter(|_| is_waypoint) else {
+            return Ok(false);
+        };
+        records.get_mut(d).set(wp.into())?;
+        if facts.mode == 0 {
+            world.set_object_mode(object, 1);
+            let n = world
+                .tick_rate()
+                .ticks((self.frame_cnt(facts.class) >> 8) as i32);
+            world.schedule_endanim(object, world.frame() + n + 1);
+        }
+        Ok(true)
     }
 
     /// The 0x49 validation; returns the result code.

@@ -3,6 +3,7 @@
 //! Usage (run with --release):
 //!   data-tool tables [game_dir]
 //!   data-tool cov-records [game_dir]
+//!   data-tool schema <out_dir>
 //!   data-tool gen-tables
 //!   data-tool gen-proto
 //!   data-tool links [game_dir]
@@ -78,6 +79,14 @@ fn main() -> Result<()> {
         Some("tables") if args.len() <= 2 => tables(&game_dir(args.get(1))?),
         Some("cov-records") if args.len() <= 2 => cov_records(&game_dir(args.get(1))?),
         Some("gen-tables") if args.len() == 1 => gen_tables(),
+        Some("schema") if args.len() == 2 => {
+            let out = Path::new(&args[1]);
+            std::fs::create_dir_all(out)?;
+            for (name, json) in d2_data::schema::export_tables() {
+                std::fs::write(out.join(format!("{name}.json")), json)?;
+            }
+            Ok(())
+        },
         Some("gen-proto") if args.len() == 1 => gen_proto(),
         Some("links") if args.len() <= 2 => links(&game_dir(args.get(1))?),
         Some("dump-compare") if (2..=3).contains(&args.len()) => {
@@ -89,7 +98,7 @@ fn main() -> Result<()> {
         Some("patch") => std::process::exit(patch::main(&args[1..])),
         Some("variant") => std::process::exit(variant::main(&args[1..])),
         _ => bail!(
-            "usage: data-tool tables|links [game_dir] | data-tool gen-tables | data-tool gen-proto | \
+            "usage: data-tool tables|links [game_dir] | data-tool schema <out_dir> | data-tool gen-tables | data-tool gen-proto | \
              data-tool dump-compare <dump_dir> [game_dir] | data-tool excel-dir <out_dir> [game_dir] | \
              data-tool patch ... | data-tool variant (build | check) ..."
         ),

@@ -136,8 +136,9 @@ pub fn item_parts(archives: &dyn TableFiles) -> Result<ItemParts, String> {
 /// logged by the caller and leaves the preview without tips.
 pub fn item_tips(
     archives: &dyn TableFiles,
-    items: d2_sim::items::ItemTables,
+    mut items: d2_sim::items::ItemTables,
 ) -> Result<crate::ui::item_tip::ItemTips, String> {
+    items.rules = crate::kit_mod::ruleset();
     let set = d2_data::bin::load_from(archives, "eng").map_err(|e| e.to_string())?;
     let strings = super::strings::TableStrings::load(archives, super::strings::LANG)
         .map_err(|e| e.to_string())?;
@@ -203,6 +204,12 @@ pub fn prepare_ui(app: &impl crate::app::session::Setup, original: &mut Original
 /// The item-stream decoder of the model over the game's item tables
 /// (`bridge::item_lists`).
 pub struct TableDecoder(pub Arc<d2_sim::items::ItemTables>);
+impl TableDecoder {
+    pub fn active(mut tables: Arc<d2_sim::items::ItemTables>) -> Self {
+        Arc::make_mut(&mut tables).rules = crate::kit_mod::ruleset();
+        Self(tables)
+    }
+}
 
 impl crate::bridge::item_lists::StreamProps for TableDecoder {
     fn item_is_type(&self, code: [u8; 4], t: i16) -> bool {

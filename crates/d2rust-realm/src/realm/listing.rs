@@ -46,6 +46,14 @@ pub fn player_addr(entry: &NodeEntry, addr: SocketAddr) -> String {
     }
 }
 
+/// Whether players would be sent an address they cannot reach: the game
+/// server lists no public address and its link comes from this machine
+/// (loopback), so the address players are told is the link's own. The
+/// realm logs it when the game server links.
+pub fn players_cannot_reach(entry: &NodeEntry, addr: SocketAddr) -> bool {
+    entry.public_addr.is_empty() && addr.ip().to_canonical().is_loopback()
+}
+
 /// How full a game server is, 0-100: the larger of its games and its
 /// players against its limits.
 pub fn load_pct(entry: &NodeEntry, load: &Load) -> u8 {

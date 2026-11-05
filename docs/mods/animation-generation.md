@@ -8,8 +8,10 @@ The launcher downloads the build's bake folder (the channel's `anims` list, laun
 
 ```text
 D2Gamma-Game bake-anims --game-dir DIR [--out DIR] [--reuse DIR] [--jobs N]
-D2Gamma-Game bake-anims --native DIR [--mod NAME]... [--out DIR] [--reuse DIR] [--jobs N]
+D2Gamma-Game bake-anims --native DIR [--mod NAME]... [--data-rules original|mod] [--out DIR] [--reuse DIR] [--jobs N]
 ```
+
+Opening a native folder compiles its tables with the mods' table patches. A mod game whose patches only load under the mod data rules (`DataRules::Mod`: an `experience` table past its fixed rows, `automap` level type numbers) passes `--data-rules mod`, as its game opens them; the bake itself reads no table.
 
 One work item is one player or monster component file: every file under `data\global\chars` and `data\global\monsters` whose name parses as unit token, component, armor class, mode and weapon class. That covers every class, mode, weapon class and equipment variant, and every monster class and mode, across all source facings of the file. Animations named in `tables/render/animation-deny.tsv` are skipped. Objects, missiles and effect overlays keep their source frames.
 

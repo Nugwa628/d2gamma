@@ -72,7 +72,7 @@ fn utf16s(s: &str) -> Vec<u16> {
 }
 
 /// Replaces the conversions `%s`, `%d` (and `%2u`) in order.
-fn fmt_ws(fmt: &[u16], args: &[Vec<u16>]) -> Vec<u16> {
+pub(crate) fn fmt_ws(fmt: &[u16], args: &[Vec<u16>]) -> Vec<u16> {
     let mut out = Vec::new();
     let mut a = args.iter();
     let mut i = 0;
@@ -210,12 +210,23 @@ pub fn build_npc_menu(
     b.set_style(1);
     b.add_item(&input.npc_name, 21, 0, 4, 1, None, false, m)?;
     // Option slots 0 … count − 2; a caption can change the count.
+    let data_travel = rec
+        .options
+        .iter()
+        .flatten()
+        .any(|o| matches!(o.kind, crate::ui::layout::OptionKind::DataTravel(_)));
     let mut slot = 0;
     while slot + 1 < rec.count as usize {
         if let Some(o) = rec.options.get(slot).copied().flatten() {
-            let (cap, count) = slot_caption(o.string, input.captions, strings);
-            if let Some(c) = count {
-                rec.count = c;
+            let (cap, count) = if matches!(o.kind, crate::ui::layout::OptionKind::DataTravel(_)) {
+                (Caption::Text(strings(o.string)), None)
+            } else {
+                slot_caption(o.string, input.captions, strings)
+            };
+            if !data_travel {
+                if let Some(c) = count {
+                    rec.count = c;
+                }
             }
             if let Caption::Text(t) = cap {
                 b.add_item(&t, 15, 0, 0, 1, Some(NpcMenuHandler::Slot(slot)), true, m)?;
@@ -543,7 +554,7 @@ mod tests {
             record: 0,
             npc,
             count,
-            options: o,
+            options: o.into(),
             flag: 0,
         }
     }
@@ -725,6 +736,34 @@ mod tests {
         };
         assert_eq!(r.count, 2);
         assert_eq!(texts(&bx), ["Akara", "s3381", "s4142"]);
+    }
+
+    #[test]
+    fn acts_travel_stays_selectable_after_a_hidden_identify_row() {
+        let ctx = CaptionCtx::default();
+        let mut r = rec(
+            244,
+            &[
+                (3381, OptionKind::Talk),
+                (4020, OptionKind::Identify),
+                (5000, OptionKind::DataTravel(77)),
+            ],
+            4,
+        );
+        let NpcMenuBuild::Built { bx, .. } = build_npc_menu(
+            &mut r,
+            &input(244, &ctx),
+            (300, 200),
+            &strings,
+            (800, 600),
+            &Fixed,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        assert_eq!(r.count, 4);
+        assert_eq!(texts(&bx), ["Akara", "s3381", "s5000", "s4142"]);
+        assert_eq!(bx.items[2].handler, Some(NpcMenuHandler::Slot(2)));
     }
 
     // Test vector "hire list at 640 × 480".

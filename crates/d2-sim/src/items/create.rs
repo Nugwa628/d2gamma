@@ -336,9 +336,10 @@ pub fn max_sockets_at(t: &ItemTables, record: usize, ilvl: i32) -> i32 {
         return 0;
     };
     let ilvl = ilvl.max(1);
-    let m = if ilvl <= 25 {
+    let [low, high] = t.rules.global_rules().socket_level_bands;
+    let m = if ilvl as u32 <= low {
         it.maxsock1
-    } else if ilvl <= 40 {
+    } else if ilvl as u32 <= high {
         it.maxsock25
     } else {
         it.maxsock40

@@ -1,0 +1,7 @@
+id = "ai-lift-minion-spawner"
+name = "AI 121 MinionSpawner, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "MinionSpawner as a graph: AI 121 (MinionSpawner)."
+api = 1
+kind = "full"

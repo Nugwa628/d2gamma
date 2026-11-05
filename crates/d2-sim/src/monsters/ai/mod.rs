@@ -22,9 +22,11 @@ mod bodies4;
 mod bodies5;
 mod bodies6;
 mod bodies7;
+pub mod census;
 mod common;
 pub mod forced;
 mod functions;
+pub mod graph;
 mod npc;
 pub mod scans;
 pub mod seams;
@@ -158,6 +160,9 @@ pub struct MonsterAi {
     /// `None` until an AI is installed (monster data +0x28 = 0).
     pub control: Option<AiControl>,
     pub velocity: VelocityRequest,
+    /// Where the monster is in a mod's behaviour graph; `None` for every
+    /// monster that runs one of D2Gamma's own AIs.
+    pub graph: Option<graph::GraphRun>,
 }
 
 /// A call in the game's rules that this code does not model yet.
@@ -179,6 +184,8 @@ pub enum Unhandled {
 pub struct AiStore {
     units: BTreeMap<UnitId, MonsterAi>,
     pub unhandled: Vec<Unhandled>,
+    /// What mod behaviour graphs report: state changes, wind-ups, phases.
+    pub events: graph::GraphEvents,
     /// The Npc command counter G (the Npc commands step 1).
     ///
     /// G is process-wide in the game's rules: it counts from 0 at process
@@ -209,6 +216,13 @@ impl AiStore {
     }
     pub fn entry(&mut self, u: UnitId) -> &mut MonsterAi {
         self.units.entry(u).or_default()
+    }
+    /// Every unit that runs a behaviour graph, with its place in it.
+    pub fn graph_runs(&self) -> Vec<(UnitId, graph::GraphRun)> {
+        self.units
+            .iter()
+            .filter_map(|(u, m)| Some((*u, m.graph?)))
+            .collect()
     }
     pub fn control(&self, u: UnitId) -> Option<&AiControl> {
         self.units.get(&u)?.control.as_ref()
@@ -328,6 +342,10 @@ impl<W: AiHost + ?Sized> Ctx<'_, W> {
         let Some(r) = self.tables.monstats.get(p.class) else {
             return 0;
         };
+        let set = self.world.rules().monsters();
+        if let Some(v) = set.and_then(|m| m.aip(r.ai, n, self.info.difficulty)) {
+            return v;
+        }
         let v = match (n, self.info.difficulty) {
             (1, 0) => r.aip1,
             (1, 1) => r.aip1_n,

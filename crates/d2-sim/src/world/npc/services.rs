@@ -270,6 +270,9 @@ pub(super) fn act_travel<W: NpcWorld>(
     action: u32,
     expansion: bool,
 ) {
+    if w.rules().acts().is_some() {
+        return;
+    }
     let f = w.quest_flags(player);
     // (slot gate, level, act completion "from", waypoint) or a plain
     // act change (level, arg).

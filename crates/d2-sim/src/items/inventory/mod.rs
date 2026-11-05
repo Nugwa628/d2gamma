@@ -175,17 +175,17 @@ pub mod ty {
 
 /// Stat ids read here.
 pub mod stat {
-    pub const STRENGTH: u16 = 0;
-    pub const DEXTERITY: u16 = 2;
-    pub const LEVEL: u16 = 12;
-    pub const MINDAMAGE: u16 = 21;
-    pub const MAXDAMAGE: u16 = 22;
-    pub const SECONDARY_MINDAMAGE: u16 = 23;
-    pub const SECONDARY_MAXDAMAGE: u16 = 24;
-    pub const QUANTITY: u16 = 70;
-    pub const ITEM_REQ_PERCENT: u16 = 91;
-    pub const THROW_MINDAMAGE: u16 = 159;
-    pub const THROW_MAXDAMAGE: u16 = 160;
+    pub use crate::stats::ids::DEXTERITY;
+    pub use crate::stats::ids::ITEM_REQ_PERCENT;
+    pub use crate::stats::ids::LEVEL;
+    pub use crate::stats::ids::MAXDAMAGE;
+    pub use crate::stats::ids::MINDAMAGE;
+    pub use crate::stats::ids::QUANTITY;
+    pub use crate::stats::ids::SECONDARY_MAXDAMAGE;
+    pub use crate::stats::ids::SECONDARY_MINDAMAGE;
+    pub use crate::stats::ids::STRENGTH;
+    pub use crate::stats::ids::THROW_MAXDAMAGE;
+    pub use crate::stats::ids::THROW_MINDAMAGE;
 }
 
 /// The kind of a unit, as the inventory rules distinguish it.
@@ -600,6 +600,12 @@ pub trait InvWorld {
     /// Level requirement ([`levelreq::level_requirement`]
     /// on the values the provider reads; never negative).
     fn level_requirement(&self, item: UnitId, unit: UnitId) -> i32;
+    /// The game's rules, for a mod game's requirement hook
+    /// ([`crate::items::provider::ItemProvider::requirements`]). Default:
+    /// the engine's own (no hook).
+    fn item_rules(&self) -> crate::rules::Ruleset {
+        crate::rules::Ruleset::Original
+    }
 
     // --- Hands.
     /// Two-handed.

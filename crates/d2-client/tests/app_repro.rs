@@ -51,6 +51,7 @@ fn passes_the_same_way_twice(game_dir: &Path, tag: &str) {
         repro::query::parse_names("hud.gold, ui.open(inventory), player.pos, player.mode").unwrap();
     let run = |n: &str| {
         let opts = RunOpts {
+            rules: None,
             out: scratch(&format!("{tag}-{n}")),
             game_dir: Some(game_dir.to_path_buf()),
             base_dir: game_dir.to_path_buf(),

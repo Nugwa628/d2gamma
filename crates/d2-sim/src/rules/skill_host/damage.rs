@@ -1,5 +1,6 @@
 //! Hits and damage for a mod game's skill bodies.
 
+use crate::combat::cc::CcEffect;
 use crate::combat::hit::BlockResult;
 use crate::combat::DamageRecord;
 pub use crate::skills::levels::ElementAdded;
@@ -9,6 +10,11 @@ use crate::units::UnitId;
 /// fill from the skill and the weapon, and the record queued or applied,
 /// all on D2RUST's combat code.
 pub trait HostDamage {
+    /// Whether the queued pair record is a landed hit, after start_combat.
+    fn queued_hit(&mut self, a: UnitId, d: UnitId) -> bool {
+        let _ = (a, d);
+        false
+    }
     /// The hit test of `a` against `d` with `bonus` attack rating (one
     /// draw from the attacker's seed; `missile` uses the missile terms).
     fn hit_roll(&mut self, a: UnitId, d: UnitId, bonus: i32, missile: bool) -> bool {
@@ -90,6 +96,22 @@ pub trait HostDamage {
     /// leech, life loss, timed effects, kill); `missile` totals it first.
     fn apply_damage(&mut self, a: UnitId, d: UnitId, missile: bool, rec: &mut DamageRecord) {
         let _ = (a, d, missile, rec);
+    }
+    /// Declares crowd control `effects` on `rec` for attacker `a` (rolls the
+    /// effects' chances on its seed); see [`crate::combat::cc`].
+    fn declare_cc(&mut self, a: UnitId, rec: &mut DamageRecord, effects: &[CcEffect]) {
+        let _ = (a, rec, effects);
+    }
+    /// The defender's reaction to `rec` (get-hit, knockback, block, death),
+    /// as after an engine skill's hit.
+    fn react(&mut self, a: UnitId, d: UnitId, rec: &mut DamageRecord) {
+        let _ = (a, d, rec);
+    }
+    /// Applies crowd control `effects` from `a` to `d` with no damage and no
+    /// damage events (a hit of zero), then the reaction. Rolls the effects'
+    /// chances on `a`'s seed.
+    fn crowd_control(&mut self, a: UnitId, d: UnitId, effects: &[CcEffect]) {
+        let _ = (a, d, effects);
     }
     /// Runs the handlers of unit event `event` (`events` row) on `u`,
     /// with the other unit and the record; the last handler's result.

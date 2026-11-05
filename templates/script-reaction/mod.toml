@@ -1,0 +1,7 @@
+id = "script-reaction"
+name = "Script Reaction (template)"
+version = "0.1.0"
+author = "Nugwa"
+description = "A skill-used trigger calls a bounded server script and schedules a frame timer."
+api = 1
+kind = "full"

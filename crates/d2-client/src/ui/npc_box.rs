@@ -159,6 +159,13 @@ pub struct NpcMenuState {
     /// it on the next shop poll. D2RUST's own.
     pub shop_request: Option<(u32, u32)>,
     pub screen: (i32, i32),
+    /// The mod game draws the box itself
+    /// (`ClientMods::without_npc_menu_box`): the panel neither draws nor
+    /// hit-tests it.
+    pub(super) box_hidden: bool,
+    /// A mod panel's choice of selectable row (`ModRequest::NpcRow`), run
+    /// at the next [`OriginalUi::npc_menu_poll`].
+    pub(crate) row_request: Option<usize>,
 }
 
 pub type SharedNpcMenu = Rc<RefCell<NpcMenuState>>;
@@ -372,6 +379,14 @@ impl NpcMenuState {
                 rec.count += 1;
                 imbue = true;
             }
+        }
+        if let Some(acts) = crate::kit_mod::ruleset().acts() {
+            apply_data_travel(
+                &mut rec,
+                acts,
+                u32::from(world.player_level().unwrap_or(0)),
+                it.class as u16,
+            );
         }
         let count = rec.count;
         let player = world.local();
@@ -790,7 +805,7 @@ impl Panel for NpcMenuUi {
         let m = Measure(sh.fonts.as_ref());
         let mut spin = 0;
         let border = sh.tables.files.id(crate::ui::box_border::BOXPIECES_FILE);
-        if let Some(bx) = &st.bx {
+        if let Some(bx) = st.bx.as_ref().filter(|_| !st.box_hidden) {
             push_menu_draws(bx.draw(&mut spin, &m), st.screen_rect(), border, out);
         }
         if let Some(n) = &st.note {
@@ -808,7 +823,7 @@ impl Panel for NpcMenuUi {
             return self.rect().contains(p).then_some(WidgetId(0));
         }
         let st = self.st.borrow();
-        let bx = st.bx.as_ref()?;
+        let bx = st.bx.as_ref().filter(|_| !st.box_hidden)?;
         ltrb_contains(&bx.rect(), p).then(|| WidgetId(item_at(bx, p).map_or(0, |i| i as u16 + 1)))
     }
 
@@ -824,6 +839,7 @@ impl Panel for NpcMenuUi {
         let mut out = st
             .bx
             .as_ref()
+            .filter(|_| !st.box_hidden)
             .map_or_else(Vec::new, |bx| menu_elements(bx, "menu"));
         if st.talk.active {
             if let Some(bx) = &st.talk.topic {
@@ -875,6 +891,10 @@ impl Panel for NpcMenuUi {
                 return UiResponse::Ignored;
             };
             match e.at() {
+                // A hidden box has no inside: the mod game's panel above
+                // took the presses on its own box, so one that gets here
+                // is outside the menu.
+                Some(_) if st.box_hidden => (false, None),
                 Some(p) => (ltrb_contains(&bx.rect(), p), item_at(bx, p)),
                 None => return UiResponse::Ignored,
             }
@@ -1036,6 +1056,7 @@ impl OriginalUi {
                 st.build(world, strings, name, &m);
             }
         }
+        self.run_row_request(world, strings);
         self.talk_poll(world, strings);
         let pending = std::mem::take(&mut self.npcm.borrow_mut().pending);
         for o in pending {
@@ -1067,12 +1088,20 @@ impl OriginalUi {
 
     /// S→C 0x2A at the UI: in
     /// the waiting state the note closes and, on result 3 or 6, Cain's
-    /// counts reset and the menu is rebuilt; result 5 changes nothing
-    /// here; any other result sets state 12 (its note caption is open).
+    /// counts reset and the menu is rebuilt; result 5 (a hire) rebuilds
+    /// the menu; any other result sets state 12 (its note caption is open).
     /// Outside it, result 1 plays UI sound 221.
     pub(super) fn npc_transaction(&mut self, bytes: &[u8; 15]) {
         let result = bytes[2];
+        // A hire's C→S 0x36 leaves in the frame of its click and the
+        // server's next pump answers before the poll that would turn the
+        // send into the waiting state: the pending send is that state, and
+        // the poll after this reply opens no note.
+        let hire_sent = std::mem::take(&mut self.hire.borrow_mut().sent);
         let mut st = self.npcm.borrow_mut();
+        if hire_sent {
+            st.menu_state = MENU_WAITING;
+        }
         if st.menu_state != MENU_WAITING {
             drop(st);
             if bytes[2] == 1 {
@@ -1084,7 +1113,14 @@ impl OriginalUi {
         }
         st.note = None;
         match result {
-            5 => {}
+            // A hire: the NPC's menu again (the hire list stays shut), so
+            // Esc ends the interaction as from any built menu.
+            5 => {
+                st.menu_state = 1;
+                if let Some(it) = st.up.as_mut() {
+                    it.build = true;
+                }
+            }
             3 | 6 => {
                 let class = st.up.as_ref().map_or(0, |it| it.class);
                 let menus = st.menus();
@@ -1117,6 +1153,61 @@ impl OriginalUi {
     pub fn npc_interaction_up(&self) -> bool {
         let st = self.npcm.borrow();
         st.up.is_some() || st.talk.menu_after.is_some() || st.talk.socket.is_some()
+    }
+
+    /// Runs a mod panel's choice of selectable row (`ModRequest::NpcRow`)
+    /// as a click on it runs it; its outputs go out with the poll's.
+    fn run_row_request(&mut self, world: &ClientWorld, strings: &dyn StringLookup) {
+        let Some(k) = self.npcm.borrow_mut().row_request.take() else {
+            return;
+        };
+        let Some(item) = self.npcm.borrow().row_item(k) else {
+            return;
+        };
+        let mut panel = NpcMenuUi {
+            sh: self.shared.clone(),
+            shop: self.shop.clone(),
+            st: self.npcm.clone(),
+            hire: self.hire.clone(),
+        };
+        let ctx = UiCtx {
+            tick: world.frames,
+            world,
+            strings,
+        };
+        let before = self.shared.borrow().outputs.len();
+        panel.run(item, &ctx);
+        let o: Vec<_> = self.shared.borrow_mut().outputs.drain(before..).collect();
+        self.npcm.borrow_mut().pending.extend(o);
+    }
+
+    /// The open menu as a mod panel reads it (`UiCtx::npc_menu`).
+    pub(crate) fn npc_menu_read(&self) -> Option<crate::ui::mod_io::NpcMenu> {
+        use crate::ui::mod_io::{NpcMenu, NpcMenuItem};
+        let st = self.npcm.borrow();
+        let open = st.open_view()?;
+        let mut row = 0;
+        let items = st.bx.as_ref().map_or_else(Vec::new, |bx| {
+            bx.items
+                .iter()
+                .map(|i| NpcMenuItem {
+                    text: i.text.clone(),
+                    color: i.color,
+                    row: i.selectable.then(|| {
+                        row += 1;
+                        row - 1
+                    }),
+                })
+                .collect()
+        });
+        Some(NpcMenu {
+            guid: open.guid,
+            class: open.class,
+            items,
+            rows: open.rows,
+            talking: open.talking,
+            waiting: st.menu_state == MENU_WAITING || st.note.is_some(),
+        })
     }
 
     /// The open menu (built box or talk), for tests and the host.
@@ -1170,3 +1261,73 @@ impl OriginalUi {
 #[cfg(test)]
 #[path = "npc_box_tests.rs"]
 mod tests;
+
+/// Replace native travel while retaining the NPC's other services.
+fn apply_data_travel(
+    rec: &mut NpcMenuRecord,
+    acts: &d2_sim::rules::acts::Acts,
+    level: u32,
+    npc: u16,
+) {
+    rec.options.truncate(rec.count.saturating_sub(1) as usize);
+    rec.options.retain(|o| {
+        !matches!(
+            o,
+            Some(MenuOption {
+                kind: OptionKind::TravelWest | OptionKind::SailWest,
+                ..
+            })
+        )
+    });
+    if let Some(act) = acts.find_act(level) {
+        rec.options.extend(
+            acts.rows()[usize::from(act)]
+                .travel
+                .iter()
+                .filter(|t| t.npc == npc && t.text != 0)
+                .map(|t| {
+                    Some(MenuOption {
+                        string: t.text,
+                        kind: OptionKind::DataTravel(t.action),
+                    })
+                }),
+        );
+    }
+    rec.count = rec.options.len() as u32 + 1;
+}
+
+#[cfg(test)]
+mod data_travel_tests {
+    use super::*;
+    #[test]
+    fn acts_travel_replaces_native_destinations_and_keeps_services() {
+        let acts = d2_sim::rules::acts::Acts::from_toml("version=1\n[[acts]]\nname='Home'\nstart=1\nend=40\ntown=1\ntravel=[{npc=155,action=77,to=1,text=5000}]").unwrap();
+        let mut rec = NpcMenuRecord {
+            record: 0,
+            npc: 155,
+            count: 3,
+            flag: 0,
+            options: vec![
+                Some(MenuOption {
+                    string: 1,
+                    kind: OptionKind::Trade,
+                }),
+                Some(MenuOption {
+                    string: 2,
+                    kind: OptionKind::TravelWest,
+                }),
+            ],
+        };
+        apply_data_travel(&mut rec, &acts, 1, 155);
+        assert_eq!(rec.count, 3);
+        assert_eq!(rec.options[0].unwrap().kind, OptionKind::Trade);
+        assert_eq!(
+            rec.options[1],
+            Some(MenuOption {
+                string: 5000,
+                kind: OptionKind::DataTravel(77)
+            })
+        );
+        assert!(option_intent(OptionKind::DataTravel(77), 12).is_some());
+    }
+}

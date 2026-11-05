@@ -1,0 +1,48 @@
+version = 1
+
+# monstats aip1..aip8 of the succubus witch rows (Normal): 90, 25, 0, 0, 90, 15, 80, 66.
+# aip3 and aip4 (the curse distance and the flee distance) are 0 in Normal, so the body's curse and flee steps never fire here;
+# in Nightmare and Hell they do (aip3 8 to 30, aip4 8 to 12 and more), which a graph of Normal's numbers does not hold.
+# The body casts at its *second target* (the nearest enemy it sees).
+[[ai]]
+index = 119
+name = "SuccubusWitch (lifted, Normal numbers)"
+target = "enemy"
+
+[[ai.state]]
+name = "haunt"
+
+# In reach: aip1 = 90% swing, else stand aip6 = 15 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 90 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6
+when = [{ kind = "in_melee" }]
+
+# Not in reach: the body draws aip5 = 90 percent first, looks for a second target (the nearest enemy it sees) and only then draws
+# aip8 = 66 percent; the cast is skill 5 (SuccubusBolt), which these rows carry, at the second target.
+[[ai.state.action]]
+kind = "use_skill"
+slot = 5
+at = "second"
+when = [{ kind = "random", percent = 90 }, { kind = "second_target" }, { kind = "random", percent = 66 }]
+
+# aip2 = 25%: walk toward the target;
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 25 }]
+
+# else half the time circle 6 steps,
+[[ai.state.action]]
+kind = "move_around"
+steps = 6
+when = [{ kind = "random", percent = 50 }]
+
+# else stand aip6 = 15 frames.
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6

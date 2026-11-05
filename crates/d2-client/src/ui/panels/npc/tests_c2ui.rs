@@ -11,7 +11,7 @@ fn rec(count: u32, options: [Option<MenuOption>; 5]) -> NpcMenuRecord {
         record: 0,
         npc: 1,
         count,
-        options,
+        options: options.into(),
         flag: 1,
     }
 }

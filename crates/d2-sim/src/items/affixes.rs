@@ -551,7 +551,9 @@ pub fn tempered<S>(t: &ItemTables, item: &mut Item<S>) -> bool {
     true
 }
 
-/// Charm.
+/// Charm. No affix found is a fatal error ([`Fatal::Charm`]) unless the
+/// mod game keeps the charm
+/// ([`super::provider::ItemProvider::keeps_charm_without_affix`]).
 pub fn charm<S: ItemStats>(
     t: &ItemTables,
     item: &mut Item<S>,
@@ -573,7 +575,11 @@ pub fn charm<S: ItemStats>(
     } else if p <= 0 {
         item.suffix[0] = roll_affix(t, item, true, forced, true, false, p, 0);
     }
-    if item.prefix[0] == 0 && item.suffix[0] == 0 {
+    let keep = t
+        .rules
+        .items()
+        .is_some_and(|p| p.keeps_charm_without_affix());
+    if item.prefix[0] == 0 && item.suffix[0] == 0 && !keep {
         return Err(Fatal::Charm);
     }
     item.flags &= !flag::IDENTIFIED;

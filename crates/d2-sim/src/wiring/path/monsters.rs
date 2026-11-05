@@ -26,7 +26,7 @@ use crate::units::modes::{
 };
 use crate::units::record::flags as unit_flags;
 use crate::units::{UnitId, UnitType};
-use crate::wiring::action::unit_update::anim_complete_at;
+use crate::wiring::action::unit_update::anim_complete_with_feel;
 use crate::wiring::action::{ActionHooks, Pending, View, WiringError};
 
 use super::missiles::set_step_counts;
@@ -73,9 +73,6 @@ const STATE_22: u16 = 22;
 /// `BaseId` 78 (`sandleaper1`, rules 9 and 14) and 110 (`vulture1`, rule 7).
 const BASE_SANDLEAPER: u16 = 78;
 const BASE_VULTURE: u16 = 110;
-/// The knockback distance budget.
-const KB_BUDGET_SANDLEAPER: u8 = 10;
-const KB_BUDGET: u8 = 5;
 /// The S4 start's think delay (rule 12).
 const S4_THINK_DELAY: i32 = 15;
 /// Monster modes used here.
@@ -452,9 +449,14 @@ impl<X: Pending> ActionHooks<X> {
     /// The animation is complete.
     fn monster_anim_complete(&self, sim: &Sim<'_>, unit: UnitId) -> bool {
         let (rate, tick) = (sim.game.tick_rate, sim.game.frame);
-        sim.units
-            .get(unit)
-            .is_some_and(|r| anim_complete_at(&r.anim, rate, tick))
+        sim.units.get(unit).is_some_and(|r| {
+            anim_complete_with_feel(
+                &r.anim,
+                rate,
+                tick,
+                self.rules.global_rules().animation.classic_25hz,
+            )
+        })
     }
 
     /// WL start / RN start:
@@ -565,9 +567,17 @@ impl<X: Pending> ActionHooks<X> {
             Some(_) => {}
         }
         let budget = if self.base_id(sim, unit) == Some(BASE_SANDLEAPER) {
-            KB_BUDGET_SANDLEAPER
+            self.rules
+                .global_rules()
+                .monsters
+                .control
+                .sandleaper_knockback_distance
         } else {
-            KB_BUDGET
+            self.rules
+                .global_rules()
+                .monsters
+                .control
+                .knockback_distance
         };
         if let Some(p) = self.paths.as_mut() {
             let tables = p.tables.clone();

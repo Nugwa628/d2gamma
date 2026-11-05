@@ -115,29 +115,79 @@ pub fn parse_args(args: &[String]) -> Result<Options> {
     }
     Ok(o)
 }
-/// Generate from this game's loaded, fixed-up tables.
+/// World ownership shared with the running mod, rather than fixed base towns.
+pub(super) struct World<'a> {
+    acts: Option<&'a d2_sim::rules::acts::Acts>,
+    map: d2_sim::world::waypoints::WaypointMap,
+}
+impl<'a> World<'a> {
+    fn new(live: &LiveData, rules: &'a d2_sim::rules::Ruleset) -> Self {
+        let mut map = d2_sim::world::waypoints::WaypointMap::new(&live.waypoints.levels);
+        if let Some(acts) = rules.acts() {
+            map.apply_acts(acts);
+        }
+        Self {
+            acts: rules.acts(),
+            map,
+        }
+    }
+    fn act(&self, level: usize) -> Option<u8> {
+        match self.acts {
+            Some(acts) => acts.find_act(level as u32),
+            None => self.map.act(level as u32).filter(|&a| a < 5),
+        }
+    }
+    fn town(&self, act: u8) -> Option<u32> {
+        match self.acts {
+            Some(acts) => acts.town(act),
+            None => d2_sim::world::waypoints::TOWNS
+                .get(usize::from(act))
+                .copied(),
+        }
+    }
+    fn towns(&self) -> Vec<(u8, u32)> {
+        (0..self.acts.map_or(5, |a| a.count()))
+            .filter_map(|a| self.town(a as u8).map(|t| (a as u8, t)))
+            .collect()
+    }
+    fn is_town(&self, level: usize) -> bool {
+        self.towns().iter().any(|&(_, t)| t as usize == level)
+    }
+}
+
+/// Generate from this game's loaded, fixed-up tables under plain-game rules.
 pub fn generate(live: &LiveData, family: &str) -> Result<Generated> {
+    generate_with_rules(live, family, &d2_sim::rules::Ruleset::Original)
+}
+
+/// Generate the same scenario families using the selected mod's world registry.
+pub fn generate_with_rules(
+    live: &LiveData,
+    family: &str,
+    rules: &d2_sim::rules::Ruleset,
+) -> Result<Generated> {
+    let world = World::new(live, rules);
     let mut g = Generated::default();
     if family == "skills" || family == "all" {
-        skills::generate(live, &mut g)?;
+        skills::generate(live, &mut g, &world)?;
     }
     if family == "npcs" || family == "all" {
-        npcs::generate(live, &mut g)?;
+        npcs::generate(live, &mut g, &world)?;
     }
     if family == "areas" || family == "all" {
-        areas::generate(live, &mut g)?;
+        areas::generate(live, &mut g, &world)?;
     }
     if family == "items" || family == "all" {
-        items::generate(live, &mut g)?;
+        items::generate(live, &mut g, &world)?;
     }
     if family == "panels" || family == "all" {
         panels::generate(live, &mut g)?;
     }
     if family == "anims" || family == "all" {
-        anims::generate(live, &mut g)?;
+        anims::generate(live, &mut g, &world)?;
     }
     if family == "doors" || family == "all" {
-        doors::generate(live, &mut g)?;
+        doors::generate(live, &mut g, &world)?;
     }
     Ok(g)
 }
@@ -208,18 +258,30 @@ fn target_not_on_map(report: &Value) -> bool {
 
 /// Execute a generated selection using shared immutable data and fresh games.
 pub fn run(data: GameData, options: &Options) -> Result<Value> {
+    run_selected(data, options, None, None)
+}
+
+/// Run only named cases when a caller has an explicit content selection.
+pub(super) fn run_selected(
+    data: GameData,
+    options: &Options,
+    selected: Option<&std::collections::BTreeSet<String>>,
+    rules: Option<d2_sim::rules::Ruleset>,
+) -> Result<Value> {
     if options.jobs == 0 {
         bail!("sweep needs positive jobs");
     }
     let began = Instant::now();
     let GameData::Live(live) = &data;
-    let mut generated = generate(live, &options.family)?;
+    let rules = rules.unwrap_or_else(crate::kit_mod::ruleset);
+    let mut generated = generate_with_rules(live, &options.family, &rules)?;
     let before = generated.cases.len();
     generated.cases.retain(|c| {
-        options
-            .filter
-            .as_ref()
-            .is_none_or(|f| format!("{}/{}", c.family, c.name).contains(f))
+        selected.is_none_or(|names| names.contains(&c.name))
+            && options
+                .filter
+                .as_ref()
+                .is_none_or(|f| format!("{}/{}", c.family, c.name).contains(f))
     });
     std::fs::create_dir_all(options.out.join("scenarios"))?;
     let mut paths = Vec::new();
@@ -232,6 +294,7 @@ pub fn run(data: GameData, options: &Options) -> Result<Value> {
         paths.push(path);
     }
     let opts = repro::RunOpts {
+        rules: Some(rules),
         out: options.out.join("runs"),
         keep_going: true,
         ..Default::default()

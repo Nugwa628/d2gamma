@@ -73,6 +73,24 @@ pub fn route<X: Pending + UseRest>(h: &mut ActionHooks<X>, sim: &mut Sim<'_>, ev
         } => {
             item_aura_event(&mut w, &t.skills, unit, skill as i32, level);
         }
+        // A tick a block skill asked for: the job is spent, the provider
+        // schedules the next one itself.
+        SkillEvent::ModTick { unit, job } => {
+            let rules = w.cv.v.h.rules.clone();
+            let Some(tick) =
+                w.cv.v
+                    .h
+                    .mod_ticks
+                    .remove(&job)
+                    .filter(|j| j.unit == unit)
+                    .map(|j| j.tick)
+            else {
+                return;
+            };
+            if let Some(p) = rules.skills() {
+                p.tick(&mut w, unit, &tick);
+            }
+        }
         // The freed list's callback, run by the skill bodies' dispatcher.
         SkillEvent::ListRemoved {
             unit,
@@ -718,7 +736,14 @@ pub fn missile_shout_state<X: Pending + UseRest>(
             v: View::of(sim.units, sim.stats, sim.data, h),
         },
     };
-    crate::skills::use_::bodies::shout_state(&mut w, &t.skills, unit, owner, skill, level);
+    let rules = w.cv.v.h.rules.clone();
+    if rules
+        .skills()
+        .and_then(|p| p.warcry_hit(&mut w, owner, unit, skill, level))
+        .is_none()
+    {
+        crate::skills::use_::bodies::shout_state(&mut w, &t.skills, unit, owner, skill, level);
+    }
 }
 
 /// Terror install for a missile hit.

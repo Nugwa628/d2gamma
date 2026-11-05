@@ -132,6 +132,9 @@ impl Console {
                     }
                 }
                 self.say(true, format!("> {line}"));
+                if line.eq_ignore_ascii_case("reload") {
+                    return ConsoleAction::Local(line);
+                }
                 match dev::parse(&line) {
                     Ok(Some(cmd)) => return ConsoleAction::Send(cmd),
                     Ok(None) if line.eq_ignore_ascii_case("clear") => self.lines.clear(),
@@ -215,8 +218,12 @@ pub fn add_overlay(
     );
     app.register("dev-overlay", register_overlay);
     let w = app.world_mut();
+    let restore_error = super::reload::restore_error();
+    if let Some(error) = restore_error {
+        console.say(false, error);
+    }
     w.insert_resource(DevOverlay {
-        open: false,
+        open: restore_error.is_some(),
         console,
         chan,
         panel: PanelState::default(),
@@ -224,7 +231,9 @@ pub fn add_overlay(
         local: Vec::new(),
     });
     w.init_resource::<InfoOverlay>();
+    w.init_resource::<super::ai_watch::AiOverlay>();
     w.init_resource::<DevRelaunch>();
+    super::reload::install(app);
 }
 
 pub fn register_overlay(app: &mut App) {
@@ -240,12 +249,18 @@ pub fn register_overlay(app: &mut App) {
     .add_systems(
         Update,
         (
-            (spawn_panel, super::info::spawn_info).run_if(resource_added::<DevOverlay>),
+            (
+                spawn_panel,
+                super::info::spawn_info,
+                super::ai_watch::spawn_ai_view,
+            )
+                .run_if(resource_added::<DevOverlay>),
             take_replies,
             run_local,
             rebuild,
             draw_panel,
             super::info::draw_info,
+            super::ai_watch::draw_ai_view,
         )
             .chain()
             .run_if(on),
@@ -431,6 +446,7 @@ pub struct DevRelaunch(pub Arc<std::sync::Mutex<Option<std::path::PathBuf>>>);
 fn run_local(
     mut overlay: ResMut<DevOverlay>,
     mut info: ResMut<InfoOverlay>,
+    mut aiview: ResMut<super::ai_watch::AiOverlay>,
     relaunch: Res<DevRelaunch>,
     ctx: Option<Res<DevContext>>,
     saver: Option<Res<crate::app::save::SaveHandle>>,
@@ -439,15 +455,26 @@ fn run_local(
     view: Option<Res<crate::world_view::present::WorldViewState>>,
     mut exit: MessageWriter<AppExit>,
     mut commands: Commands,
+    watcher: Option<Res<super::reload::Watcher>>,
 ) {
     let lines = std::mem::take(&mut overlay.local);
     for line in lines {
         let (kw, rest) = line.split_once(' ').unwrap_or((line.as_str(), ""));
         let rest = rest.trim();
         let r: Result<String, String> = match (kw.to_ascii_lowercase().as_str(), ctx.as_deref()) {
+            ("reload", _) => super::reload::request(watcher.as_deref())
+                .map(|()| "Checking mod before reload...".to_owned()),
             ("info", _) => {
                 info.on = !info.on;
                 Ok(format!("info {}", if info.on { "on" } else { "off" }))
+            }
+            ("aiview", _) => {
+                aiview.on = !aiview.on;
+                if let Ok(mut q) = overlay.chan.lock() {
+                    q.watch_ai = aiview.on;
+                    q.ai.clear();
+                }
+                Ok(format!("aiview {}", if aiview.on { "on" } else { "off" }))
             }
             ("animation", _) => match frames.as_deref() {
                 Some(handle) => {
@@ -503,7 +530,7 @@ fn run_local(
 
 /// `save <name>`: the server writes the character, then the
 /// slot keeps a copy and the place.
-fn save_slot(
+pub(super) fn save_slot(
     ctx: &DevContext,
     saver: Option<&crate::app::save::SaveHandle>,
     bridge: Option<&BridgeResource>,
@@ -638,6 +665,16 @@ mod tests {
         for ch in s.chars() {
             c.key(ConsoleKey::Char(ch));
         }
+    }
+
+    #[test]
+    fn reload_is_a_local_command_without_changing_the_server_protocol() {
+        let mut c = Console::default();
+        typed(&mut c, "reload");
+        assert_eq!(
+            c.key(ConsoleKey::Enter),
+            ConsoleAction::Local("reload".into())
+        );
     }
 
     #[test]

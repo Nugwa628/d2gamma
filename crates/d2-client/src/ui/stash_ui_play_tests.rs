@@ -379,4 +379,93 @@ mod mod_panel {
         assert_eq!(msgs, [mx()]);
         assert!(asks.is_empty());
     }
+
+    /// A mod panel that shows the shared store: what its context read of
+    /// the store, and a press (spot `Other(1)`) that shows item page 2.
+    /// What the panel read of the store: gold, gold cap, columns, items.
+    type Seen = Arc<Mutex<Vec<(u64, Option<u64>, u8, usize)>>>;
+
+    struct OnlineBook(Seen);
+
+    impl crate::mods::stash::StashPanelMod for OnlineBook {
+        fn draw(
+            &self,
+            ctx: &crate::mods::stash::StashCtx,
+            _: &mut dyn crate::ui::draw::UiDrawSink,
+        ) {
+            if let Some(s) = ctx.shared {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push((s.gold, s.gold_max, s.shape.cols, s.items.len()));
+            }
+        }
+        fn spot(
+            &self,
+            _: &crate::mods::stash::StashCtx,
+            at: Point,
+        ) -> Option<crate::mods::stash::StashSpot> {
+            Rect::new(100, 100, 20, 20)
+                .contains(at)
+                .then_some(crate::mods::stash::StashSpot::Other(1))
+        }
+        fn input(
+            &mut self,
+            _: &crate::mods::stash::StashCtx,
+            _: StashInput,
+        ) -> Vec<crate::mods::stash::StashOut> {
+            vec![crate::mods::stash::StashOut::ShowShared(
+                crate::ui::shared_stash::Shown::Page(2),
+            )]
+        }
+    }
+
+    struct OnlineFactory(Seen);
+
+    impl crate::mods::stash::StashPanelFactory for OnlineFactory {
+        fn make(
+            &self,
+            _: &crate::ui::panels::UiFiles,
+        ) -> Box<dyn crate::mods::stash::StashPanelMod> {
+            Box::new(OnlineBook(self.0.clone()))
+        }
+    }
+
+    /// The panel reads the shared store's last answer (its gold, gold cap,
+    /// pages and items) and shows another item page of it: the store's
+    /// tab moves there and it is read again.
+    #[test]
+    fn the_mod_panel_reads_and_turns_the_shared_store() {
+        let w = backpack_world(b"gem2");
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mods = ClientMods::new().with_stash_panel(OnlineFactory(seen.clone()));
+        let mut u = with_mods(Some(mods));
+        let shape = d2_shared_stash::StashShape {
+            pages: 10,
+            cols: 14,
+            rows: 14,
+            renamable: true,
+        };
+        u.ui.show_shared_stash(crate::ui::shared_stash::StashView {
+            gold: 125_000,
+            gold_max: Some(4_000_000),
+            shape,
+            ..Default::default()
+        });
+        all_draws(&u, &w);
+        assert_eq!(
+            seen.lock().unwrap().last(),
+            Some(&(125_000, Some(4_000_000), 14, 0))
+        );
+        u.click(&w, Point::new(110, 110));
+        let mut st = u.ui.shared_stash();
+        assert_eq!(st.tab, ShownTab(Tab::Shared(2)));
+        assert_eq!(st.take_asks(), [StashAsk::Refresh]);
+        drop(st);
+        // Without a store open the panel sees none.
+        u.ui.shared_stash().on = false;
+        seen.lock().unwrap().clear();
+        all_draws(&u, &w);
+        assert!(seen.lock().unwrap().is_empty());
+    }
 }

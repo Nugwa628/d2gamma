@@ -1,0 +1,7 @@
+id = "monster-ai-graph"
+name = "Monster AI Graph (template)"
+version = "0.1.0"
+author = "Nugwa"
+description = "Template: a monster that stalks, winds up with a telegraph and leaps, calls its pack when hurt and flees when nearly dead, all from files/ai.toml."
+api = 1
+kind = "full"

@@ -12,7 +12,9 @@
 //! item's palette maps before filtering, preserving colour codes and
 //! multicolour glyphs. Only the glyph image changes: advances, baselines,
 //! clipping and layout remain in frame pixels. Images are cached in memory
-//! for the active scale and look.
+//! for the active look, by scale: one frame draws at two scales (the UI
+//! space's items at the UI scale, the rest at the frame's), and both sets
+//! share the one atlas.
 
 use super::hd_fonts::{self, OutlineGlyph, SheetStyle};
 use super::{CelRef, UiArt};
@@ -24,6 +26,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub const MAX_PAGES: usize = 8;
+
+/// The scales whose glyphs the cache holds at once. A frame asks for at
+/// most two (the frame's and the UI space's); a further one (the window or
+/// the UI scale changed) starts the cache again.
+pub const MAX_SCALES: usize = 4;
 
 /// `[video] hd_text`: whether text is drawn from the outline font.
 static HD_FONTS: AtomicBool = AtomicBool::new(false);
@@ -129,9 +136,11 @@ fn is_font_sheet(path: &str) -> bool {
 
 #[derive(Default)]
 struct State {
-    scale_bits: u32,
+    /// The scales (`f32` bits) whose glyphs are held.
+    scales: Vec<u32>,
     hd: bool,
-    cels: BTreeMap<String, BTreeMap<usize, CelImage>>,
+    /// The images by scale (`f32` bits) and sheet, then frame index.
+    cels: BTreeMap<(u32, String), BTreeMap<usize, CelImage>>,
     /// Each sheet's measured HD style (`None`: it can't be measured, so it
     /// keeps its bitmap glyphs).
     styles: BTreeMap<String, Option<SheetStyle>>,
@@ -139,9 +148,9 @@ struct State {
     sheet_ids: BTreeMap<String, u32>,
     /// The outline glyphs by their place in the atlas (page, x, y).
     outlines: BTreeMap<(u32, u32, u32), OutlineGlyph>,
-    /// Outline glyphs drawn at a phase between output pixels, by sheet,
-    /// character and phase step ([`hd_fonts::PHASES`]).
-    phased: BTreeMap<(u32, u16, u8), CelImage>,
+    /// Outline glyphs drawn at a phase between output pixels, by scale
+    /// (`f32` bits), sheet, character and phase step ([`hd_fonts::PHASES`]).
+    phased: BTreeMap<(u32, u32, u16, u8), CelImage>,
     atlas: Arc<RepAtlas>,
     x: u32,
     y: u32,
@@ -312,14 +321,21 @@ impl HdTextArt {
         }
         let hd = self.look.unwrap_or_else(hd_fonts);
         let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if st.scale_bits != scale.to_bits() || st.hd != hd {
+        let bits = scale.to_bits();
+        // A scale change keeps the other scale's images: dropping them
+        // would hand their atlas places to the new scale's glyphs while
+        // this frame's earlier items still point there.
+        if st.hd != hd || (!st.scales.contains(&bits) && st.scales.len() >= MAX_SCALES) {
             *st = State {
-                scale_bits: scale.to_bits(),
                 hd,
                 ..State::default()
             };
         }
-        if let Some(image) = st.cels.get(sheet.path()).and_then(|c| c.get(&index)) {
+        if !st.scales.contains(&bits) {
+            st.scales.push(bits);
+        }
+        let key = (bits, sheet.path().to_owned());
+        if let Some(image) = st.cels.get(&key).and_then(|c| c.get(&index)) {
             return *image;
         }
         let Some(cel) = sheet.cel(index) else {
@@ -333,10 +349,7 @@ impl HdTextArt {
         let image = outline
             .or_else(|| Self::render(&mut st, cel, scale))
             .unwrap_or(CelImage::Original);
-        st.cels
-            .entry(sheet.path().to_owned())
-            .or_default()
-            .insert(index, image);
+        st.cels.entry(key).or_default().insert(index, image);
         image
     }
 
@@ -386,10 +399,10 @@ impl HdTextArt {
     fn phased(&self, o: OutlineGlyph, step: u8, scale: f32) -> Option<CelImage> {
         let font = hd_fonts::font()?;
         let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if st.scale_bits != scale.to_bits() {
+        if !st.scales.contains(&scale.to_bits()) {
             return None;
         }
-        let key = (o.sheet, o.code, step);
+        let key = (scale.to_bits(), o.sheet, o.code, step);
         if let Some(image) = st.phased.get(&key) {
             return Some(*image);
         }

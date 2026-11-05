@@ -2,8 +2,11 @@
 //! for the [`ImageRef`]s of `ui::panels` ([`PanelArtRules`]) and the
 //! loader that makes their DC6 files resident ([`PanelArtLoader`]).
 //!
-//! An [`ImageRef`] names a file of [`UiFiles`] (`data\global\ui\<name>.dc6`)
-//! and a frame of its direction 0. A panel cel draw is light 0xFF
+//! An [`ImageRef`] names a file of [`UiFiles`] (`data\global\ui\<name>.dc6`,
+//! or, for a name that starts with `data\`, that whole archive path plus
+//! `.dc6`: [`is_full_path`]) and a frame of its direction 0. Art a mod names
+//! by its whole path may be missing or unreadable: that widget is skipped
+//! ([`ViewError::ArtMissing`], said once), not the view. A panel cel draw is light 0xFF
 //! (`v = 0xFF` has no `L`) with the request's
 //! [`crate::ui::CelLook`]: the plain draw is mode 5, no remap (the
 //! opaque copy), a colored draw remaps by `k` or an item colour,
@@ -33,8 +36,15 @@ use super::{TileDraw, UiRules, UiSprite, UnitPose, ViewAssets, ViewError, ViewRu
 
 const SPEC: &str = "ui/panels.md";
 
+/// Whether a [`UiFiles`] name is a whole archive path (it starts with
+/// `data\`) rather than a name relative to the UI folder. Mods use this for
+/// art outside `data\global\ui\` (a theme folder, say).
+pub fn is_full_path(name: &str) -> bool {
+    name.starts_with("data\\")
+}
+
 /// The archive name of a [`UiFiles`] name (relative to
-/// `DATA\GLOBAL\UI\`, `.dc6`).
+/// `DATA\GLOBAL\UI\`, `.dc6`; a whole path keeps its folders).
 pub fn archive_name(name: &str) -> String {
     if let Some(item) = name.strip_prefix(crate::ui::panels::inv_items::ITEMS_PREFIX) {
         return crate::ui::inv_grid::inventory_path(item); // ui/inventory.md §8 r2
@@ -47,18 +57,17 @@ pub fn archive_name(name: &str) -> String {
     if let Some(own) = name.strip_prefix(crate::ui::own_art::OWN_PREFIX) {
         return format!("d2rust\\ui\\{own}.png");
     }
+    if is_full_path(name) {
+        return format!("{name}.dc6");
+    }
     format!("data\\global\\ui\\{name}.dc6")
 }
 
 /// The frame set of an image's file: direction 0 of its DC6.
 pub fn image_set(files: &UiFiles, image: ImageRef) -> Result<FrameSetKey, ViewError> {
-    let name = files
-        .name(image.file)
-        .ok_or_else(|| ViewError::Unresolved {
-            what: "UI image file",
-            spec: SPEC,
-            message: format!("file id {} names no panel file", image.file),
-        })?;
+    let name = files.name(image.file).ok_or_else(|| {
+        ViewError::ArtMissing(format!("file id {} names no panel file", image.file))
+    })?;
     let path = CanonicalPath::new(&archive_name(name)).map_err(|e| ViewError::Unresolved {
         what: "UI image file",
         spec: SPEC,
@@ -81,7 +90,17 @@ pub fn panel_sprite(
 ) -> Result<UiSprite, ViewError> {
     let set = image_set(files, req.image)?;
     let index = req.image.frame as usize;
-    let frame: &IndexFrame = assets.frame(&set, index)?;
+    let frame: &IndexFrame = match assets.frame(&set, index) {
+        Ok(f) => f,
+        // A mod's own art that did not load: skip the widget.
+        Err(_) if files.name(req.image.file).is_some_and(is_full_path) => {
+            return Err(ViewError::ArtMissing(format!(
+                "{}: frame {index} is not resident",
+                set.path()
+            )));
+        }
+        Err(e) => return Err(e),
+    };
     let (x, y) = draw_position(frame, req.at.x, req.at.y);
     let remap = ui_remap(req.look.remap, colors, assets)?;
     let (shade, blend) = ui_cel_ops(assets.shades.as_ref(), req.look.mode, remap)?;
@@ -279,6 +298,9 @@ pub struct PanelArtLoader {
     /// key is built once, not per draw per frame (q-perf). An entry is
     /// valid while `files` names the id the same.
     keys: std::sync::Mutex<std::collections::HashMap<u32, (String, FrameSetKey)>>,
+    /// What was already reported missing: not read again every frame, and
+    /// said once.
+    missed: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl PanelArtLoader {
@@ -288,7 +310,23 @@ impl PanelArtLoader {
             source,
             files,
             keys: Default::default(),
+            missed: Default::default(),
         }
+    }
+
+    /// Notes `what` as missed; says whether it was new (to say it once).
+    fn miss(&self, what: &str) -> bool {
+        self.missed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(what.to_owned())
+    }
+
+    fn missed(&self, what: &str) -> bool {
+        self.missed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(what)
     }
 
     /// [`image_set`], memoized by file id.
@@ -343,8 +381,12 @@ impl PanelArtLoader {
         Ok(base)
     }
 
-    /// Makes every image's frame set resident. A file no archive holds, or
-    /// one that does not parse, is an error: never skipped.
+    /// Makes every image's frame set resident. A base-game file no archive
+    /// holds, or one that does not parse, is an error: never skipped. A
+    /// mod's art (an image id naming no file, or a name that is a whole
+    /// path) that is missing or does not parse misses only its widgets: said
+    /// once on stderr, never resident, its draws skipped
+    /// ([`ViewError::ArtMissing`]).
     pub fn ensure(&self, draws: &[UiDraw], assets: &mut ViewAssets) -> Result<(), ViewError> {
         ensure_rects(draws, FrameSize::play(), assets)?;
         let item_colors = draws.iter().any(
@@ -355,12 +397,41 @@ impl PanelArtLoader {
         }
         for d in draws {
             let UiDraw::Image(req) = d else { continue };
-            let set = self.set_of(req.image)?;
+            let set = match self.set_of(req.image) {
+                Ok(set) => set,
+                Err(ViewError::ArtMissing(why)) => {
+                    if self.miss(&why) {
+                        eprintln!("panel art: {why}; its widgets are not drawn");
+                    }
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             if assets.frames.contains(&set) {
                 continue;
             }
             let name = self.files.name(req.image.file).unwrap_or_default();
             let archive = archive_name(name);
+            if is_full_path(name) {
+                if self.missed(&archive) {
+                    continue;
+                }
+                let loaded = crate::assets::path::read_dc6(self.source.as_ref(), &archive)
+                    .ok_or_else(|| "in no archive".to_owned())
+                    .and_then(|r| r)
+                    .and_then(|dc6| FrameSet::from_dc6(&dc6, 0).map_err(|e| e.to_string()));
+                match loaded {
+                    Ok(frames) => {
+                        assets.frames.insert(set, frames)?;
+                    }
+                    Err(why) => {
+                        if self.miss(&archive) {
+                            eprintln!("panel art: {archive}: {why}; its widgets are not drawn");
+                        }
+                    }
+                }
+                continue;
+            }
             let fail = |message: String| ViewError::Unresolved {
                 what: "UI image file",
                 spec: SPEC,
@@ -418,6 +489,7 @@ mod tests {
     use crate::assets::path::MemorySource;
     use crate::ui::panels::PanelTables;
     use crate::ui::{Point, FRAME};
+    use crate::world_view::Unspecified;
     use d2_formats::palette::{Palette, Rgb};
 
     /// A DC6 of one direction with `frames` frames of `w` × `h` literal
@@ -493,16 +565,99 @@ mod tests {
     }
 
     #[test]
-    fn missing_or_unknown_files_are_errors() {
+    fn missing_base_files_are_errors() {
         let files = PanelTables::load().unwrap().files;
         let id = files.id("panel\\invchar6").unwrap();
         let loader = PanelArtLoader::new(Arc::new(MemorySource::default()), files.clone());
         let mut a = assets();
         let missing = [UiDraw::Image(image(id, 0, 0, 0))];
         assert!(loader.ensure(&missing, &mut a).is_err());
-        let unknown = [UiDraw::Image(image(u32::MAX, 0, 0, 0))];
-        assert!(loader.ensure(&unknown, &mut a).is_err());
         assert!(a.frames.is_empty());
+    }
+
+    const THEME: &str = "data\\global\\themes\\x\\panel";
+
+    #[test]
+    fn a_mod_names_art_by_its_whole_path() {
+        assert_eq!(archive_name(THEME), "data\\global\\themes\\x\\panel.dc6");
+        // A name relative to the UI folder is as before.
+        assert_eq!(
+            archive_name("panel\\invchar6"),
+            "data\\global\\ui\\panel\\invchar6.dc6"
+        );
+        let mut files = PanelTables::load().unwrap().files;
+        let id = files.add(THEME);
+        let mut src = MemorySource::default();
+        src.insert("data\\global\\themes\\x\\panel.dc6", dc6(2, 4, 3));
+        let loader = PanelArtLoader::new(Arc::new(src), files.clone());
+        let mut a = assets();
+        loader
+            .ensure(&[UiDraw::Image(image(id, 1, 10, 20))], &mut a)
+            .unwrap();
+        assert_eq!(a.frames.len(), 2);
+        let s = panel_sprite(&files, &image(id, 1, 10, 20), None, &a).unwrap();
+        assert_eq!(s.frame.set.path(), "data/global/themes/x/panel.dc6");
+    }
+
+    #[test]
+    fn missing_mod_art_misses_only_its_widget() {
+        use crate::world_view::ui_bind::ui_items;
+        let mut files = PanelTables::load().unwrap().files;
+        let gone = files.add(THEME);
+        let there = files.add("data\\global\\themes\\x\\there");
+        let mut src = MemorySource::default();
+        src.insert("data\\global\\themes\\x\\there.dc6", dc6(1, 4, 3));
+        let loader = PanelArtLoader::new(Arc::new(src), files.clone());
+        let mut a = assets();
+        let draws = [
+            UiDraw::Image(image(gone, 0, 0, 0)),
+            // An image id naming no file at all.
+            UiDraw::Image(image(u32::MAX, 0, 0, 0)),
+            UiDraw::Image(image(there, 0, 50, 50)),
+            // A frame past the end of the file that is there.
+            UiDraw::Image(image(there, 9, 70, 70)),
+        ];
+        // Nothing fails, and asking again does not read the miss again.
+        loader.ensure(&draws, &mut a).unwrap();
+        loader.ensure(&draws, &mut a).unwrap();
+        assert_eq!(a.frames.len(), 1, "only the file that is there");
+        assert_eq!(loader.missed.lock().unwrap().len(), 2, "each miss once");
+        assert!(matches!(
+            panel_sprite(&files, &image(gone, 0, 0, 0), None, &a),
+            Err(ViewError::ArtMissing(_))
+        ));
+        assert!(matches!(
+            panel_sprite(&files, &image(u32::MAX, 0, 0, 0), None, &a),
+            Err(ViewError::ArtMissing(_))
+        ));
+        // The view skips the widgets with no art and draws the one that has.
+        let rules = PanelArtRules {
+            rules: Unspecified,
+            files,
+            text: None,
+        };
+        let mut items = Vec::new();
+        ui_items(&draws, &rules, &a, &mut items).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!((items[0].x, items[0].y), (50, 48));
+    }
+
+    #[test]
+    fn a_corrupt_mod_file_is_a_miss_but_a_corrupt_base_file_is_an_error() {
+        let mut files = PanelTables::load().unwrap().files;
+        let theme = files.add(THEME);
+        let base = files.id("panel\\invchar6").unwrap();
+        let mut src = MemorySource::default();
+        src.insert("data\\global\\themes\\x\\panel.dc6", vec![1, 2, 3]);
+        src.insert("data\\global\\ui\\panel\\invchar6.dc6", vec![1, 2, 3]);
+        let loader = PanelArtLoader::new(Arc::new(src), files);
+        let mut a = assets();
+        loader
+            .ensure(&[UiDraw::Image(image(theme, 0, 0, 0))], &mut a)
+            .unwrap();
+        assert!(loader
+            .ensure(&[UiDraw::Image(image(base, 0, 0, 0))], &mut a)
+            .is_err());
     }
 
     // q-perf: the memoized key is the key `image_set` builds, every time.
@@ -515,11 +670,12 @@ mod tests {
         let want = image_set(&files, r).unwrap();
         assert_eq!(loader.set_of(r).unwrap(), want);
         assert_eq!(loader.set_of(r).unwrap(), want);
-        assert!(loader
-            .set_of(ImageRef {
+        assert!(matches!(
+            loader.set_of(ImageRef {
                 file: u32::MAX,
                 frame: 0
-            })
-            .is_err());
+            }),
+            Err(ViewError::ArtMissing(_))
+        ));
     }
 }

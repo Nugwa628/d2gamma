@@ -197,6 +197,7 @@ fn from_wire(req: Option<u64>, a: StashAnswer) -> FromRealm {
             },
             cap: s.cap,
             names: s.names,
+            gold_max: s.gold_max,
         },
     }
 }
@@ -209,7 +210,7 @@ pub fn look_of(record: &[u8], tables: &ItemTables) -> Option<Vec<u8>> {
     if entry.item.failed {
         return None;
     }
-    bitstream::write(&entry.item.item, &tables.isc)
+    bitstream::write(&entry.item.item, tables)
         .ok()
         .map(|(b, _)| b)
 }
@@ -323,7 +324,10 @@ pub fn read_view<L: RealmStash>(
         None => Vec::new(),
     };
     let (stacks, gold) = store.stacks_and_gold()?;
+    let (shape, gold_max) = (store.shape(), store.gold_max());
     Ok(StashView {
+        shape,
+        gold_max,
         items: items
             .into_iter()
             .map(|i| PageItem {
@@ -378,7 +382,13 @@ impl OnlineSharedStash {
         std::thread::Builder::new()
             .name("d2-online-stash".into())
             .spawn(move || {
+                // The realm's item pages and gold cap, once (a realm
+                // before the layout request leaves D2Gamma's).
+                let mut laid_out = false;
                 for job in rx {
+                    if !std::mem::replace(&mut laid_out, true) {
+                        let _ = store.load_layout();
+                    }
                     let mut notes = Vec::new();
                     for a in &job.asks {
                         match run_ask(&mut store, a) {

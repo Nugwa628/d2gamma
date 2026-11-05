@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use d2_shared_stash::{Catalog, Cell, ItemId, StackPage};
+use d2_shared_stash::{Catalog, Cell, ItemId, StackPage, StashShape};
 
 use super::layout::{Category, Tab};
 
@@ -112,6 +112,11 @@ pub struct SharedStashUi {
     pub items: Vec<ShownItem>,
     pub stacks: BTreeMap<String, u32>,
     pub gold: u64,
+    /// The store's item pages, as its last answer said.
+    pub shape: StashShape,
+    /// The most gold the stash holds, when the store says (an online
+    /// realm's cap).
+    pub gold_max: Option<u64>,
     pub search: String,
     pub search_focus: bool,
     pub hits: Vec<(ItemId, Cell)>,

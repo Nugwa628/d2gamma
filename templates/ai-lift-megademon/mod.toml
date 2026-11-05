@@ -1,0 +1,7 @@
+id = "ai-lift-megademon"
+name = "AI 89 Megademon, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "Megademon as a graph: AI 89 (Megademon)."
+api = 1
+kind = "full"

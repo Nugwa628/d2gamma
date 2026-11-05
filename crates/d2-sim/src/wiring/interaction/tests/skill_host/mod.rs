@@ -16,11 +16,20 @@ use crate::units::UnitId;
 use super::skill_use::{skills, Fx};
 use super::stat_data;
 
+mod blocks;
+mod blocks_patterns;
+mod closeness;
+mod crowd_control;
 mod damage;
 mod missiles;
+mod proc_charges;
+mod scripts;
 mod skills;
+mod stacks;
 mod states;
+mod ticks;
 mod timers;
+mod triggers;
 mod units;
 
 /// The do slot the probe answers: past the tables, so D2RUST has no body

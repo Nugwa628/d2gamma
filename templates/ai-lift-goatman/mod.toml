@@ -1,0 +1,7 @@
+id = "ai-lift-goatman"
+name = "AI 12 Goatman, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "Goatman as a graph: AI 12 (Goatman)."
+api = 1
+kind = "full"

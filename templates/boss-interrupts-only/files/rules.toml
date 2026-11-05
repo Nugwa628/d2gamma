@@ -1,0 +1,16 @@
+version = 1
+
+# Hits on players stun, interrupt, knock back or freeze only when their source
+# declares it. Monsters keep D2Gamma's rules (they are not listed here, and the
+# global setting stays "classic").
+[players]
+crowd_control = "declared"
+
+# A cast cannot be cancelled once 40% of it has played; Teleport (skills row 54)
+# is committed from its first frame.
+[cast]
+uninterruptible_after_percent = 40
+
+[[cast.skill]]
+id = 54
+uninterruptible_after_percent = 0

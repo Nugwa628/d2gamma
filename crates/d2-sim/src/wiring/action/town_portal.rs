@@ -14,7 +14,6 @@
 
 use std::collections::BTreeMap;
 
-use crate::drlg::{act_of_level, TOWN_LEVELS};
 use crate::game::Game;
 use crate::path::coords::Point;
 use crate::path::place_seams::{mask, CollisionView};
@@ -152,7 +151,7 @@ impl<X: Pending> View<'_, X> {
             }
         }
         // The destination must be in the same act.
-        if act_of_level(level) != act_of_level(room_level) {
+        if self.h.rules.act_of_level(level) != self.h.rules.act_of_level(room_level) {
             self.h.errors.push(WiringError::Portal(FATAL_CROSS_ACT));
             return (0, None);
         }
@@ -252,7 +251,7 @@ impl<X: Pending> View<'_, X> {
         source_level: u32,
         tyrael: bool,
     ) -> Option<UnitId> {
-        let act = act_of_level(level);
+        let act = self.h.rules.act_of_level(level);
         // The destination spawn point.
         let spawn = level_spawn(self, game, act, level, DEST_TILE);
         if let Some((s, _, _)) = spawn {
@@ -268,7 +267,7 @@ impl<X: Pending> View<'_, X> {
         let mut r = s;
         let mut hooked = false;
         if source_level == TYRAEL_SOURCE && tyrael {
-            let town_act = act_of_level(TYRAEL_TOWN);
+            let town_act = self.h.rules.act_of_level(TYRAEL_TOWN);
             if let Some((t, tx, ty)) = level_spawn(self, game, town_act, TYRAEL_TOWN, TYRAEL_TILE) {
                 self.populate_off_tick(game, t);
                 let mut q = p;
@@ -398,7 +397,11 @@ impl<X: Pending> View<'_, X> {
         let Some(level) = room.and_then(|r| self.h.drlg.level_id(game, r)) else {
             return (0, false);
         };
-        let town = TOWN_LEVELS[usize::from(act_of_level(level))];
+        let town = self
+            .h
+            .rules
+            .act_town(self.h.rules.act_of_level(level))
+            .unwrap_or(0);
         // Towns and the Finale refuse.
         if self.h.drlg.dungeon.towns.is_town(level) || level == FINALE {
             self.portal_sound(game, player, SOUND_NOT_IN_TOWN, Some(player));

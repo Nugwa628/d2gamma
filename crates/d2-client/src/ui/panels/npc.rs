@@ -182,6 +182,7 @@ pub fn option_intent(kind: OptionKind, npc_guid: u32) -> Option<Vec<PanelOutput>
         OptionKind::Gamble => action(2, 0),
         OptionKind::TravelWest => action(0, 1),
         OptionKind::SailWest => action(0, 0x28),
+        OptionKind::DataTravel(id) => action(id, 0),
         OptionKind::Identify => ClientIntent::from_message(&IdentifyWithNpc { npc: npc_guid }),
         OptionKind::Resurrect => ClientIntent::from_message(&ResurrectMerc { npc: npc_guid }),
     };
@@ -377,7 +378,7 @@ mod tests {
         // Dirty every edited slot first.
         let junk = opt(1, OptionKind::Gamble);
         for r in &mut m.records {
-            r.options = [junk; 5];
+            r.options = vec![junk; 5];
             r.count = 5;
         }
         let before = m.clone();
@@ -389,15 +390,30 @@ mod tests {
             assert_eq!(r.options, [junk, junk, None, junk, junk]);
         }
         let r = rec(154);
-        assert_eq!((r.count, r.options), (3, [junk, junk, junk, None, junk]));
+        assert_eq!(
+            (r.count, r.options),
+            (3, vec![junk, junk, junk, None, junk])
+        );
         let r = rec(515);
-        assert_eq!((r.count, r.options), (2, [junk, junk, None, junk, junk]));
+        assert_eq!(
+            (r.count, r.options),
+            (2, vec![junk, junk, None, junk, junk])
+        );
         let r = rec(511);
-        assert_eq!((r.count, r.options), (3, [junk, junk, junk, None, junk]));
+        assert_eq!(
+            (r.count, r.options),
+            (3, vec![junk, junk, junk, None, junk])
+        );
         let r = rec(512);
-        assert_eq!((r.count, r.options), (4, [junk, junk, junk, junk, None]));
+        assert_eq!(
+            (r.count, r.options),
+            (4, vec![junk, junk, junk, junk, None])
+        );
         let r = rec(367);
-        assert_eq!((r.count, r.options), (2, [junk, None, None, junk, junk]));
+        assert_eq!(
+            (r.count, r.options),
+            (2, vec![junk, None, None, junk, junk])
+        );
         for npc in NPC_CAIN {
             let r = rec(npc);
             assert_eq!(r.count, 3);
@@ -483,6 +499,10 @@ mod tests {
         assert_eq!(
             bytes(&option_intent(OptionKind::Resurrect, g).unwrap()),
             vec![0x62, 0x44, 0x33, 0x22, 0x11]
+        );
+        assert_eq!(
+            bytes(&option_intent(OptionKind::DataTravel(77), g).unwrap()),
+            ea(77, 0)
         );
         assert_eq!(option_intent(OptionKind::Talk, g), None);
         assert_eq!(option_intent(OptionKind::Hire, g), None);

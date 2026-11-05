@@ -71,7 +71,13 @@ fn teeth_spends_mana_and_makes_missiles() {
     let errors = r.errors();
     assert!(r.mana() < mana0, "mana spent; {errors}");
     assert!(server > 0, "teeth made missiles; {errors}");
-    assert!(r.s2c_contains_since(mark, 0x4D), "{errors}");
+    // The caster's own client hears nothing of its cast: it starts the
+    // cast at its own click, so the server sends it no skill message
+    // (S→C 0x4C / 0x4D) for a skill without the dodge flag.
+    assert!(
+        !r.s2c_since(mark, 0x4D) && !r.s2c_since(mark, 0x4C),
+        "{errors}"
+    );
 }
 
 #[test]

@@ -14,15 +14,15 @@ use crate::units::UnitType;
 
 /// Stat ids the handlers are keyed by.
 pub mod stat_id {
-    pub const ITEM_ADDCLASSSKILLS: u16 = 83;
-    pub const ITEM_NONCLASSSKILL: u16 = 97;
-    pub const STATE: u16 = 98;
-    pub const ITEM_SINGLESKILL: u16 = 107;
-    pub const ITEM_ELEMSKILL: u16 = 126;
-    pub const ITEM_ALLSKILLS: u16 = 127;
-    pub const ITEM_AURA: u16 = 151;
-    pub const ITEM_ADDSKILL_TAB: u16 = 188;
-    pub const ITEM_CHARGED_SKILL: u16 = 204;
+    pub use crate::stats::ids::ITEM_ADDCLASSSKILLS;
+    pub use crate::stats::ids::ITEM_ADDSKILL_TAB;
+    pub use crate::stats::ids::ITEM_ALLSKILLS;
+    pub use crate::stats::ids::ITEM_AURA;
+    pub use crate::stats::ids::ITEM_CHARGED_SKILL;
+    pub use crate::stats::ids::ITEM_ELEMSKILL;
+    pub use crate::stats::ids::ITEM_NONCLASSSKILL;
+    pub use crate::stats::ids::ITEM_SINGLESKILL;
+    pub use crate::stats::ids::STATE;
 }
 
 /// Timer type 9: the item aura re-application.

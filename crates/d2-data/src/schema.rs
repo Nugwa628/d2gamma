@@ -585,6 +585,166 @@ impl ExtStore {
     }
 }
 
+/// Reference semantics for fields stored as raw codes or integers rather than
+/// compiler lookups. Kept with the engine definitions so validation and editor
+/// export use the same meaning for these cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CellReference {
+    /// An item code stored directly in a record, resolved through this linker.
+    Code(&'static str),
+    /// A numeric table id; no key column means the physical row index.
+    Id {
+        /// Target table stem.
+        table: &'static str,
+        /// Explicit id column, if the table has one.
+        column: Option<&'static str>,
+        /// Zero denotes no reference in this column.
+        zero_is_none: bool,
+    },
+}
+
+/// Additional references in the engine's table definitions. Animation tokens,
+/// categories, counts and enum values are not table references.
+pub fn additional_reference(table: &str, column: &[u8]) -> Option<CellReference> {
+    let c = String::from_utf8_lossy(column).to_ascii_lowercase();
+    let numbered = |prefix: &str| {
+        c.strip_prefix(prefix)
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    };
+    let item = match table {
+        "charstats" | "chartemplate" | "monequip" => numbered("item"),
+        "weapons" | "armor" | "misc" => matches!(
+            c.as_str(),
+            "normcode"
+                | "ubercode"
+                | "ultracode"
+                | "bettergem"
+                | "tmogtype"
+                | "nightmareupgrade"
+                | "hellupgrade"
+        ),
+        "uniqueitems" | "gamble" => c == "code",
+        "setitems" => c == "item",
+        "monstats2" => matches!(c.as_str(), "heart" | "bodypart"),
+        "books" => matches!(c.as_str(), "scrollspellcode" | "bookspellcode"),
+        _ => false,
+    };
+    if item {
+        return Some(CellReference::Code("items.code"));
+    }
+    let id = |table, column, zero_is_none| {
+        Some(CellReference::Id {
+            table,
+            column,
+            zero_is_none,
+        })
+    };
+    match table {
+        "lvlprest" if c == "levelid" => id("levels", Some("Id"), true),
+        "lvlmaze" if c == "level" => id("levels", Some("Id"), true),
+        "levels" | "leveldefs" if numbered("vis") || c == "depend" => {
+            id("levels", Some("Id"), true)
+        }
+        "levels" | "leveldefs" if numbered("warp") => id("lvlwarp", Some("Id"), false),
+        "levels" | "leveldefs" if c == "soundenv" => id("soundenviron", None, false),
+        "soundenviron"
+            if matches!(
+                c.as_str(),
+                "song" | "day ambience" | "night ambience" | "day event" | "night event"
+            ) =>
+        {
+            id("sounds", None, true)
+        }
+        _ => None,
+    }
+}
+
+/// Machine-readable schemas keyed by lowercase table stem. Each document lists
+/// the compiler definitions, lookup destinations, and mod row limits. Sound
+/// schemas include their runtime fields, not just their compile-time key list.
+pub fn export_tables() -> std::collections::BTreeMap<String, String> {
+    use std::collections::BTreeMap;
+    let mut tables: BTreeMap<String, Vec<(&str, Vec<FieldDef>)>> = BTreeMap::new();
+    for def in schema().called() {
+        let name = def.txt_name.trim_end_matches(".txt").to_ascii_lowercase();
+        tables
+            .entry(name)
+            .or_default()
+            .push((&def.name, def.fields.clone()));
+    }
+    tables
+        .entry("sounds".into())
+        .or_default()
+        .push(("sounds_runtime", crate::sounds::sound_fields()));
+    tables
+        .entry("soundenviron".into())
+        .or_default()
+        .push(("soundenviron_runtime", crate::sounds::soundenviron_fields()));
+    tables.into_iter().map(|(name, lists)| {
+        let limit = crate::bin::DataRules::Mod.max_count(&name).map_or("null".into(), |n| n.to_string());
+        let mut columns = Vec::new();
+        for (list, fields) in lists {
+            for f in fields {
+                let targets: Vec<_> = if f.field_type.is_lookup() {
+                    schema().called().filter(|d| d.fields.iter().any(|k| k.field_type.is_own_key() && k.link == f.link))
+                        .map(|d| json_string(&d.txt_name)).collect::<std::collections::BTreeSet<_>>().into_iter().collect()
+                } else { Vec::new() };
+                let extra = additional_reference(list.trim_end_matches("_runtime"), &f.column);
+                let targets = match extra {
+                    Some(CellReference::Code(linker)) => schema().called().filter(|d| d.fields.iter().any(|k| k.field_type.is_own_key() && k.link.linker() == Some(linker))).map(|d| json_string(&d.txt_name)).collect(),
+                    Some(CellReference::Id { table, .. }) => vec![json_string(&format!("{table}.txt"))],
+                    None => targets,
+                };
+                let targets = if f.link.linker() == Some("@treasureclass") {
+                    vec![json_string("treasureclassex.txt"), json_string("itemtypes.txt")]
+                } else { targets };
+                let callback = match &f.link { Link::Table(name) => Some(name.as_str()), _ => None };
+                let targets = if let Some(callback) = callback {
+                    let linkers = crate::compile::callbacks::reference_linkers(callback);
+                    let mut targets: std::collections::BTreeSet<_> = schema().called()
+                        .filter(|d| d.fields.iter().any(|k| k.field_type.is_own_key() && k.link.linker().is_some_and(|l| linkers.contains(&l))))
+                        .map(|d| json_string(&d.txt_name)).collect();
+                    for (linker, table) in [("@uniques", "uniqueitems.txt"), ("@sets", "setitems.txt")] {
+                        if linkers.contains(&linker) { targets.insert(json_string(table)); }
+                    }
+                    if callback == "cubemain.output" {
+                        targets.insert(json_string("magicprefix.txt"));
+                        targets.insert(json_string("magicsuffix.txt"));
+                    }
+                    targets.into_iter().collect()
+                } else { targets };
+                let link = match &f.link {
+                    Link::Linker(l) | Link::Table(l) => json_string(l),
+                    Link::Calc(b) => json_string(b.name()),
+                    Link::Param => json_string("param"),
+                    Link::None => "null".into(),
+                };
+                let encoding = match extra { Some(CellReference::Code(_)) => "code", Some(CellReference::Id { .. }) => "id", None if callback.is_some_and(|c| !crate::compile::callbacks::reference_linkers(c).is_empty()) => "expression", None if f.field_type.is_lookup() => "lookup", _ => "none" };
+                let (target_column, zero_is_none) = match extra { Some(CellReference::Id { column, zero_is_none, .. }) => (column.map_or("null".into(), json_string), zero_is_none), _ => ("null".into(), false) };
+                columns.push(format!("    {{\"name\":{},\"type\":{},\"list\":{},\"length\":{},\"offset\":{},\"link\":{},\"references\":[{}],\"reference_encoding\":{},\"target_column\":{},\"zero_is_none\":{}}}",
+                    json_string(&f.name()), json_string(f.field_type.vocabulary()), json_string(list), f.length, f.offset, link, targets.join(","), json_string(encoding), target_column, zero_is_none));
+            }
+        }
+        let text_only = matches!(name.as_str(), "sounds" | "soundenviron");
+        let json = format!("{{\n  \"schema_version\":1,\n  \"table\":{},\n  \"served_as_text\":{text_only},\n  \"max_rows_mod\":{limit},\n  \"columns\":[\n{}\n  ]\n}}\n", json_string(&name), columns.join(",\n"));
+        (name, json)
+    }).collect()
+}
+
+fn json_string(value: &str) -> String {
+    let mut out = String::from("\"");
+    for c in value.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

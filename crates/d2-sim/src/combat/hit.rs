@@ -38,29 +38,29 @@ pub mod result {
 }
 
 // Stats.
-const DEX: u16 = 2;
-const LEVEL: u16 = 12;
-const ITEM_ARMOR_PERCENT: u16 = 16;
-const TOHIT: u16 = 19;
-const TOBLOCK: u16 = 20;
-const ARMORCLASS: u16 = 31;
-const AC_VS_MISSILE: u16 = 32;
-const AC_VS_HTH: u16 = 33;
-const IGNORETARGETAC: u16 = 115;
-const FRACTIONALTARGETAC: u16 = 116;
-const PREVENTHEAL: u16 = 117;
-const TOHIT_PERCENT: u16 = 119;
-const DEMON_TOHIT: u16 = 123;
-const UNDEAD_TOHIT: u16 = 124;
-const SKILL_ARMOR_PERCENT: u16 = 171;
-const ATTACK_VS_MONTYPE: u16 = 179;
-const ARMOR_OVERRIDE_PERCENT: u16 = 182;
-const PASSIVE_DODGE: u16 = 338;
-const PASSIVE_AVOID: u16 = 339;
-const PASSIVE_EVADE: u16 = 340;
-const PASSIVE_WEAPONBLOCK: u16 = 348;
-const MODIFIERLIST_SKILL: u16 = 350;
-const MODIFIERLIST_LEVEL: u16 = 351;
+use crate::stats::ids::AC_VS_HTH;
+use crate::stats::ids::AC_VS_MISSILE;
+use crate::stats::ids::ARMORCLASS;
+use crate::stats::ids::ARMOR_OVERRIDE_PERCENT;
+use crate::stats::ids::ARMOR_PERCENT as ITEM_ARMOR_PERCENT;
+use crate::stats::ids::ATTACK_VS_MONTYPE;
+use crate::stats::ids::DEMON_TOHIT;
+use crate::stats::ids::DEXTERITY as DEX;
+use crate::stats::ids::FRACTIONALTARGETAC;
+use crate::stats::ids::IGNORETARGETAC;
+use crate::stats::ids::ITEM_TOHIT_PERCENT as TOHIT_PERCENT;
+use crate::stats::ids::LEVEL;
+use crate::stats::ids::MODIFIERLIST_LEVEL;
+use crate::stats::ids::MODIFIERLIST_SKILL;
+use crate::stats::ids::PASSIVE_AVOID;
+use crate::stats::ids::PASSIVE_DODGE;
+use crate::stats::ids::PASSIVE_EVADE;
+use crate::stats::ids::PASSIVE_WEAPONBLOCK;
+use crate::stats::ids::PREVENTHEAL;
+use crate::stats::ids::SKILL_ARMOR_PERCENT;
+use crate::stats::ids::TOBLOCK;
+use crate::stats::ids::TOHIT;
+use crate::stats::ids::UNDEAD_TOHIT;
 
 // States.
 const STATE_PREVENTHEAL: u16 = 52;
@@ -392,11 +392,14 @@ pub fn hit_result<W: CombatWorld>(
     formulas::ask(w, Some(a), Some(d), |f, h| f.hit_result(h, flags, missile)).unwrap_or(flags)
 }
 
-/// Block chance of a unit in percent, capped at `BLOCK_CAP`. Players need a shield;
+/// Block chance of a unit in percent, capped by the global rules (default 75).
+/// Players need a shield;
 /// monsters need the `noshldblock` flag or a shield composit.
 pub fn block_chance<W: CombatWorld>(w: &W, ct: &CombatTables, u: W::Unit, expansion: bool) -> i32 {
+    let cap = w.rules().global_rules().max_block_chance.min(100) as i32;
     if let Some(c) = formulas::ask_shared(w, None, Some(u), |f, h| f.block_chance(h)) {
-        return c;
+        // Existing formula providers own their cap unless a curated override is installed.
+        return if cap == BLOCK_CAP { c } else { c.min(cap) };
     }
     match w.unit_type(u) {
         UnitType::Player => {
@@ -415,7 +418,7 @@ pub fn block_chance<W: CombatWorld>(w: &W, ct: &CombatTables, u: W::Unit, expans
                     .wrapping_mul(b)
                     .wrapping_div(2i32.wrapping_mul(lvl));
             }
-            b.min(BLOCK_CAP)
+            b.min(cap)
         }
         UnitType::Monster => {
             let class = w.class_id(u);
@@ -427,7 +430,7 @@ pub fn block_chance<W: CombatWorld>(w: &W, ct: &CombatTables, u: W::Unit, expans
                     _ => w.composit_shield(u),
                 };
             if shield {
-                w.stat(u, TOBLOCK, 0).min(BLOCK_CAP)
+                w.stat(u, TOBLOCK, 0).min(cap)
             } else {
                 0
             }

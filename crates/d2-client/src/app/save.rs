@@ -79,7 +79,10 @@ pub fn save_path(
         (Some(file), _) => file.to_path_buf(),
         (None, Some(name)) => {
             let dir = save_dir.map_or_else(default_save_dir, Path::to_path_buf);
-            let file = dir.join(format!("{name}.d2s"));
+            let file = dir.join(format!(
+                "{name}.{}",
+                crate::kit_mod::character_codec().extension()
+            ));
             if file.exists() {
                 return Err(SaveError::Path(format!(
                     "{} already exists: load it with --save, or pick another name",
@@ -353,7 +356,14 @@ pub fn share<C: d2_server::seams::Clock + Send + 'static>(
     appearance: Option<Arc<AppearanceTables>>,
     path: PathBuf,
 ) -> Result<(SharedLink<C>, SaveHandle), SaveError> {
-    share_with(link, base, tables, appearance, path, Arc::new(D2sCodec))
+    share_with(
+        link,
+        base,
+        tables,
+        appearance,
+        path,
+        crate::kit_mod::character_codec(),
+    )
 }
 
 /// [`share`] writing the game's own character format (`codec`, from the

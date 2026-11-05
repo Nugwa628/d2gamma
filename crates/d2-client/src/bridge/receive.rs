@@ -126,6 +126,24 @@ pub fn receive_chunk_on(
                 continue;
             }
         }
+        if mods.wire == Wire::Mod && bytes[0] == d2_proto::wide_stat::ID {
+            if let Some(m) = d2_proto::wide_stat::decode(bytes) {
+                let key = super::world::UnitKey {
+                    unit_type: m.unit_type,
+                    guid: m.guid,
+                };
+                if let Some(unit) = world.units.get_mut(&key) {
+                    unit.mod_totals.insert(m.stat, m.value);
+                    log.handled += 1;
+                    report.handled += 1;
+                } else {
+                    report.dropped += 1;
+                }
+            } else {
+                report.dropped += 1;
+            }
+            continue;
+        }
         let sink = Outputs::default();
         let msg = Message {
             id: bytes[0],

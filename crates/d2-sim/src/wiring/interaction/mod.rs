@@ -43,6 +43,7 @@
 pub mod body_path;
 pub mod hirelings;
 pub mod missile_use;
+pub mod mod_traders;
 pub mod npc_items;
 pub mod npc_vendors;
 pub mod npc_world;
@@ -50,10 +51,21 @@ pub mod quest_npc;
 pub mod skill_events;
 mod skill_host;
 mod skill_host_actions;
+mod skill_host_ai_curse;
 mod skill_host_bar;
+mod skill_host_buff;
+mod skill_host_corpse_find;
+mod skill_host_damage_aura;
+mod skill_host_form;
+mod skill_host_martial;
+mod skill_host_passive;
 mod skill_host_pets;
 pub mod skill_host_respec;
 mod skill_host_search;
+mod skill_host_sentry;
+mod skill_host_shadow;
+mod skill_host_sight;
+mod skill_host_warcry;
 mod skill_rooms;
 pub mod skill_use;
 pub mod summon;
@@ -174,7 +186,10 @@ impl InteractionState {
             vendors: ctl
                 .records
                 .iter()
-                .map(|r| VendorRecord::new_for(rules, r.class, r.act, r.trader != 0, globals))
+                .map(|r| {
+                    let trader = mod_traders::keeps_store(rules, r.class, r.trader != 0);
+                    VendorRecord::new_for(rules, r.class, r.act, trader, globals)
+                })
                 .collect(),
             lists: BTreeMap::new(),
             errors: Vec::new(),

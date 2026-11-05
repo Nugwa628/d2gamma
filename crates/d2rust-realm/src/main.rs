@@ -295,7 +295,12 @@ fn usage() -> ExitCode {
 }
 
 fn run(path: &Path, command: Command) -> Result<ExitCode, String> {
-    let cfg = RealmConfig::load(path).map_err(|e| e.to_string())?;
+    let mut cfg = RealmConfig::load(path).map_err(|e| e.to_string())?;
+    // Held while the program runs: no other server removes its base.
+    let _data = match command {
+        Command::Run | Command::Check => Some(resolve_game_data(path, &mut cfg)?),
+        _ => None,
+    };
     match command {
         Command::Run => serve(path, &cfg),
         Command::Check => check(path, &cfg),
@@ -490,8 +495,32 @@ fn max_players_total(max_games: u16, cfg: &RealmConfig) -> u16 {
     max_games.saturating_mul(u16::try_from(cfg.max_players).unwrap_or(u16::MAX))
 }
 
+/// Finds the game data ([`d2_base_data::resolve`]) and points
+/// `cfg.game_data` at the folder to load. A base it converts is checked by
+/// loading what the main server reads from it (the save checks' tables,
+/// the market's item names) before any server uses it.
+fn resolve_game_data(path: &Path, cfg: &mut RealmConfig) -> Result<d2_base_data::Resolved, String> {
+    let view = d2_service::config::folder(path).join("game-view");
+    let check = |dir: &Path| guard::load_game_data(dir).map(|_| ());
+    let say = |line: &str| println!("{line}");
+    let req = d2_base_data::Request {
+        game_data: &cfg.game_data,
+        diablo2: cfg.diablo2.as_deref(),
+        base_home: cfg.base_data.as_deref(),
+        view: &view,
+    };
+    let r = d2_base_data::resolve(&req, &d2_base_data::Steps::real(&check, &say))
+        .map_err(|e| e.to_string())?;
+    if let Some(hint) = &r.hint {
+        println!("{hint}");
+    }
+    cfg.game_data = r.root.clone();
+    Ok(r)
+}
+
 /// `--check`: the config, the folders, the log and the game-server list,
-/// without the network.
+/// without the network. The game data is converted here when the machine
+/// has none of this format, so the switched-to version starts at once.
 fn check(path: &Path, cfg: &RealmConfig) -> Result<ExitCode, String> {
     if !cfg.game_data.is_dir() {
         return Err(format!(
@@ -685,6 +714,7 @@ fn serve(path: &Path, cfg: &RealmConfig) -> Result<ExitCode, String> {
     rt.block_on(stash.recover(&accounts))
         .map_err(|e| format!("the online stash: {e}"))?;
     let server = ServerInfo {
+        mod_identity: cfg.mod_identity(),
         protocol: d2_proto::PROTOCOL_VERSION,
         game: cfg.game.clone(),
         build: VERSION.into(),
@@ -724,7 +754,9 @@ fn serve(path: &Path, cfg: &RealmConfig) -> Result<ExitCode, String> {
         log.clone(),
     );
     let lobby = Arc::new(
-        Lobby::new(lobby::limits(cfg), sessions.clone(), realm.clone()).with_social(social.clone()),
+        Lobby::new(lobby::limits(cfg), sessions.clone(), realm.clone())
+            .with_social(social.clone())
+            .with_mod_identity(cfg.mod_identity()),
     );
     let games: std::sync::Weak<Lobby> = Arc::downgrade(&lobby);
     social.friends().set_games(games);

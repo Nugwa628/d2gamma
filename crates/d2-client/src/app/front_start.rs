@@ -85,6 +85,15 @@ pub type OnlineScreens =
 pub fn registry(save_dir: &Path, handles: &StartHandles) -> Registry {
     let mut reg = Registry::default();
     crate::ui::front_end::screens::register_all(&mut reg);
+    // D2Gamma Mods: the main menu's door to the mods folder, and the list.
+    {
+        use crate::ui::front_end::screens::{main_menu, mods};
+        let host: std::rc::Rc<dyn mods::ModsHost> = std::rc::Rc::new(mods::DiskHost {
+            files: handles.character_files(),
+        });
+        mods::register_with(&mut reg, host.clone());
+        main_menu::register_with(&mut reg, host);
+    }
     let files = handles.character_files();
     char_select::register_with_files(
         &mut reg,
@@ -220,6 +229,10 @@ pub fn front_host_with(
     if let Some(a) = &art {
         register_credits(&mut reg, a);
     }
+    // The mod's intro (D2Gamma's own without a mod): how the trademark
+    // screen looks, or that the first entry leaves it out.
+    let intro = crate::mod_look::intro();
+    crate::ui::front_end::screens::trademark::register_with(&mut reg, intro.clone());
     let files = handles.character_files();
     let front = crate::ui::front_end::FrontEnd::new(
         expansion,
@@ -228,10 +241,14 @@ pub fn front_host_with(
             files: files.clone(),
         }),
         reg,
-    );
+    )
+    .with_skipped_intro(intro.skip);
     let mut host = FrontHost::with_front(front, art, entry == Entry::First)
         .with_stub_writer(handles.created.clone(), save_dir.to_path_buf())
-        .with_stub_files(files);
+        .with_stub_files(files)
+        .with_start(crate::mods::front_hand_back::FrontStart::new(
+            save_dir, handles, expansion,
+        ));
     #[cfg(feature = "online")]
     if let (Entry::Online, Some(id), Some(online)) =
         (entry, &handles.server, handles.online.borrow().as_ref())
@@ -328,7 +345,7 @@ impl StartChoice {
         &self,
         data: &single_player::GameData,
     ) -> Result<Character, single_player::BuildError> {
-        self.character_with(data, &single_player::D2sCodec)
+        self.character_with(data, crate::kit_mod::character_codec().as_ref())
     }
 
     /// [`StartChoice::character`] read with the game's character format.

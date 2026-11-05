@@ -189,6 +189,10 @@ impl<H: LifecycleHooks, R: InvRest + ?Sized> InvWorld for InvDesk<'_, '_, H, R> 
     fn level_requirement(&self, item: UnitId, unit: UnitId) -> i32 {
         self.item_level_requirement(item, Some(unit))
     }
+    /// The item tables' rules.
+    fn item_rules(&self) -> crate::rules::Ruleset {
+        self.econ.tables.rules.clone()
+    }
 
     /// Two-handed ([`InvDesk::is_two_handed`]).
     fn two_handed(&self, item: UnitId) -> bool {

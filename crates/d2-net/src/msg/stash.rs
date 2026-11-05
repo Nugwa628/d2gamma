@@ -350,6 +350,9 @@ pub struct StashShapeMsg {
     /// The highest count of one stackable slot.
     pub cap: u32,
     pub names: Vec<String>,
+    /// The most gold the stash holds (the realm's `stash_gold_max`); sent
+    /// after the names, `None`: not sent (an older realm's answer).
+    pub gold_max: Option<u64>,
 }
 
 impl StashEvent {
@@ -424,6 +427,9 @@ impl StashEvent {
                 for n in s.names.iter().take(MAX_PAGE_NAMES) {
                     w.str8(n);
                 }
+                if let Some(g) = s.gold_max {
+                    w.u64(g);
+                }
             }
         }
         w.finish()
@@ -496,6 +502,7 @@ impl StashEvent {
                 let names = (0..n)
                     .map(|_| r.str8(MAX_PAGE_NAME))
                     .collect::<Result<_, _>>()?;
+                let gold_max = if r.is_empty() { None } else { Some(r.u64()?) };
                 Self::Shape(StashShapeMsg {
                     pages,
                     cols,
@@ -503,6 +510,7 @@ impl StashEvent {
                     renamable,
                     cap,
                     names,
+                    gold_max,
                 })
             }
             _ => return Err(NetError::Malformed),

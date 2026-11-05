@@ -680,6 +680,30 @@ fn typed<T: Record>(f: &FixedSet) -> Result<Vec<T>, TableError> {
     Ok(decode_all::<T>(get(f, T::TABLE)?)?)
 }
 
+impl super::bitstream::IscTable for ItemTables {
+    fn wide_stats(&self) -> bool {
+        self.rules.wide_stat_ids()
+    }
+    fn isc(&self, stat: u16) -> Isc {
+        if self
+            .rules
+            .stat_rules()
+            .is_some_and(|r| r.custom_stats().any(|(_, id)| id == stat))
+        {
+            Isc {
+                save_bits: 32,
+                save_param_bits: 16,
+                ..Isc::default()
+            }
+        } else {
+            self.isc.get(usize::from(stat)).copied().unwrap_or_default()
+        }
+    }
+    fn has_row(&self, stat: u16) -> bool {
+        usize::from(stat) < self.isc.len() || self.isc(stat).save_bits != 0
+    }
+}
+
 impl ItemTables {
     /// Projects the fixed-up table set (`d2_data::fixup::apply`), under
     /// D2RUST's own rules.
@@ -815,6 +839,10 @@ impl ItemTables {
     /// Valid stat id.
     pub fn stat_valid(&self, s: u16) -> bool {
         usize::from(s) < self.valshift.len()
+            || self
+                .rules
+                .stat_rules()
+                .is_some_and(|r| r.custom_stats().any(|(_, id)| id == s))
     }
 
     /// The class's skill count and first skill.

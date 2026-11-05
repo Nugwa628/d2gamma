@@ -1,0 +1,7 @@
+id = "ai-lift-frozen-horror"
+name = "AI 502 FrozenHorror, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "FrozenHorror as a graph: AI 502 (FrozenHorror)."
+api = 1
+kind = "full"

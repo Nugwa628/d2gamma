@@ -476,6 +476,42 @@ fn mod_rules_clamp_out_of_range_ints() {
     );
 }
 
+#[test]
+fn mod_rules_wrap_the_level_id_byte() {
+    let mut l = Linkers::default();
+    let mut run = |file: &str, column: &str, cell: &str, rules: DataRules| {
+        let text = format!("{column}\r\n{cell}\r\n");
+        let txt = TxtTable::parse("t.txt", text.as_bytes()).expect("test text parses");
+        let fields = [field(column, T::Byte, 0, 0, "")];
+        let mut cb = Mock::default();
+        let c =
+            compile_table_with(file, &txt, &fields, 1, &mut l, &mut cb, rules).expect("compiles");
+        (c.records, diag_kinds_of(&c.diagnostics))
+    };
+    let range = vec![DiagKind::IntRange];
+    // A level's `Id` past 255 wraps under both rules, and is still reported.
+    for rules in [DataRules::Mod, DataRules::Original] {
+        assert_eq!(
+            run("base:levels.txt", "Id", "256", rules),
+            (vec![0], range.clone())
+        );
+        assert_eq!(
+            run("levels.txt", "id", "279", rules),
+            (vec![23], range.clone())
+        );
+        assert_eq!(run("levels.txt", "Id", "255", rules), (vec![0xFF], vec![]));
+    }
+    // Every other byte keeps its clamp under the mod rules.
+    assert_eq!(
+        run("levels.txt", "Pal", "256", DataRules::Mod),
+        (vec![0xFF], range.clone())
+    );
+    assert_eq!(
+        run("monstats.txt", "Id", "256", DataRules::Mod),
+        (vec![0xFF], range)
+    );
+}
+
 fn diag_kinds_of(d: &[Diagnostic]) -> Vec<DiagKind> {
     d.iter().map(|d| d.kind).collect()
 }

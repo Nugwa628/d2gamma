@@ -176,10 +176,10 @@ pub mod ty {
 
 /// Stat ids used here.
 pub mod stat {
-    pub const LEVEL: u16 = 12;
-    pub const GOLD: u16 = 14;
-    pub const QUANTITY: u16 = 70;
-    pub const DURABILITY: u16 = 72;
+    pub use crate::stats::ids::DURABILITY;
+    pub use crate::stats::ids::GOLD;
+    pub use crate::stats::ids::LEVEL;
+    pub use crate::stats::ids::QUANTITY;
 }
 
 /// Sound events the item moves play.

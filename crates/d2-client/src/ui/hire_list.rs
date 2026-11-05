@@ -41,6 +41,12 @@ pub const MAX_OFFERS: usize = 10;
 const ROW_H: i32 = 15;
 /// "There are no Mercenaries left to hire."
 const STR_NO_MERCS: u16 = 3365;
+/// The text colour of the row under the pointer (blue; the other rows
+/// keep colour 0, white), as the NPC menu draws its selected choice.
+pub const HOVER_COLOR: u16 = 3;
+/// The list's rows answer the pointer up to this many columns left of
+/// the list's right edge (its scroll bar and margin).
+const HOVER_RIGHT: i32 = 0x21;
 
 /// One offer: name id and slot seed (S→C 0x4E).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,6 +133,26 @@ pub struct HireListUi {
     pub border: Option<u32>,
 }
 
+/// The hire list's place for a mod game that shows the list in its own
+/// NPC menu: draws nothing and takes no input.
+pub struct NoHireList;
+
+impl Panel for NoHireList {
+    fn id(&self) -> PanelId {
+        HIRE_PANEL
+    }
+    fn rect(&self) -> Rect {
+        Rect::new(0, 0, 0, 0)
+    }
+    fn draw(&self, _ctx: &UiCtx, _out: &mut dyn UiDrawSink) {}
+    fn hit(&self, _p: Point) -> Option<WidgetId> {
+        None
+    }
+    fn event(&mut self, _e: UiEvent, _ctx: &UiCtx) -> UiResponse {
+        UiResponse::Ignored
+    }
+}
+
 fn local_gold(world: &ClientWorld) -> i32 {
     // Stats 14 (gold) + 15 (stash gold).
     world.local().map_or(0, |u| {
@@ -178,6 +204,20 @@ impl HireListUi {
             .position(|i| i.handler == Some(HireHandler::Back))?;
         let top = pos.1 + bx.items[..back].iter().map(|i| i.height).sum::<i32>();
         (p.y > top && p.y <= top + bx.items[back].height).then_some(None)
+    }
+
+    /// The offer row under the pointer, drawn in [`HOVER_COLOR`]: the list
+    /// widget follows the pointer over its rows, left of its scroll bar
+    /// ([`HOVER_RIGHT`] columns from its right edge); off the rows, none.
+    fn hovered_row(&self, p: Point) -> Option<usize> {
+        let (_, list) = {
+            let st = self.st.borrow();
+            hire_geometry(st.screen.0, st.screen.1)
+        };
+        if p.x > list.0 + HIRE_LIST.0 - HOVER_RIGHT {
+            return None;
+        }
+        self.row_at(p).flatten()
     }
 }
 
@@ -266,6 +306,7 @@ impl Panel for HireListUi {
         // The list widget's rows (its scroll and columns are not
         // drawn: D2RUST's own).
         let level = local_level(ctx.world);
+        let hovered = ctx.pointer().and_then(|p| self.hovered_row(p));
         if st.offers.is_empty() {
             out.push(text(
                 strings(STR_NO_MERCS),
@@ -278,10 +319,11 @@ impl Panel for HireListUi {
                 continue;
             };
             let (left, _right) = hire_row_text(o.name, &stats, None, &strings);
+            let color = if hovered == Some(i) { HOVER_COLOR } else { 0 };
             out.push(text(
                 left,
                 Point::new(list.0 + 10, list.1 + ROW_H * (i as i32 + 1)),
-                0,
+                color,
             ));
         }
     }
@@ -562,6 +604,60 @@ mod tests {
             assert!(!clips.is_empty(), "{screen:?}");
             assert!(clips.iter().all(|c| *c == screen.rect()), "{screen:?}");
         }
+    }
+
+    // The row under the pointer is drawn blue (colour 3), the others white;
+    // over the gold line, past the rows' right end or off the list, none is.
+    #[test]
+    fn the_hovered_row_is_drawn_in_the_hover_colour() {
+        let w = player_world();
+        let (mut ui, mut root) = setup();
+        ui.set_hire_stats(Box::new(|_, _, _| {
+            Some(HireStats {
+                level: 9,
+                hp: 99,
+                ac: 63,
+                cost: 285,
+            })
+        }));
+        ui.open_hire_list(77);
+        ui.apply_output(&Output::HireListReset, &w).unwrap();
+        for name in [3000, 3001, 3002] {
+            ui.apply_output(&Output::HireOffer { name, seed: 5 }, &w)
+                .unwrap();
+        }
+        let ctx = UiCtx {
+            tick: 0,
+            world: &w,
+            strings: &NoStrings,
+        };
+        // The colour of each row's text, by row (list y 120, rows 15 high).
+        let mut colors = |at: Point| {
+            root.dispatch(UiEvent::CursorMoved(at), &ctx);
+            let mut out: Vec<crate::ui::UiDraw> = Vec::new();
+            root.draw(&ctx, &mut out);
+            (0..3)
+                .map(|i| {
+                    out.iter()
+                        .find_map(|d| match d {
+                            crate::ui::UiDraw::Text(t) if t.at == Point::new(165, 135 + 15 * i) => {
+                                Some(t.style.color)
+                            }
+                            _ => None,
+                        })
+                        .expect("the row's text")
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(colors(Point::new(200, 120 + 15 + 3)), vec![0, 3, 0]);
+        assert_eq!(colors(Point::new(400, 120 + 2 * 15 + 3)), vec![0, 0, 3]);
+        assert_eq!(colors(Point::new(200, 100)), vec![0, 0, 0], "the gold line");
+        assert_eq!(
+            colors(Point::new(155 + 490 - 20, 120 + 3)),
+            vec![0, 0, 0],
+            "the scroll bar's columns"
+        );
+        assert_eq!(colors(Point::new(20, 20)), vec![0, 0, 0], "off the list");
     }
 
     #[test]

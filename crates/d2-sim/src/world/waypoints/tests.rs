@@ -724,3 +724,33 @@ fn act5_bits_survive_load_and_pass_validation() {
     f.records.insert(P, r);
     assert_eq!(d.validate(&mut f, P, 0x0b, level), Ok(0));
 }
+
+/// A waypoint given without operating it (a mod game's auto pickup): an
+/// unlit one is learned and lit, a lit one learned, neither gets the
+/// menu; a non-waypoint class is not learned.
+#[test]
+fn a_waypoint_is_learned_without_its_menu() {
+    let d = data();
+    let mut f = fake();
+    let (u, mut o) = f.objects[0];
+    o.mode = 0;
+    o.level = Some(3); // Cold Plains, index 1
+    o.class = 494; // FrameCnt1 20
+    assert_eq!(d.learn(&mut f, u, &o, P), Ok(true));
+    assert_eq!(f.log, ["mode 50 1", "endanim 50 121"]);
+    assert!(f.records[&P].0[0].test(1).unwrap());
+    let mut f = fake();
+    let (u, mut o) = f.objects[0];
+    o.mode = 1;
+    o.level = Some(4); // Stony Field, index 2
+    assert_eq!(d.learn(&mut f, u, &o, P), Ok(true));
+    assert!(f.log.is_empty());
+    assert!(f.sent.is_empty());
+    assert!(f.records[&P].0[0].test(2).unwrap());
+    let mut f = fake();
+    let (u, mut o) = f.objects[0];
+    o.class = 0;
+    o.level = Some(3);
+    assert_eq!(d.learn(&mut f, u, &o, P), Ok(false));
+    assert!(!f.records[&P].0[0].test(1).unwrap());
+}

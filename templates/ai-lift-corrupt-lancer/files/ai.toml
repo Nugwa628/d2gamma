@@ -1,0 +1,40 @@
+version = 1
+
+# monstats aip1..aip5 of the corrupt lancer rows 165 to 169 (Normal): 60, 75, 9, 0, 15 (aip6 to aip8, the skill chances, are empty).
+# The body also remembers in its AI params that it ran in from afar (its first swing then needs no draw); a graph cannot.
+[[ai]]
+index = 36
+name = "CorruptLancer (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "charge"
+
+# Farther than aip5 = 15: run in at speed 100 (the body stops at its melee range).
+[[ai.state.action]]
+kind = "move_to"
+run = true
+steps = 2
+speed = 100
+when = [{ kind = "distance_above", value = 15 }]
+
+# In reach: aip2 = 75% swing, else stand aip3 = 9 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 75 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.36
+when = [{ kind = "in_melee" }]
+
+# Inside 15 but out of reach: aip1 = 60% walk 3 steps toward the target (aip4 = 0: never run), else stand 9 frames.
+[[ai.state.action]]
+kind = "move_to"
+steps = 3
+when = [{ kind = "random", percent = 60 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.36

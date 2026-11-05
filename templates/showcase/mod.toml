@@ -1,0 +1,11 @@
+id="showcase"
+name="Lantern Reach"
+author="Nugwa"
+version="1.0.0"
+description="Restore the lanterns, cross the shifting garden and quiet the Glass Warden."
+api=1
+kind="full"
+approved_addons=["showcase-notes"]
+accepts_d2gamma_characters=false
+market=false
+ladder=false

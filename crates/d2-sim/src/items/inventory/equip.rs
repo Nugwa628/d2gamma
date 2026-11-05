@@ -7,6 +7,7 @@ use super::{
     InvWorld, Inventory, UnitKind, NO_GUID,
 };
 use crate::combat::pct;
+use crate::items::item_rules::{Requirement, RequirementView};
 use crate::units::UnitId;
 
 /// Itemtypes `class` "none".
@@ -74,8 +75,78 @@ fn stat_ok<W: InvWorld + ?Sized>(
     true
 }
 
-/// Requirements of `item` for `unit`.
+/// Requirements of `item` for `unit`: the engine's, then a mod game's
+/// answer ([`crate::items::provider::ItemProvider::requirements`]).
 pub fn requirements_met<W: InvWorld + ?Sized>(
+    w: &W,
+    t: &InvTables,
+    item: Option<UnitId>,
+    unit: UnitId,
+    equipping: bool,
+) -> bool {
+    let ok = engine_requirements_met(w, t, item, unit, equipping);
+    let rules = w.item_rules();
+    let (Some(p), Some(item)) = (rules.items(), item) else {
+        return ok;
+    };
+    let Some(d) = w.item(item).copied() else {
+        return ok;
+    };
+    let (strength, dexterity) = attribute_requirements(w, t, item).unwrap_or_default();
+    let req = Requirement {
+        item,
+        record: d.record,
+        unit,
+        kind: w.unit_kind(unit),
+        equipping,
+        ethereal: d.flags & iflag::ETHEREAL != 0,
+        identified: d.flags & iflag::IDENTIFIED != 0,
+        strength,
+        dexterity,
+        level: w.level_requirement(item, unit),
+        engine: ok,
+    };
+    p.requirements(&ReqView(w), &req).unwrap_or(ok)
+}
+
+/// The requirement hook's view of the inventory world.
+struct ReqView<'a, W: ?Sized>(&'a W);
+
+impl<W: InvWorld + ?Sized> RequirementView for ReqView<'_, W> {
+    fn unit_stat(&self, unit: UnitId, stat: u16) -> i32 {
+        self.0.unit_stat(unit, stat)
+    }
+    fn item_stat(&self, item: UnitId, stat: u16) -> i32 {
+        self.0.item_stat(item, stat)
+    }
+}
+
+/// Step 2: the strength and dexterity requirements of `item` (the items
+/// row's, with the requirement percentage and the ethereal reduction).
+fn attribute_requirements<W: InvWorld + ?Sized>(
+    w: &W,
+    t: &InvTables,
+    item: UnitId,
+) -> Option<(i32, i32)> {
+    let d = w.item(item)?;
+    let rec = t.item(d.record)?;
+    let (reqstr, reqdex) = (i32::from(rec.reqstr), i32::from(rec.reqdex));
+    let p = w.req_percent(item);
+    let (mut bonus_str, mut bonus_dex) = (0, 0);
+    if p != 0 {
+        // Apply the requirement percentage with signed, truncating arithmetic.
+        bonus_str = pct(reqstr, p, 100);
+        bonus_dex = pct(reqdex, p, 100);
+    }
+    if d.flags & iflag::ETHEREAL != 0 {
+        bonus_str -= 10;
+        bonus_dex -= 10;
+    }
+    Some((reqstr + bonus_str, reqdex + bonus_dex))
+}
+
+/// The engine's requirements of `item` for `unit`.
+fn engine_requirements_met<W: InvWorld + ?Sized>(
     w: &W,
     t: &InvTables,
     item: Option<UnitId>,
@@ -91,30 +162,14 @@ pub fn requirements_met<W: InvWorld + ?Sized>(
         return false;
     };
     // Step 2.
-    let (reqstr, reqdex) = (i32::from(rec.reqstr), i32::from(rec.reqdex));
-    let p = w.req_percent(item);
-    let (mut bonus_str, mut bonus_dex) = (0, 0);
-    if p != 0 {
-        // Apply the requirement percentage with signed, truncating arithmetic.
-        bonus_str = pct(reqstr, p, 100);
-        bonus_dex = pct(reqdex, p, 100);
-    }
-    if d.flags & iflag::ETHEREAL != 0 {
-        bonus_str -= 10;
-        bonus_dex -= 10;
-    }
+    let Some((strength, dexterity)) = attribute_requirements(w, t, item) else {
+        return false;
+    };
     // Steps 3–5.
-    if !stat_ok(w, item, unit, equipping, stat::STRENGTH, reqstr + bonus_str) {
+    if !stat_ok(w, item, unit, equipping, stat::STRENGTH, strength) {
         return false;
     }
-    if !stat_ok(
-        w,
-        item,
-        unit,
-        equipping,
-        stat::DEXTERITY,
-        reqdex + bonus_dex,
-    ) {
+    if !stat_ok(w, item, unit, equipping, stat::DEXTERITY, dexterity) {
         return false;
     }
     // Never returns a negative R, so the caller's "R = −1 → skip"

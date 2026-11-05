@@ -726,6 +726,7 @@ impl Bot {
             self.close_event = None;
         }
         let mut hello = ClientHello {
+            mod_identity: None,
             protocol: defaults.protocol,
             game: defaults.game.clone(),
             build: defaults.build.clone(),

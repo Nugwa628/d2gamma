@@ -16,8 +16,9 @@
 
 use std::collections::BTreeMap;
 
-use d2_data::bin::{LoadError, TableFiles};
-use d2_data::compile_set::compile_all;
+use d2_data::bin::{DataRules, LoadError, TableFiles};
+use d2_data::calc::NO_KEYWORDS;
+use d2_data::compile_set::compile_all_under;
 use d2_data::patch::{self, PatchData, StrEdit};
 use d2_data::schema::schema;
 use d2_data::strings::{StringEdit, StringTables, StringsError};
@@ -31,8 +32,15 @@ use crate::tables::{BinOverrides, OVERRIDES_PATH};
 const STRING_TABLES: [&str; 3] = ["string.tbl", "patchstring.tbl", "expansionstring.tbl"];
 
 /// Base `.txt` files served as text rather than compiled: the runtime sound
-/// tables.
-const TEXT_TABLES: [&str; 2] = ["sounds.txt", "soundenviron.txt"];
+/// tables, plus effective names for mod UI bindings and visual recipes.
+const TEXT_TABLES: [&str; 6] = [
+    "sounds.txt",
+    "soundenviron.txt",
+    "itemstatcost.txt",
+    "states.txt",
+    "missiles.txt",
+    "overlay.txt",
+];
 
 /// The table source over a native root: implements
 /// `d2_data::bin::TableFiles`, so `bin::load_from` runs its checks on the
@@ -48,6 +56,9 @@ pub struct NativeTables {
     /// The mods' string edits (`stradd` / `strset`), in stack order;
     /// every load of the string tables applies them.
     string_edits: Vec<StringEdit>,
+    /// The data rules the tables were patched and compiled under, and the
+    /// loader checks them under.
+    rules: DataRules,
 }
 
 /// A `.txt` reader as the compile and the patcher take it: the file's
@@ -71,13 +82,18 @@ fn excel_canon(file: &str) -> String {
 }
 
 impl NativeTables {
-    pub(super) fn build(src: &NativeSource, language: &str) -> Result<NativeTables, LoadError> {
+    pub(super) fn build(
+        src: &NativeSource,
+        language: &str,
+        rules: DataRules,
+    ) -> Result<NativeTables, LoadError> {
         let mut t = NativeTables {
             lod: src.manifest.lod,
             strings: BTreeMap::new(),
             txt: BTreeMap::new(),
             bins: BTreeMap::new(),
             string_edits: Vec::new(),
+            rules,
         };
         for name in STRING_TABLES {
             let p = format!("data/local/lng/{language}/{name}");
@@ -102,7 +118,7 @@ impl NativeTables {
                 Some(Err(e)) => Err(e.to_string()),
             }
         };
-        let (patched, edits) = patched_tables(src, &mut read_base)?;
+        let (patched, edits) = patched_tables(src, &mut read_base, rules, &strings)?;
         // The mods' strings first: compiling binds `strkey` cells to them.
         let findings = patch::apply_strings(&mut strings, &edits);
         if patch::has_errors(&findings) {
@@ -116,8 +132,8 @@ impl NativeTables {
             }
         };
 
-        let compiled =
-            compile_all(&mut read_txt, &strings).map_err(|e| source_err("compile", e))?;
+        let compiled = compile_all_under(&mut read_txt, &strings, &NO_KEYWORDS, rules)
+            .map_err(|e| source_err("compile", e))?;
         let overrides = read_overrides(src)?;
         for def in schema().called() {
             let Some(c) = compiled.table(&def.name) else {
@@ -155,6 +171,8 @@ impl NativeTables {
 fn patched_tables(
     src: &NativeSource,
     read_base: &mut dyn FnMut(&str) -> TxtResult,
+    data_rules: DataRules,
+    strings: &StringTables,
 ) -> Result<Patched, LoadError> {
     let patches = src
         .layers
@@ -163,9 +181,10 @@ fn patched_tables(
     if patches.is_empty() {
         return Ok((BTreeMap::new(), Vec::new()));
     }
-    let rules = patch::rules();
+    let rules = patch::rules_for(data_rules);
     let mut data = PatchData::from_base(&rules, read_base)
         .map_err(|f| source_err("table patches", findings_text(&f)))?;
+    let baseline = data.clone();
     let mut layers = Vec::new();
     for (pos, (path, bytes)) in patches.iter().enumerate() {
         let (layer, findings) = patch::parse_layer(path, bytes, pos);
@@ -174,10 +193,13 @@ fn patched_tables(
         }
         layers.push(layer);
     }
-    let findings = patch::apply_stack(&mut data, &layers, ORDER_FILE);
+    let mut findings = patch::apply_stack(&mut data, &layers, ORDER_FILE);
+    findings.extend(patch::check_references(&baseline, &data));
     if patch::has_errors(&findings) {
         return Err(source_err("table patches", findings_text(&findings)));
     }
+    super::asset_refs::check(src, &baseline, &data, strings)
+        .map_err(|e| source_err("asset references", e))?;
     let texts = data
         .tables
         .iter()
@@ -198,10 +220,10 @@ fn read_overrides(src: &NativeSource) -> Result<BinOverrides, LoadError> {
 }
 
 /// The error findings of a patch run, joined for one message.
-fn findings_text(f: &[patch::Finding]) -> String {
+pub(super) fn findings_text(f: &[patch::Finding]) -> String {
     f.iter()
         .filter(|f| f.code.is_error())
-        .map(|f| format!("{f:?}"))
+        .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join("; ")
 }
@@ -229,5 +251,9 @@ impl TableFiles for NativeTables {
 
     fn string_edits(&self) -> Vec<StringEdit> {
         self.string_edits.clone()
+    }
+
+    fn data_rules(&self) -> DataRules {
+        self.rules
     }
 }

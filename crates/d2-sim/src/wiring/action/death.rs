@@ -26,7 +26,7 @@
 use std::collections::BTreeMap;
 
 use crate::combat::vitals::experience::{
-    corpse_experience, corpse_pickup, death_experience, gold_penalty,
+    corpse_experience, corpse_pickup, death_experience, gold_penalty_in,
 };
 use crate::combat::vitals::{stat, VitalsUnits};
 use crate::units::hooks::Sim;
@@ -104,7 +104,8 @@ impl<X: Pending> ActionHooks<X> {
         let gi = VitalsUnits::stat(&cv, p, gold_stat::GOLD);
         let gs = VitalsUnits::stat(&cv, p, gold_stat::GOLDBANK);
         let stash = cv.v.h.x.stash_cap(p);
-        let g = gold_penalty(
+        let g = gold_penalty_in(
+            &cv.v.h.rules,
             l,
             gi,
             gs,

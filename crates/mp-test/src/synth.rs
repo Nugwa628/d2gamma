@@ -376,6 +376,7 @@ fn serve(a: &Args) -> Result<(), String> {
     let server = QuicServer::bind(a.listen, identity, SYNTH_TIMING, rt.handle().clone())
         .map_err(|e| e.to_string())?;
     let info = ServerInfo {
+        mod_identity: None,
         protocol: d2_proto::PROTOCOL_VERSION,
         game: GAME.into(),
         build: a.build.clone(),

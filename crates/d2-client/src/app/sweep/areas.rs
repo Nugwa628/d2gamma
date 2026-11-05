@@ -1,7 +1,6 @@
 //! Area routes, loaded waypoint destinations, and explicit level links.
 use super::*;
 use d2_data::tables::{Leveldefs, Monstats};
-use d2_sim::world::{vendors::TOWNS, waypoints::WaypointMap};
 
 /// Links whose exit is a portal object, not a level warp tile, so there is no
 /// tile for the link case to walk to: the Throne of Destruction and the
@@ -10,19 +9,17 @@ use d2_sim::world::{vendors::TOWNS, waypoints::WaypointMap};
 /// all. Counted as a skip.
 const PORTAL_EXITS: [(usize, u32); 3] = [(131, 132), (132, 131), (133, 17)];
 
-pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
+pub(super) fn generate(live: &LiveData, g: &mut Generated, world: &World<'_>) -> Result<()> {
     let levels = live.tables.rows::<Leveldefs>()?;
     let valid = |id: usize| {
-        id > 0
-            && levels.get(id).is_some_and(|r| r.drlgtype > 0)
-            && live.waypoints.levels.get(id).is_some_and(|l| l.act < 5)
+        id > 0 && levels.get(id).is_some_and(|r| r.drlgtype > 0) && world.act(id).is_some()
     };
     for (id, row) in levels.iter().enumerate() {
         if !valid(id) {
             g.skip("areas:no-playable-generator-or-act");
             continue;
         }
-        let act = live.waypoints.levels[id].act;
+        let act = world.act(id).expect("valid area");
         let header = format!("char class 0\nchar area {act} {id}");
         g.add("areas", format!("area-{id}-walk"), &header,
             &format!("at 0 dev god on\nat 4 msg Walk x=@x+4 y=@y\nat 24 msg Walk x=@x-4 y=@y\nat 44 msg Walk x=@x y=@y+4\nat 64 msg Walk x=@x y=@y-4\nby 88 check player.pos changes\nat 92 check player.area == {id}"), 96)?;
@@ -69,9 +66,12 @@ pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
                 &format!("at 0 dev god on\nat 1 poke goto preset {id} 5:{warp} to {destination}\nat 420 msg InteractWithEntity type=5 id=@5@near\nby 480 check player.area == {destination}"), 484)?;
         }
     }
-    for (_, destination, act, _, _) in WaypointMap::new(&live.waypoints.levels).rows() {
-        let town = TOWNS[usize::from(act.min(4))];
-        if act >= 5 || !valid(destination as usize) || !valid(town as usize) {
+    for (_, destination, act, _, _) in world.map.rows() {
+        let Some(town) = world.town(act) else {
+            g.skip("areas:waypoint-missing-area-or-town");
+            continue;
+        };
+        if !valid(destination as usize) || !valid(town as usize) {
             g.skip("areas:waypoint-missing-area-or-town");
             continue;
         }
@@ -84,15 +84,13 @@ pub(super) fn generate(live: &LiveData, g: &mut Generated) -> Result<()> {
     let attacker = monsters
         .iter()
         .position(|m| m.enabled && !m.npc && m.killable && m.a1maxd > 0);
-    for act in 0..5 {
-        let area = (1..levels.len()).find(|&id| {
-            valid(id) && live.waypoints.levels[id].act == act && !TOWNS.contains(&(id as u16))
-        });
+    for (act, town) in world.towns() {
+        let area = (1..levels.len())
+            .find(|&id| valid(id) && world.act(id) == Some(act) && !world.is_town(id));
         let (Some(area), Some(attacker)) = (area, attacker) else {
             g.skip("areas:death-needs-combat-area-and-attacker");
             continue;
         };
-        let town = TOWNS[usize::from(act)];
         g.add("areas", format!("act-{act}-die-respawn"),
             &format!("char class 0\nchar area {act} {area}\nchar stat 6 256\nchar stat 7 256"),
             &format!("at 0 spawn {attacker} @x+3 @y normal free\nby 300 check player.mode == dead\nat 304 msg Resurrect\nby 360 check player.area == {town}\nat 360 check player.life > 0"), 364)?;

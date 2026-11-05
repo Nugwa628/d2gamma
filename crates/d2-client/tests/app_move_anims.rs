@@ -45,8 +45,11 @@ fn offsets(r: &Rig) -> Option<(i32, i32)> {
 #[ignore = "real data: needs D2_GAME_DIR (tools/realdata-gate.sh)"]
 fn the_leap_draw_height_follows_the_timed_arc_frame_by_frame() {
     let mut r = rig_with_walk(&[LEAP]);
-    r.select_right(LEAP);
-    r.right_click_point(5, 0);
+    // The client draws the leap it starts at its own click: the server
+    // sends the caster's client no skill message.
+    r.select_right_as_client(LEAP);
+    r.settle_ticks();
+    r.right_click_point_as_client(5, 0);
     // The expected curve: the spec's record for the leap's distance,
     // stepped once per server tick.
     let mut want: Vec<(i32, i32)> = Vec::new();
@@ -54,7 +57,7 @@ fn the_leap_draw_height_follows_the_timed_arc_frame_by_frame() {
     let mut got: Vec<(i32, i32)> = Vec::new();
     let mut d = 0;
     for _ in 0..60 {
-        r.step(1);
+        r.tick();
         if d == 0 {
             // The distance of the request's point from the
             // client unit's own path cell (the walk prediction).
@@ -89,24 +92,28 @@ fn the_leap_draw_height_follows_the_timed_arc_frame_by_frame() {
 }
 
 /// The whirl draws its sequence (`seqnum` 10, A1 0, 1, 2, 3, 3, 4, 5, 6)
-/// then loops A1 3, 4, 5, 6, one per update
+/// then loops A1 3, 4, 5, 6, one per server tick
 /// (`facts/client/anim/a1-cold-plains-whirlwind-bar.tsv`), and leaves
 /// mode 18 at the end of its path.
 #[test]
 #[ignore = "real data: needs D2_GAME_DIR (tools/realdata-gate.sh)"]
 fn whirlwind_draws_its_sequence_while_it_spins() {
     let mut r = rig_with_walk(&[WHIRLWIND]);
-    r.select_right(WHIRLWIND);
-    r.right_click_point(8, 0);
+    r.select_right_as_client(WHIRLWIND);
+    r.settle_ticks();
+    r.right_click_point_as_client(8, 0);
+    // The click's own update (no tick yet) draws the sequence's first
+    // frame, each tick after it the next.
+    r.settle_ticks();
     let mut frames = Vec::new();
     for _ in 0..80 {
-        r.step(1);
         if let Some((_, mode, f)) = r.app.world().resource::<SkillMotion>().drawn() {
             assert_eq!(mode, 7, "drawn mode A1");
             if frames.last() != Some(&f) || frames.len() < 4 {
                 frames.push(f);
             }
         }
+        r.tick();
     }
     assert!(
         frames.len() >= 8,

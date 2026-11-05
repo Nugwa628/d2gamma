@@ -99,6 +99,7 @@ impl Ctx<'_> {
                 let rows = table.rows_keyed(&k.text);
                 match rows.len() {
                     0 => Err(Box::new(self.finding(Code::A03, k, t))),
+                    1 if table.disabled(rows[0]) => Err(Box::new(self.finding(Code::A22, k, t))),
                     1 => Ok(rows[0]),
                     _ => {
                         let mut f = self.finding(Code::A04, k, t);
@@ -111,6 +112,9 @@ impl Ctx<'_> {
                 let n = *n as usize;
                 if n >= table.rows.len() {
                     return Err(Box::new(self.finding(Code::A03, index, t)));
+                }
+                if table.disabled(n) {
+                    return Err(Box::new(self.finding(Code::A22, index, t)));
                 }
                 if table.key(n) != label.text.as_slice() {
                     let mut f = self.with_row(self.finding(Code::A05, index, t), t, n);
@@ -125,6 +129,9 @@ impl Ctx<'_> {
     }
 
     fn column(&self, t: usize, tok: &Tok) -> Result<usize, Box<Finding>> {
+        if tok.text == super::DISABLED_COLUMN {
+            return Err(Box::new(self.finding(Code::A22, tok, t)));
+        }
         let header = &self.data.tables[t].header;
         resolve_column(header, &tok.text).ok_or_else(|| {
             let mut f = self.finding(Code::A02, tok, t);
@@ -259,6 +266,16 @@ impl Ctx<'_> {
         if table.rules.fixed {
             return Err(Box::new(self.finding(Code::A10, kw, t)));
         }
+        if crate::bin::DataRules::Mod
+            .max_count(table.name())
+            .is_some_and(|limit| table.rows.len() >= limit)
+        {
+            return Err(Box::new(self.finding(Code::A23, index, t).detail(format!(
+                "{}: id space exhausted (maximum {} rows)",
+                table.name(),
+                crate::bin::DataRules::Mod.max_count(table.name()).unwrap()
+            ))));
+        }
         if n as usize != table.rows.len() {
             let mut f = self.finding(Code::A09, index, t);
             f.detail = format!("row count is {}", table.rows.len());
@@ -298,7 +315,7 @@ impl Ctx<'_> {
         };
         if template.is_none() {
             // A new row starts with each extension column's default.
-            for a in &table.ext {
+            for a in table.ext.iter().chain(&table.adopted) {
                 cells[a.column] = a.default.clone();
             }
         }
@@ -341,14 +358,20 @@ impl Ctx<'_> {
         let table = &self.data.tables[t];
         // A16: the name must be new to the header and to every field the
         // compiler could bind, else the column would read as a base field.
-        let taken = table.header.iter().any(|h| names_equal(h, &name.text))
-            || table
-                .rules
-                .lists
-                .iter()
-                .flatten()
-                .any(|f| names_equal(f, &name.text));
-        if taken {
+        if names_equal(&name.text, super::DISABLED_COLUMN) {
+            return Err(Box::new(self.finding(Code::A22, name, t)));
+        }
+        let in_header = table.header.iter().any(|h| names_equal(h, &name.text));
+        let is_field = table
+            .rules
+            .lists
+            .iter()
+            .flatten()
+            .any(|f| names_equal(f, &name.text));
+        // A field the base text has no column for: under the mod rules
+        // the new column is that field's (it is bound, not an extension).
+        let adopt = is_field && !in_header && table.rules.adopt;
+        if in_header || (is_field && !adopt) {
             return Err(Box::new(self.finding(Code::A16, name, t)));
         }
         if let Some(bad) = [Some(name), default]
@@ -358,7 +381,7 @@ impl Ctx<'_> {
         {
             return Err(Box::new(self.finding(Code::A21, bad, t)));
         }
-        if let Some(d) = default.filter(|d| !d.text.is_empty()) {
+        if let Some(d) = default.filter(|d| !d.text.is_empty() && !adopt) {
             if ty.value(&d.text).is_none() {
                 let mut f = self.finding(Code::A17, d, t);
                 f.detail = format!("not an `{}` value", ty.word());
@@ -371,18 +394,23 @@ impl Ctx<'_> {
         let table = &mut self.data.tables[t];
         let column = table.header.len();
         table.header.push(name.text.clone());
-        table.bound.push(false);
+        table.bound.push(adopt);
         for r in &mut table.rows {
             r.cells.push(default.clone());
             r.writers.push(Writer::Add(loc));
         }
-        table.ext.push(AddedColumn {
+        let added = AddedColumn {
             name: name.text.clone(),
             ty,
             default,
             column,
             loc,
-        });
+        };
+        if adopt {
+            table.adopted.push(added);
+        } else {
+            table.ext.push(added);
+        }
         Ok(())
     }
 }
@@ -535,6 +563,41 @@ pub fn apply_stack(data: &mut PatchData, layers: &[Layer], stack_file: &str) -> 
                         ctx.set(&mut st, t, (sel, column, old, new), &r_t),
                         structural,
                     )
+                }
+                Stmt::Remove { sel, kw } => {
+                    let t = cur.as_ref().and_then(|c| c.1).expect("table resolved");
+                    let result = ctx.resolve(t, sel, &r_t).and_then(|row| {
+                        if st.tp.contains(&(t, row)) {
+                            return Err(Box::new(ctx.with_row(
+                                ctx.finding(Code::A15, kw, t),
+                                t,
+                                row,
+                            )));
+                        }
+                        let loc = ctx.loc();
+                        let table = &mut ctx.data.tables[t];
+                        let c = match table
+                            .header
+                            .iter()
+                            .position(|h| h == super::DISABLED_COLUMN)
+                        {
+                            Some(c) => c,
+                            None => {
+                                let c = table.header.len();
+                                table.header.push(super::DISABLED_COLUMN.to_vec());
+                                table.bound.push(false);
+                                for r in &mut table.rows {
+                                    r.cells.push(Vec::new());
+                                    r.writers.push(Writer::Base);
+                                }
+                                c
+                            }
+                        };
+                        table.rows[row].cells[c] = b"1".to_vec();
+                        table.rows[row].writers[c] = Writer::Add(loc);
+                        Ok(())
+                    });
+                    (result, true)
                 }
                 Stmt::Check {
                     sel, column, value, ..

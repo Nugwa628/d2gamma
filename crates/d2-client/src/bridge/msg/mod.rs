@@ -246,7 +246,7 @@ pub const HANDLERS: &[Handler] = &[
     general(0x7C, STATS_ITEMS, items::use_scroll),
     general(0x7D, STATS_ITEMS, items::set_item_state),
     general(0x7E, UNITS, unit_misc::common_cof),
-    general(0x7F, UNITS, no_op),
+    general(0x7F, UNITS, pets::ally_party_info),
     none(0x80),
     general(0x81, MODEL, pets::assign_merc),
     general(0x82, UNITS, roster::portal_ownership),

@@ -12,7 +12,8 @@ directly.
 2. Download `D2Gamma-Game-<version>.zip` from the newest release.
 
 The zip holds `D2Gamma-Game.exe`, `version.json` (`{"version":"0.1.1.<build>",
-"exe":"D2Gamma-Game.exe"}`, read by the launcher) and `README-PLAY.txt`.
+"exe":"D2Gamma-Game.exe","online":true,"mods":true}`, read by the launcher; `"mods":true` says
+the build has the D2Gamma Mods screen and takes `--mod` / `--no-mod`) and `README-PLAY.txt`.
 The version is 0.1.1 plus the build number; the exe's Properties →
 Details show the same.
 
@@ -114,6 +115,7 @@ Every command runs on the local server between two ticks.
 | `freemana [on\|off]` | mana refilled every tick |
 | `difficulty <normal\|nightmare\|hell>` | tells you how to restart on that difficulty |
 | `info` | info overlay (area, position, tick, FPS, hovered unit) |
+| `aiview` | monster AI overlay (bottom left, off until typed): for the six nearest monsters that run a mod's behaviour graph, the graph, its state and for how long, the last transition, the boss phase and a wind-up in progress. Nothing is read from the game while it is off |
 | `bugreport [note]` | writes `Documents\D2Gamma\saves\bug-reports\<time>\` as a report bundle (`report.json` with the note, plus screenshot, state and log; format in `crates/d2-report`) and prints the path: send that folder with a bug |
 | `save <name>` / `load [name]` | save the character and its place to a slot / load one (the game restarts there; the world is re-generated from the seed) / list the slots |
 | `clear` | clear the console |

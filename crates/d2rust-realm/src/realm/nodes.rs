@@ -253,6 +253,7 @@ impl NodeRegistry {
         let link = self.next.fetch_add(1, Ordering::Relaxed);
         let id = entry.id.clone();
         let (max_games, max_players) = (entry.max_games, entry.max_players_total);
+        let unreachable = super::listing::players_cannot_reach(&entry, addr);
         let old = self.lock().insert(
             id.clone(),
             Linked {
@@ -284,6 +285,14 @@ impl NodeRegistry {
         self.log.line(&format!(
             "node {id} linked from {addr} ({max_games} games, {max_players} players at most)"
         ));
+        if unreachable {
+            self.log.line(&format!(
+                "WARNING node {id}: linked from {addr} and listed without a public address, so players are \
+                 told {addr}, which is their own machine: creating a game fails with 'could not reach \
+                 the server'. Give it the address players use (d2rust-realm --add-node {id} ... \
+                 --public-addr HOST:PORT, or public_addr in data/nodes.toml with the realm stopped)"
+            ));
+        }
         link
     }
 

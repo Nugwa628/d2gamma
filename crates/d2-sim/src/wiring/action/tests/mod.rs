@@ -38,6 +38,8 @@ mod objects;
 mod player_death;
 #[cfg(test)]
 mod proto_msgs;
+#[cfg(test)]
+mod quest_world_units;
 mod remove_callbacks;
 #[cfg(test)]
 mod rooms;

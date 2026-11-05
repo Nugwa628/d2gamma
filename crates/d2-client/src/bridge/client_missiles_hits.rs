@@ -1035,8 +1035,7 @@ fn filter(
 /// `monstats2` size); the line with (a, b, 0x804) on the client
 /// collision rooms. The melee range of a player is the
 /// `rangeadder` of its weapon on body location 4, else 5,
-/// read for the local player's items; a remote player or a monster as
-/// `a` is a handler error (no caller here).
+/// read for the player's items ([`melee_reach`]), local or remote.
 pub(crate) fn in_melee_range(
     w: &ClientWorld,
     env: &Env,
@@ -1054,29 +1053,30 @@ pub(crate) fn in_melee_range(
     ))
 }
 
-/// The melee range with (a) of the local
-/// player: the `rangeadder` of its weapon on body location 4, else 5;
-/// 0 without one. A monster: 0 here, its range being the
-/// range world's `MeleeRng` (`melee_rng`).
-/// Another unit is a handler error.
+/// The melee range with (a) of a player, the local one or another: the
+/// `rangeadder` of the weapon on its body location 4, else 5; 0 without
+/// one. A remote player's body items are the equipment the server shows of
+/// it (0x9D records naming it as owner), so its reach reads the same way
+/// as the local player's. A monster: 0 here, its range being the range
+/// world's `MeleeRng` (`melee_rng`). Another unit is a handler error.
 pub(crate) fn melee_reach(w: &ClientWorld, _env: &Env, a: UnitKey) -> Result<i32, HandlerError> {
     if a.unit_type == MONSTER {
         // A monster's range is the range world's `MeleeRng` (`melee_rng`).
         return Ok(0);
     }
-    if a.unit_type != PLAYER || w.local_player != Some(a) {
+    if a.unit_type != PLAYER {
         return Err(HandlerError::Invalid(
-            "combat/hit.md §7.3: the melee range of a unit other than the local player",
+            "combat/hit.md §7.3: the melee range of a unit that is neither a player nor a monster",
         ));
     }
     let tables = w.item_tables.0.clone().ok_or(HandlerError::Invalid(
         "combat/hit.md §7.3: the melee range needs the item tables",
     ))?;
+    let held = super::super::items::owned_items(w, a);
     Ok([4u8, 5]
         .into_iter()
         .find_map(|loc| {
-            super::super::items::local_items(w)
-                .into_iter()
+            held.iter()
                 .find(|i| i.mode == super::super::items::mode::BODY && i.body == loc)
                 .and_then(|i| i.code)
                 .and_then(|c| tables.weapon_range_adder(c))

@@ -1,0 +1,36 @@
+version = 1
+
+# monstats aip1..aip4 of the bloodlord1 row (Normal): 90, 85, 50, 10.
+[[ai]]
+index = 125
+name = "BloodLord (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "rage"
+
+# In reach: aip1 = 90% act, half of them (aip3 = 50) with skill 1, the others swing 1: 45% skill, then 82% of the rest swing.
+[[ai.state.action]]
+kind = "use_skill"
+slot = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 45 }]
+
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 82 }]
+
+# else stand aip4 = 10 frames.
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4
+when = [{ kind = "in_melee" }]
+
+# Out of reach: aip2 = 85% walk toward the target, else stand 10 frames.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 85 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.4

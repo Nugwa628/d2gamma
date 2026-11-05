@@ -111,6 +111,7 @@ fn tables() -> SkillTables {
         miss_code: vec![0x07, 2, 0x00],
         level_cap: 99,
         stat_count: 359,
+        data_rules: d2_data::bin::DataRules::Original,
     }
 }
 

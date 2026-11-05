@@ -83,6 +83,23 @@ fn an_entry_carries_what_the_picker_shows() {
 }
 
 #[test]
+fn a_loopback_link_without_a_public_address_cannot_be_reached_by_players() {
+    let mut e = entry("n1", 1);
+    let local = SocketAddr::from(([127, 0, 0, 1], 6213));
+    let mapped: SocketAddr = "[::ffff:127.0.0.1]:6213".parse().unwrap();
+    // The players would be told 127.0.0.1:6213, their own machine.
+    assert_eq!(player_addr(&e, local), "127.0.0.1:6213");
+    assert!(players_cannot_reach(&e, local));
+    assert!(players_cannot_reach(&e, mapped));
+    assert!(players_cannot_reach(&e, "[::1]:6213".parse().unwrap()));
+    // A link from another machine is told as it is; a listed public address wins.
+    assert!(!players_cannot_reach(&e, addr(6213)));
+    e.public_addr = "203.0.113.20:6213".into();
+    assert!(!players_cannot_reach(&e, local));
+    assert_eq!(player_addr(&e, local), "203.0.113.20:6213");
+}
+
+#[test]
 fn players_see_the_region_else_the_name_else_the_id() {
     let mut e = entry("n1", 1);
     assert_eq!(display_name(&e), "Finland");

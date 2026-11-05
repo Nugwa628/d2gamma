@@ -190,9 +190,16 @@ pub fn local_items(w: &ClientWorld) -> Vec<ItemView> {
     let Some(p) = w.local_player else {
         return Vec::new();
     };
+    owned_items(w, p)
+}
+
+/// The items `owner` holds that are not on the ground: for the local
+/// player its inventory, for another player the equipment the server
+/// shows of it (the 0x9D records name that owner).
+pub fn owned_items(w: &ClientWorld, owner: UnitKey) -> Vec<ItemView> {
     items(w)
         .into_iter()
-        .filter(|i| !i.on_ground() && !i.store && i.owner == Some(p))
+        .filter(|i| !i.on_ground() && !i.store && i.owner == Some(owner))
         .collect()
 }
 

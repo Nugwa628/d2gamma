@@ -102,12 +102,36 @@ fn code_7_places_a_player_that_was_dead() {
         assert_eq!(w.units[&P].position, Some((103, 23)), "mode {dead}");
         assert_eq!(w.units[&P].mode, pm::NEUTRAL);
     }
+    // The local player alive: not placed.
     let mut w = world_with(P, pm::NEUTRAL);
+    w.local_player = Some(P);
     req(&mut w, &i, P, 0x07, back).unwrap();
     assert_eq!(w.units[&P].position, Some((50, 50)));
     let mut w = world_with(P, pm::DEAD);
     req(&mut w, &i, P, 0x07, R0).unwrap();
     assert_eq!(w.units[&P].position, Some((50, 50)));
+}
+
+#[test]
+fn code_7_stands_another_player_on_the_servers_cell() {
+    // A realm's client: another player's walk ends with the server's 0x0D
+    // code 7 at the cell its walk ended on; the client's track may have
+    // stopped short, so the stop puts it there, at the cell centre.
+    let i = ModelInputs::default();
+    let mut w = world_with(P, pm::WALK);
+    w.local_player = Some(UnitKey::new(0, 99));
+    req(&mut w, &i, P, 0x07, [53, 50, 0, 0, 0, 0, 0]).unwrap();
+    let u = &w.units[&P];
+    assert_eq!(u.mode, pm::NEUTRAL);
+    assert_eq!(u.position, Some((53, 50)));
+    assert_eq!(u.precise, Some(((53 << 16) | 0x8000, (50 << 16) | 0x8000)));
+    // A point outside the active rooms leaves it where it is.
+    let mut w = world_with(P, pm::WALK);
+    w.local_player = Some(UnitKey::new(0, 99));
+    w.active_rooms = Some(Vec::new());
+    req(&mut w, &i, P, 0x07, [53, 50, 0, 0, 0, 0, 0]).unwrap();
+    assert_eq!(w.units[&P].position, Some((50, 50)));
+    assert_eq!(w.units[&P].mode, pm::NEUTRAL);
 }
 
 #[test]
@@ -127,11 +151,21 @@ fn player_invalid_codes_are_fatal_0x432() {
 fn town_walk_and_neutral() {
     let i = ModelInputs::default();
     let room = DrlgRoomId(3);
-    for (level, walk, neutral) in [
-        (1u16, pm::TOWN_WALK, pm::TOWN_NEUTRAL),
-        (2, pm::WALK, pm::NEUTRAL),
+    for (level, custom_act, walk, neutral) in [
+        (1u16, false, pm::TOWN_WALK, pm::TOWN_NEUTRAL),
+        (2, false, pm::WALK, pm::NEUTRAL),
+        (137, true, pm::TOWN_WALK, pm::TOWN_NEUTRAL),
+        (1, true, pm::WALK, pm::NEUTRAL),
     ] {
         let mut w = world_with(P, 1);
+        if custom_act {
+            w.act = Some(super::world::ActLoad {
+                act: 0,
+                init_seed: 7,
+                town_level: 137,
+                f8: 0,
+            });
+        }
         w.active_rooms = Some(vec![ActiveRoom {
             x0: 0,
             y0: 0,

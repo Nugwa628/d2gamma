@@ -1,8 +1,12 @@
 # Making a mod game
 
-A mod for D2Gamma is **its own game**: its own binary, built on the D2Gamma crates, shipped as its own files and
-started directly by the player. The D2Gamma exe never loads or selects a mod; it always plays D2Gamma's own rules on
-the `base/` layer of the player's files. The working example is `examples/mod-game/` (synthetic, never shipped).
+A total conversion for D2Gamma is **its own game**: its own binary, built on the D2Gamma crates, shipped as its own
+files and started directly by the player. The working example is `examples/mod-game/` (synthetic, never shipped).
+
+This page is for those binaries. Data-only mods made with the mod kit (`mod.toml` and `files/`, no code) are not
+games of their own: the player starts them with `D2Gamma-Game --mod <id>` (or `--mod-dir <folder>`), and D2Gamma
+stacks them over `base/` ([mod loading](mod-kit-loading.md)). Without `--mod` the D2Gamma exe selects nothing and
+plays D2Gamma's own rules on the `base/` layer of the player's files, as before; it never reads `mods/order.toml`.
 
 ## Workspace layout
 
@@ -26,7 +30,8 @@ Depend on:
 1. **Data and layers.** Open the player's files with the mod's layers:
    `GameData::open(&GameSource::Native(dir, Layers::List(vec!["my-mod".into()])))`. Each layer is a folder under
    the native folder's `mods/` with a `mod.toml` and a `files/` tree; table changes are patches applied to the
-   player's own tables, never copies of them.
+   player's own tables, never copies of them. A shipped game puts its layer in one [data pack](data-pack.md) next
+   to its exe and lists the pack's path instead of a folder name.
 2. **Rules.** Implement `ModRules` with the seams the mod changes (every method defaults to D2Gamma's rules), and
    pass it as `Ruleset::Mod(Arc::new(MyRules))`. The ruleset is set when the game is built and never changes.
    Overrides stay deterministic: no I/O, no clock, no floats in game state, randomness only from the game's RNG.
@@ -48,7 +53,9 @@ A mod game whose art and tables ship as archives lays them over the player's ins
 1. **Identity.** First thing in `main`, install the game's identity, before `d2_client::user_dir::init` and
    before any window opens: `d2_client::identity::install(GameIdentity::new("My Mod", "1.0", "MyMod"))`. It sets
    the name and version lines, the window title, the folder under Documents (`Documents\MyMod`: saves, settings,
-   logs, cache) and, with `.with_credits(..)`, the credits screen's text. Without it the game is D2Gamma's own.
+   logs, cache), with `.with_credits(..)` the credits screen's text and, with `.with_realm_game("mymod")`, the game id
+   the client says when it connects to a main server (online play: a server runs one game and refuses a client that
+   says another, so it is the id the realm's `game` setting names). Without it the game is D2Gamma's own.
 2. **The front end.** `app::play::run_front_end(FrontEndConfig::new(data, game_dir, rules, saves, mods))` opens
    the window at the main menu, as D2Gamma's exe does: character select and create on the game's save folder, then
    each game the player starts with the game's `rules`, `saves` and `mods`; Save and Exit goes back to the main

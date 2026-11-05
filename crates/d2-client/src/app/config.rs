@@ -1253,6 +1253,7 @@ pub fn window_for(s: &Settings) -> bevy::window::Window {
     };
     bevy::window::Window {
         title: crate::identity::current().window_title.clone(),
+        position: super::dev::reload::window_position(),
         resolution: bevy::window::WindowResolution::new(w, h),
         mode: s.window_mode.bevy(None),
         present_mode: super::vsync::present_mode(s.vsync),

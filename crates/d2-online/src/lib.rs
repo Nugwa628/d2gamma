@@ -105,12 +105,14 @@ impl OnlineError {
         }
     }
 
-    /// What the player reads: this game's own words for a code it knows,
-    /// the server's words for one it doesn't, and how long to wait when the
-    /// server said so.
+    /// What the player reads: this game's words for known codes. Mod-identity
+    /// BUILD refusals keep the required mod/version and upgrade instructions.
+    /// Unknown codes keep the server's words; rate limits include the wait.
     pub fn message(&self) -> String {
         let words = |code: ErrorCode, text: &str| {
-            if ErrorCode::ALL.contains(&code) {
+            if ErrorCode::ALL.contains(&code)
+                && !(code == ErrorCode::BUILD && text.starts_with("Server requires "))
+            {
                 code.text().to_owned()
             } else {
                 text.to_owned()
@@ -178,6 +180,35 @@ mod tests {
             text: "A new rule.".into(),
         };
         assert_eq!(unknown.message(), "A new rule.");
+    }
+
+    #[test]
+    fn mod_mismatch_keeps_upgrade_code_and_required_version_in_player_message() {
+        let required = d2_net::mod_identity::ModIdentity {
+            id: "ghost-mod".into(),
+            version: "2.3.4".into(),
+        };
+        let refused = d2_net::mod_identity::check(Some(&required), None).unwrap_err();
+        let error = OnlineError::from(refused);
+        assert_eq!(error.code(), Some(ErrorCode::BUILD));
+        assert_eq!(error.message(), error.text());
+        assert!(error.message().contains("ghost-mod 2.3.4"));
+        assert!(error.message().contains("launcher and rejoin"));
+        for text in [
+            String::new(),
+            ErrorCode::BUILD.text().to_owned(),
+            "The server runs version 0.1.2.0; you have 0.1.1.0. Update through the launcher."
+                .into(),
+        ] {
+            assert_eq!(
+                OnlineError::Refused {
+                    code: ErrorCode::BUILD,
+                    text
+                }
+                .message(),
+                ErrorCode::BUILD.text()
+            );
+        }
     }
 
     #[test]

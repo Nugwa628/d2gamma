@@ -73,6 +73,31 @@ fn e(stat: u16, param: u16, value: i32) -> StatEntry {
     StatEntry { stat, param, value }
 }
 
+#[test]
+fn data_mod_item_stats_use_wide_ids_and_preserve_signed_values_and_layers() {
+    use crate::rules::data_mod::{DataMod, DataModFiles};
+    let mut c = codes();
+    c.t.rules = DataMod::from_files(
+        "wide",
+        &DataModFiles {
+            stats: Some((
+                "stats.toml",
+                "version = 1\n[[stat]]\nname = 'focus'\nid = 40000\n",
+            )),
+            ..DataModFiles::default()
+        },
+    )
+    .unwrap()
+    .into_ruleset();
+    let mut item = full(&c, b"cap ");
+    item.main = Some(vec![e(40000, u16::MAX, i32::MIN), e(40000, 7, i32::MAX)]);
+    let (bytes, _) = write_save(&item, &c.t).unwrap();
+    let back = read_save_entry(&bytes, &c.t).unwrap();
+    assert_eq!(back.item.item.main, item.main);
+    assert_eq!(back.len, bytes.len());
+    assert_eq!(write_save(&back.item.item, &c.t).unwrap().0, bytes);
+}
+
 /// Compact records: position, page + 1, gold, the trailer; the
 /// ear's class, level and name replace the code (edge case 8).
 #[test]

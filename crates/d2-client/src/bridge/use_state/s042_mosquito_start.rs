@@ -77,6 +77,7 @@ mod tests {
             miss_code: Vec::new(),
             level_cap: 99,
             stat_count: 359,
+            data_rules: d2_data::bin::DataRules::Original,
         }));
         let mut seed = d2_sim::rng::Seed::new(9, 666);
         let want = 4 + seed.roll(3) as i32;

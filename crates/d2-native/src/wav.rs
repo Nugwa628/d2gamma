@@ -11,6 +11,28 @@ use crate::toml_kinds::TextError;
 /// Bytes before the sample data: `RIFF` header, `fmt ` chunk, `data` header.
 const HEADER_LEN: usize = 44;
 
+/// Checks a mod sound against the audio player's format before it can be
+/// silently dropped by playback. Conversion preserves base files separately.
+pub fn check_playable(file: &str, w: &Wav) -> Result<(), TextError> {
+    if !w.is_playable() {
+        return Err(TextError::new(file, format!(
+            "mod sound requires PCM tag 1, 16-bit, 22050 Hz, mono or stereo; got tag {}, {}-bit, {} Hz, {} channels",
+            w.format_tag, w.bits, w.rate, w.channels
+        )));
+    }
+    let align = w.channels * 2;
+    if w.block_align != align
+        || w.byte_rate != w.rate * u32::from(align)
+        || !w.samples.len().is_multiple_of(usize::from(w.channels))
+    {
+        return Err(TextError::new(
+            file,
+            "mod sound has inconsistent byte_rate, block_align or incomplete sample frames",
+        ));
+    }
+    Ok(())
+}
+
 /// Writes the native file: the 44-byte header and the samples.
 pub fn write_wav(file: &str, w: &Wav) -> Result<Vec<u8>, TextError> {
     let data_len = w.samples.len() * 2;

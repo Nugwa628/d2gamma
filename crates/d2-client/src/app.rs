@@ -15,6 +15,7 @@ pub mod autoplay_front;
 pub mod autoplay_host;
 pub mod backdrop_bake;
 pub mod chat;
+pub mod check_mod;
 pub mod checks;
 pub mod client_state;
 pub mod config;
@@ -40,6 +41,7 @@ pub mod loading_overlay;
 pub mod lobby_picture;
 pub mod market;
 pub mod missile_art;
+pub mod package_mod;
 pub use d2_server::monster_ai;
 pub use d2_server::monster_drop;
 pub use d2_server::npc_seams;
@@ -76,6 +78,8 @@ pub mod skill_rest {
     pub use super::skill_rows::skill_row;
     pub use d2_server::skill_rest::*;
 }
+pub mod ai_arena;
+pub mod ai_closeness;
 pub mod soak;
 pub mod sound;
 pub mod state_dump;
@@ -84,6 +88,7 @@ pub mod sweep;
 pub mod ui;
 pub mod visibility;
 pub mod vsync;
+pub mod window_icon;
 pub use d2_server::weapons;
 
 use std::path::PathBuf;

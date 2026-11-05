@@ -536,6 +536,47 @@ impl Missiles {
         self.live.len()
     }
 
+    /// A bounded, cosmetic recipe instance using the existing art and draw order.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_visual(
+        &mut self,
+        id: u16,
+        overlay: bool,
+        at: (u32, u32),
+        follow: Option<UnitKey>,
+        born: u64,
+        duration: u16,
+    ) -> Option<u32> {
+        if duration == 0 || duration > 3600 {
+            return None;
+        }
+        let mut art = if overlay {
+            self.overlay_art(id, true)?.0
+        } else {
+            self.missile_art(id)?.0
+        };
+        art.loops = true;
+        let tag = self.fresh_id();
+        self.live.push(Fx {
+            art,
+            at,
+            follow,
+            dir64: 0,
+            born,
+            life: u64::from(duration),
+            id: tag,
+            missile: None,
+            clt_do_func: 0,
+            anim_len: 0,
+            init_steps: 0,
+            seq: super::overlay::next_seq(),
+        });
+        Some(tag)
+    }
+    pub fn remove_visual(&mut self, id: u32) {
+        self.live.retain(|fx| fx.id != id);
+    }
+
     fn missile_art(&self, id: u16) -> Option<(Art, &MissileRow)> {
         let row = self.rows.missiles.get(usize::from(id))?;
         if id == 0 || row.cel_file.is_empty() {

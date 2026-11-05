@@ -176,11 +176,24 @@ impl ServerList {
 }
 
 /// What this build is, for the handshake: the server must run exactly the
-/// same protocol, game, version and tick rate.
+/// same protocol, game, version and tick rate. The game is the running
+/// game's ([`crate::identity::GameIdentity::realm_game`]): D2Gamma's, or the
+/// mod game's own realm.
 pub fn client_info() -> ClientInfo {
+    client_info_of(crate::identity::current())
+}
+
+/// [`client_info`] for the game `identity` names.
+pub fn client_info_of(identity: &crate::identity::GameIdentity) -> ClientInfo {
     ClientInfo {
+        mod_identity: (identity.realm_game != crate::identity::D2GAMMA_REALM_GAME).then(|| {
+            d2_net::mod_identity::ModIdentity {
+                id: identity.realm_game.clone(),
+                version: identity.version.clone(),
+            }
+        }),
         protocol: d2_proto::PROTOCOL_VERSION,
-        game: "d2rust".into(),
+        game: identity.realm_game.clone(),
         build: crate::launch::VERSION.into(),
         tick_rate: TickRate::GAME.hz(),
     }
@@ -939,5 +952,18 @@ mod tests {
         assert_eq!(me.build, crate::launch::VERSION);
         assert_eq!(me.tick_rate, TickRate::GAME.hz());
         assert_eq!(me.game, "d2rust");
+        assert!(me.mod_identity.is_none());
+    }
+
+    #[test]
+    fn a_mod_game_says_its_own_realm_game() {
+        use crate::identity::GameIdentity;
+        let id =
+            GameIdentity::new("Example Mod", "2.0", "ExampleMod").with_realm_game("examplemod");
+        let me = client_info_of(&id);
+        assert_eq!(me.game, "examplemod");
+        assert_eq!(me.mod_identity.unwrap().version, "2.0");
+        assert_eq!(me.build, crate::launch::VERSION);
+        assert_eq!(me.tick_rate, TickRate::GAME.hz());
     }
 }

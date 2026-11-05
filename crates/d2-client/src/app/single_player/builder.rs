@@ -27,7 +27,7 @@ impl Saves {
     /// D2RUST's saves: `.d2s` files in the `saves` folder of the player's
     /// D2Gamma folder ([`crate::user_dir::saves`]).
     pub fn d2rust() -> Saves {
-        Saves::new(crate::user_dir::saves(), Arc::new(D2sCodec))
+        Saves::new(crate::user_dir::saves(), crate::kit_mod::character_codec())
     }
 
     /// The save file of the character `name` (`<folder>/<name>.<ext>`).

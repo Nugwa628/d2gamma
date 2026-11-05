@@ -315,6 +315,9 @@ pub trait PlayerWorld {
     fn set_stat_send(&mut self, u: UnitId, stat: u16, value: i32);
     /// The level id of the unit's room (none: 0).
     fn current_level(&self, u: UnitId) -> u32;
+    fn resurrect_town(&self, level: u32) -> u32 {
+        d2_sim::drlg::TOWN_LEVELS[usize::from(d2_sim::drlg::act_of_level(level))]
+    }
     /// Warp the player to `level`.
     fn warp(&mut self, player: UnitId, level: u32, arg: u32);
     /// Start `mode` for the player with no target, skipping the first gate.
@@ -502,7 +505,7 @@ const STAT_LEVEL: u16 = 12;
 /// The chat line S→C 0x26: u8@1 `form`, u8@2 `lang`, u8@3
 /// 2, u32@4 0, u8@8 0, u8@9 `level`, the name (at most 15 characters +
 /// NUL) at 10, then the text and its NUL.
-fn chat_line(form: u8, lang: u8, level: u8, name: &[u8], text: &[u8]) -> Vec<u8> {
+pub(crate) fn chat_line(form: u8, lang: u8, level: u8, name: &[u8], text: &[u8]) -> Vec<u8> {
     let name = &name[..name
         .iter()
         .position(|&c| c == 0)
@@ -640,8 +643,7 @@ pub fn resurrect<W: PlayerWorld>(w: &mut W, p: UnitId) -> u32 {
     w.or_flags(p, FLAG_RESURRECTED);
     w.set_state(p, STATE_UNINTERRUPTABLE, true);
     w.set_state(p, STATE_UNINTERRUPTABLE, false);
-    let act = d2_sim::drlg::act_of_level(w.current_level(p));
-    let town = d2_sim::drlg::ACT_BOUNDARIES[usize::from(act)];
+    let town = w.resurrect_town(w.current_level(p));
     w.warp(p, town, warp_arg);
     w.start_mode_skip_gate(p, MODE_NEUTRAL);
     w.reselect_hand_skills(p);

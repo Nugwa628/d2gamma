@@ -43,12 +43,15 @@ pub fn add_missiles(
     app: &mut impl crate::app::session::Setup,
     source: Arc<dyn FileSource>,
     rows: EffectRows,
-) {
+) -> Result<(), String> {
+    let recipes = crate::world_view::mod_effects::ModEffects::load(source.as_ref())?;
     let link = app
         .world_mut()
         .get_resource_or_insert_with(crate::audio::driver::SoundLink::default)
         .clone();
     if let Some(mut state) = app.world_mut().get_resource_mut::<WorldViewState>() {
+        state.mod_effects = recipes;
         state.missiles = MissileLayer::new(source, rows).with_client_seed(link.client_seed());
     }
+    Ok(())
 }

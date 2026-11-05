@@ -215,3 +215,48 @@ fn linked_item_stats_are_never_sent_and_the_base_stays() {
     let got = run_fx(&mut f, c, false).unwrap();
     assert!(got.is_empty(), "{got:02X?}");
 }
+
+#[test]
+fn mod_totals_follow_visible_units_without_mode_updates_and_resend_on_return() {
+    use crate::rules::{DataMod, DataModFiles};
+    use crate::stats::StatLists;
+    use std::sync::Arc;
+    let mut f = Fx::new();
+    let rules = DataMod::from_files(
+        "wide",
+        &DataModFiles {
+            stats: Some(("stats.toml", "version=1\n[[stat]]\nname='focus'\nid=40000")),
+            ..DataModFiles::default()
+        },
+    )
+    .unwrap()
+    .into_ruleset();
+    let mut data = f.sim.sys.stats.data().clone();
+    rules
+        .stat_rules()
+        .unwrap()
+        .install(&mut data.stats)
+        .unwrap();
+    f.sim.sys.stats = StatLists::new(Arc::new(data));
+    f.sim.sys.hooks.rules = rules;
+    f.sim.sys.hooks.enable_vitals_sync();
+    let a = f.a;
+    let p = f.spawn(UnitType::Player, 4, a, 10, 12);
+    let m = f.spawn(UnitType::Monster, 0, a, 12, 12);
+    let c = f
+        .game
+        .lists
+        .add_client(Some(p), Some(a), client_state::IN_GAME);
+    f.game.lists.room_mut(a).unwrap().adjacent = vec![a];
+    f.stats(m, &[(40000, -27)]);
+    let guid = f.sim.sys.units.get(m).unwrap().guid.to_le_bytes();
+    let expected = vec![
+        0xB8, 1, 1, guid[0], guid[1], guid[2], guid[3], 0x40, 0x9C, 0xE5, 0xFF, 0xFF, 0xFF,
+    ];
+    assert!(run_fx(&mut f, c, false).unwrap().contains(&expected));
+    assert!(!run_fx(&mut f, c, false).unwrap().contains(&expected));
+    f.game.lists.room_mut(a).unwrap().adjacent.clear();
+    assert!(!run_fx(&mut f, c, false).unwrap().contains(&expected));
+    f.game.lists.room_mut(a).unwrap().adjacent.push(a);
+    assert!(run_fx(&mut f, c, false).unwrap().contains(&expected));
+}

@@ -1985,3 +1985,15 @@ fn den_empty_placeholder_cannot_complete_the_quest() {
     ctl.monster_killed(&mut f, victim, Some(P1));
     assert!(!ctl.record(1).unwrap().extra.done);
 }
+
+#[test]
+fn fourth_difficulty_progression_does_not_overflow_legacy_status_flags() {
+    let p = UnitId(1);
+    let mut w = Fake::default();
+    w.client_flags.insert(p, 0xA020);
+    assert!(raise_progression(&mut w, p, 5, 254));
+    assert_eq!(w.client_flags[&p], 0xA020);
+    assert!(!raise_progression(&mut w, UnitId(2), 5, 3));
+    assert!(raise_progression(&mut w, p, 5, 0));
+    assert_eq!(w.client_flags[&p], progression(0xA020, 5, 0));
+}

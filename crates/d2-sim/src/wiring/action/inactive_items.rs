@@ -75,7 +75,7 @@ impl<X: Pending> View<'_, X> {
         if let Some(id) = self.h.items.ids().id_of(u) {
             view.unit28 = id;
         }
-        bitstream::write_save(&view, &t.isc).ok().map(|(b, _)| b)
+        bitstream::write_save(&view, t).ok().map(|(b, _)| b)
     }
 
     /// The item of `rec` re-created in `room` with ground

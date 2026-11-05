@@ -196,10 +196,15 @@ impl Realm {
             seq: save.info.seq,
         };
         let req = econ_req(c.lease, c.req, 0);
+        stash
+            .summaries
+            .set(c.lease, s.seq, save.info.summary.clone());
+        let seq = s.seq;
         let done = stash
             .bank
             .run(move |e| e.put(&owner, &req, &from, goods, &s, now_ms()))
             .await;
+        stash.summaries.done(c.lease, seq);
         if let Some(a) = self.refusal(done) {
             return a;
         }
@@ -260,10 +265,15 @@ impl Realm {
             seq: save.info.seq,
         };
         let req = econ_req(c.lease, c.req, 0);
+        stash
+            .summaries
+            .set(c.lease, s.seq, save.info.summary.clone());
+        let seq = s.seq;
         let done = stash
             .bank
             .run(move |e| e.put_stacks(&owner, &req, &from, &credits, cap, &s, now_ms()))
             .await;
+        stash.summaries.done(c.lease, seq);
         if let Some(a) = self.refusal(done) {
             return a;
         }
@@ -337,12 +347,15 @@ impl Realm {
                     seq: save.info.seq,
                 };
                 let req_ = econ_req(lease, req, 1);
+                stash.summaries.set(lease, s.seq, save.info.summary.clone());
+                let seq = s.seq;
                 let done = stash
                     .bank
                     .run(move |e| {
                         e.take_done(&req_, lease, transfer, Placed::Placed, Some(&s), now_ms())
                     })
                     .await;
+                stash.summaries.done(lease, seq);
                 match self.refusal(done) {
                     Some(a) => a,
                     None => {
@@ -464,12 +477,23 @@ impl Realm {
             }
         };
         let account = AccountId(r.account);
-        match self
-            .saves
-            .accounts()
-            .store_record(account, &r.name, r.record.clone(), now_s())
-            .await
-        {
+        // A realm of the game's own records can't read a record: it takes
+        // the summary the game server reported with the move's save (a
+        // `.d2s` realm reads its own and ignores it).
+        let accounts = self.saves.accounts();
+        let stored = match &r.summary {
+            Some(s) => {
+                accounts
+                    .store_played(account, &r.name, r.record.clone(), s, now_s())
+                    .await
+            }
+            None => {
+                accounts
+                    .store_record(account, &r.name, r.record.clone(), now_s())
+                    .await
+            }
+        };
+        match stored {
             Ok(summary) => {
                 if let Err(e) = stash.store.record_written(&r) {
                     self.log_line(&format!("stash: {e}"));

@@ -1,11 +1,15 @@
+use super::super::item_tip_build::ItemText;
+use super::super::item_tip_desc::StatDesc;
 use super::*;
 use crate::ui::item_tip_build::{pfx, tid, PriceText, SetCtx, TipUnit};
 use crate::ui::item_tip_desc::sid;
+use crate::ui::item_tip_props::StatList;
 use crate::ui::UiDraw;
 use d2_data::fixup::maps::EquivMatrix;
-use d2_data::tables::Itemtypes;
-use d2_proto::item_bits::hflag;
+use d2_data::tables::{Itemtypes, Record};
+use d2_proto::item_bits::{hflag, Stat};
 use d2_sim::items::tables::{ItemRec, SetItemRec};
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 struct Strs {
@@ -64,9 +68,11 @@ pub(crate) fn tips() -> ItemTips {
     tips_with(ItemTables::default())
 }
 
-fn tips_with(items: ItemTables) -> ItemTips {
+/// [`tips`] with `items`' tables; its `items` rows follow the fixture's five.
+pub(crate) fn tips_with(items: ItemTables) -> ItemTips {
+    let extra = items.items.clone();
     let items = ItemTables {
-        items: vec![
+        items: [
             ItemRec {
                 code: *b"cap ",
                 type_: HELM,
@@ -92,7 +98,10 @@ fn tips_with(items: ItemTables) -> ItemTips {
                 type_: SCRO,
                 ..ItemRec::default()
             },
-        ],
+        ]
+        .into_iter()
+        .chain(extra)
+        .collect(),
         itemtypes: (0..90).map(|_| itype()).collect(),
         equiv: equiv(&[(HELM as usize, ARMO), (SHLD as usize, ARMO)]),
         // The `books` rows: 0 Town Portal, 1 Identify.
@@ -175,53 +184,55 @@ fn tips_with(items: ItemTables) -> ItemTips {
         .into(),
     };
     ItemTips {
-        lookup: Arc::new(items),
-        codes,
-        desc_order: vec![3, 2, 1],
-        stats: vec![
-            StatDesc::default(),
-            StatDesc {
-                priority: 5,
-                func: 1,
-                val: 1,
-                pos: 9,
-                ..StatDesc::default()
-            },
-            StatDesc {
-                priority: 5,
-                func: 1,
-                val: 1,
-                pos: 12,
-                ..StatDesc::default()
-            },
-            StatDesc {
-                priority: 5,
-                func: 3,
-                val: 1,
-                pos: 13,
-                ..StatDesc::default()
-            },
-        ],
-        magic_prefix: vec!["Sturdy".into()],
-        magic_suffix: vec!["Fox".into()],
-        rare_prefix: Vec::new(),
-        rare_suffix: Vec::new(),
-        unique: vec!["Greymaker".into()],
-        set: vec!["Sigon's Visor".into(), "Sigon's Gage".into()],
-        low_quality: Vec::new(),
-        set_names: vec![11],
-        skills: Vec::new(),
-        class_strings: Vec::new(),
-        block_factors: Vec::new(),
-        class_names: Vec::new(),
-        montype: Vec::new(),
-        monstats: Vec::new(),
-        gem_letters: Vec::new(),
-        prefix_color: vec![0xFF],
-        suffix_color: vec![0xFF],
-        set_inv_color: vec![0xFF],
-        unique_inv_color: vec![0xFF],
-        strings: Arc::new(strs),
+        core: d2_item_text::item_tip::ItemTips {
+            lookup: Arc::new(items),
+            codes,
+            desc_order: vec![3, 2, 1],
+            stats: vec![
+                StatDesc::default(),
+                StatDesc {
+                    priority: 5,
+                    func: 1,
+                    val: 1,
+                    pos: 9,
+                    ..StatDesc::default()
+                },
+                StatDesc {
+                    priority: 5,
+                    func: 1,
+                    val: 1,
+                    pos: 12,
+                    ..StatDesc::default()
+                },
+                StatDesc {
+                    priority: 5,
+                    func: 3,
+                    val: 1,
+                    pos: 13,
+                    ..StatDesc::default()
+                },
+            ],
+            magic_prefix: vec!["Sturdy".into()],
+            magic_suffix: vec!["Fox".into()],
+            rare_prefix: Vec::new(),
+            rare_suffix: Vec::new(),
+            unique: vec!["Greymaker".into()],
+            set: vec!["Sigon's Visor".into(), "Sigon's Gage".into()],
+            low_quality: Vec::new(),
+            set_names: vec![11],
+            skills: Vec::new(),
+            class_strings: Vec::new(),
+            block_factors: Vec::new(),
+            class_names: Vec::new(),
+            montype: Vec::new(),
+            monstats: Vec::new(),
+            gem_letters: Vec::new(),
+            prefix_color: vec![0xFF],
+            suffix_color: vec![0xFF],
+            set_inv_color: vec![0xFF],
+            unique_inv_color: vec![0xFF],
+            strings: Arc::new(strs),
+        },
         mods: Default::default(),
     }
 }
@@ -516,7 +527,7 @@ fn a_gold_pile_is_named_by_its_amount() {
     };
     let t = tips();
     let name = |b: &ItemBits| {
-        let b = ItemTips::as_built(b);
+        let b = d2_item_text::item_tip::ItemTips::as_built(b);
         String::from_utf16_lossy(&Build::new(&t, &b, &TipCtx::default()).name())
     };
     assert_eq!(name(&pile(Some(1234))), "1234 Gold");

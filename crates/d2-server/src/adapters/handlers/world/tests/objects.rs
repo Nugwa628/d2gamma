@@ -81,6 +81,7 @@ fn fixture(objects: bool) -> Fx {
             miss_code: Vec::new(),
             level_cap: 0,
             stat_count: 0,
+            data_rules: d2_data::bin::DataRules::Original,
         },
         combat: CombatTables {
             charstats: Vec::new(),

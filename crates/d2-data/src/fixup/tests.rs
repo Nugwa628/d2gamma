@@ -381,6 +381,55 @@ fn level_names_miss_text_is_cut() {
     assert_eq!((get_u16(r, 0x1BC), get_u16(r, 0x20C)), (0, 0));
 }
 
+/// A string table of one key with `value`.
+fn one_string(key: &[u8], value: &[u8]) -> d2_formats::tbl::StringTable {
+    use d2_formats::tbl::{key_hash, StringTable, TblEntry, TblHeader};
+    StringTable {
+        header: TblHeader {
+            crc: 0,
+            num_elements: 1,
+            hash_table_size: 1,
+            version: 0,
+            data_start: 0,
+            max_tries: 1,
+            file_size: 0,
+        },
+        indices: vec![0],
+        entries: vec![TblEntry {
+            used: 1,
+            index: 0,
+            hash: key_hash(key),
+            key: key.to_vec(),
+            value: value.to_vec(),
+        }],
+    }
+}
+
+#[test]
+fn level_names_may_hold_non_ascii_bytes() {
+    // A mod's level name as its string table stores it (UTF-8) and a key
+    // that is itself non-ASCII: the bytes widen one for one and the fix-up
+    // goes on.
+    let strings = StringTables {
+        patch: Some(one_string(b"abc", b"Caf\xC3\xA9")),
+        ..Default::default()
+    };
+    let r = rec(0x220, &[(0xF5, b"abc"), (0x11D, b"To The Caf\xC3\xA9")]);
+    let mut t = table("levels", 0x220, vec![r]);
+    records::levels(&mut t, &strings).unwrap();
+    let r = t.record(0);
+    let name: Vec<u16> = (0..6).map(|k| get_u16(r, 0x16E + 2 * k)).collect();
+    assert_eq!(name, [0x43, 0x61, 0x66, 0xC3, 0xA9, 0]);
+    let warp: Vec<u16> = (0..14).map(|k| get_u16(r, 0x1BE + 2 * k)).collect();
+    assert_eq!(warp[9..12], [0x66, 0xC3, 0xA9]);
+}
+
+#[test]
+fn ascii_text_widens_as_before() {
+    let t = wide_text(&StringTables::default(), "levels", b"Rogue").unwrap();
+    assert_eq!(t[..5], [0x52, 0x6F, 0x67, 0x75, 0x65]);
+}
+
 #[test]
 fn wide_text_vectors() {
     let s = StringTables::default();
@@ -389,7 +438,9 @@ fn wide_text_vectors() {
     copy_wide(&mut r, 0, &t, 40);
     assert_eq!(wide(&r, 0, 40), "abc -not xlated call ken ");
     assert!(wide_text(&s, "t", b"").unwrap().is_empty());
-    assert!(wide_text(&s, "t", &[0xE9]).is_err());
+    // Any byte is text: a mod's strings are not limited to ASCII.
+    let t = wide_text(&s, "t", &[0xE9]).unwrap();
+    assert_eq!(t[..2], [0xE9, u16::from(b' ')]);
     // A text of L or more units fills all L, no terminator.
     let mut r = vec![0u8; 8];
     copy_wide(&mut r, 0, &[0x41; 5], 4);

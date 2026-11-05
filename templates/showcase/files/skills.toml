@@ -1,0 +1,24 @@
+version=1
+[[skill]]
+id=357
+name="Lantern Pulse"
+[[skill.part]]
+kind="call_script"
+module="lantern.graph.toml"
+function="charge"
+argument="1"
+[[skill.part]]
+kind="call_script"
+module="ward.luau"
+function="ward"
+[[skill.part]]
+kind="area_hit"
+radius="10"
+around="caster"
+affects="enemies"
+[skill.part.damage]
+element="magic"
+min="18"
+max="18"
+[[skill.part.cc]]
+kind="interrupt"

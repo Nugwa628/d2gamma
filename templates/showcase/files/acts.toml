@@ -1,0 +1,7 @@
+version=1
+[[acts]]
+name="Lantern Reach"
+start=137
+end=140
+town=137
+waypoints=[{id=0,level=137},{id=1,level=138},{id=2,level=139}]

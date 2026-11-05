@@ -1,0 +1,7 @@
+id = "ai-lift-maggot-larva"
+name = "AI 180 MaggotLarva, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "MaggotLarva as a graph: AI 180 (MaggotLarva)."
+api = 1
+kind = "full"

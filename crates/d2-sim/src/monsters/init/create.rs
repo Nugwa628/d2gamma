@@ -129,14 +129,14 @@ pub fn stats_and_skills<H: InitHost + ?Sized>(
     // Step 3.
     let info = h.info();
     let bonus = h.rules().player_bonus(&info, m.align);
-    if info.difficulty >= 3 {
+    if info.difficulty >= 3 && h.rules().difficulties().is_none() {
         h.set_difficulty(2);
     }
     let info = h.info();
     let skill_bonus = cx
         .tables
         .difficultylevels
-        .get(info.d())
+        .get(usize::from(info.difficulty))
         .map_or(0, |r| r.monsterskillbonus as i32);
     // Step 4.
     let d = if HIRELINGS.contains(&class) {

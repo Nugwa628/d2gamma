@@ -1,0 +1,7 @@
+id = "ai-lift-vampire"
+name = "AI 28 Vampire, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "Vampire as a graph: AI 28 (Vampire)."
+api = 1
+kind = "full"

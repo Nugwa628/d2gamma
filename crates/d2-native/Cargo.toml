@@ -10,10 +10,14 @@ license.workspace = true
 [dependencies]
 d2-formats.workspace = true
 d2-data.workspace = true
+d2-modkit.workspace = true
 thiserror.workspace = true
 png = "0.18"
 toml = "0.9"
 sha2.workspace = true
+# Data packs (`pack`): per-file zstd through a pure-Rust codec, CRC-32 per file.
+ruzstd = { version = "0.8", default-features = false, features = ["std"] }
+crc32fast = "1.5"
 
 [dev-dependencies]
 d2-formats = { workspace = true, features = ["test-support"] }

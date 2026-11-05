@@ -162,15 +162,7 @@ pub struct PanelTick<'a> {
 }
 
 /// String lookup by table key, UTF-16 as stored.
-pub trait StringLookup {
-    fn get(&self, key: &str) -> Option<&[u16]>;
-
-    /// Lookup by string-table id (panels name some strings by id). The
-    /// game's tables answer it (`app::strings::TableStrings`); None here.
-    fn get_id(&self, _id: u16) -> Option<&[u16]> {
-        None
-    }
-}
+pub use d2_item_text::StringLookup;
 
 /// A lookup with no strings (tests, panels that need none).
 pub struct NoStrings;
@@ -215,6 +207,20 @@ pub trait Panel {
     fn ui_elements(&self, _ctx: &UiCtx) -> Vec<UiElement> {
         Vec::new()
     }
+    /// Whether the panel hides the world at `p`, a point of its rect: the
+    /// world under it is not hovered there. Every point of the rect by
+    /// default; a panel whose rect spans the frame but shows only a few
+    /// widgets (a mod game's HUD, `crate::mods::ClientMods::with_hud`)
+    /// hides the world only where they are.
+    fn covers_world_at(&self, _p: Point) -> bool {
+        true
+    }
+    /// Whether a press outside the panel's rect, or a key, closes it
+    /// while still going on to the panels below and the world; never by
+    /// default ([`OutsideClose`]).
+    fn outside_close(&self) -> OutsideClose {
+        OutsideClose::Never
+    }
     /// Once per UI frame after the frame's events, open or not (a panel
     /// that manages its own state, or keeps what its `draw` reads up to
     /// date). The game's panels ignore it.
@@ -228,4 +234,19 @@ pub trait Panel {
     fn key_down(&mut self, _vk: u32, _ctx: &UiCtx) -> UiResponse {
         UiResponse::Ignored
     }
+}
+
+/// What closes a panel from outside it ([`Panel::outside_close`]). The
+/// press or key that closes it is not taken: it goes on to the panels
+/// below and to the world.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OutsideClose {
+    /// Only the panel's own controls and the game's rules close it.
+    #[default]
+    Never,
+    /// A press outside its rect.
+    Press,
+    /// A press outside its rect, or any key (an action or a typed
+    /// character).
+    PressOrKey,
 }

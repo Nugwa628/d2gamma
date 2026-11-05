@@ -94,7 +94,7 @@ impl<R, S> WiredWorld<R, S> {
             return Err("no inventory model (WiredWorld::inventory is None)".into());
         };
         let out = self.with_economy(game, events, |econ, _| {
-            let isc = econ.tables.isc.clone();
+            let isc = econ.tables.clone();
             let mut d = inv.desk(econ);
             let out = item_list(&d, player, &isc).map_err(|e| e.to_string());
             // The writer's changes stay on the items (every later save and message sees them).

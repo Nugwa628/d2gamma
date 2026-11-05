@@ -29,6 +29,7 @@ pub mod codegen;
 pub mod dev;
 pub mod envelope;
 pub mod item_bits;
+pub mod mod_ui;
 // Generated layout (one row per line); `cargo fmt` leaves it alone.
 #[rustfmt::skip]
 pub mod generated;
@@ -36,6 +37,7 @@ pub mod s2c;
 pub mod schema;
 pub mod transport;
 pub mod tsv;
+pub mod wide_stat;
 pub mod wide_state;
 pub mod wire;
 

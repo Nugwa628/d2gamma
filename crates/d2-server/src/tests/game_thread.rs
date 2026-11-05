@@ -229,6 +229,7 @@ fn a_looped_hub_serves_a_client_handed_in_by_a_job() {
         seen.extend(drain(&mut client));
         seen.contains(&Packet::Frame { ticked: true })
             && seen.contains(&Packet::Deliver(vec![0x01; 8]))
+            && seen.contains(&Packet::Deliver(vec![0x0C; 9]))
     }));
     let handled = t.with(|hub| hub.host.game.handled.len()).unwrap();
     assert!(handled >= 1, "the client's message reached the game");

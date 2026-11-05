@@ -1,0 +1,7 @@
+id = "harder-fire"
+name = "Harder Fire"
+version = "1.0.0"
+author = "Your name"
+description = "Lower resistance caps and a steeper penalty on harder difficulties. Rules only, no tables."
+api = 1
+kind = "full"

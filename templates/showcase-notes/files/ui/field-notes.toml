@@ -1,0 +1,10 @@
+version=1
+name="showcase_notes"
+[[elements]]
+id="route"
+kind="text"
+x=850
+y=90
+width=400
+height=28
+text="Harbor > Garden beacon > Lens Court"

@@ -1,0 +1,42 @@
+version = 1
+
+# monstats aip1..aip8 of the reanimatedhorde1 row 437: 30, 20, 12, 20, 20, 65, 25, 30. The body also marks the unit as landed on every think,
+# which has no use in a graph.
+[[ai]]
+index = 114
+name = "ReanimatedHorde (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "shamble"
+
+# In reach: aip1 = 30 percent swing 1, else stand aip2 = 20 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }, { kind = "random", percent = 30 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.8
+when = [{ kind = "in_melee" }]
+
+# Past 5 and under aip3 = 12 subtiles, in the clear: aip4 = 20 percent charge (skill 2).
+[[ai.state.action]]
+kind = "use_skill"
+slot = 2
+when = [{ kind = "distance_above", value = 5 }, { kind = "distance_below", value = 12 }, { kind = "line_of_sight" }, { kind = "random", percent = 20 }]
+
+# Else aip5 = 65 percent walk at the target; 25 percent of the rest circle it; else stand aip8 = 30 frames.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 65 }]
+
+[[ai.state.action]]
+kind = "move_around"
+steps = 4
+when = [{ kind = "random", percent = 25 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 1.2

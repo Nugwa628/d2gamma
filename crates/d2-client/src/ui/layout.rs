@@ -798,6 +798,8 @@ pub enum OptionKind {
     Resurrect,
     /// D2RUST's own, unverified: Charsi's runtime insert, never parsed.
     Imbue,
+    /// Runtime travel supplied by the mod act registry.
+    DataTravel(u32),
 }
 
 impl OptionKind {
@@ -830,8 +832,8 @@ pub struct NpcMenuRecord {
     pub npc: u32,
     /// Options + 1 for the trailing cancel.
     pub count: u32,
-    /// Up to 5 slots; `None` = cleared.
-    pub options: [Option<MenuOption>; 5],
+    /// Five native slots, extended by configured travel; `None` = cleared.
+    pub options: Vec<Option<MenuOption>>,
     pub flag: u8,
 }
 
@@ -862,7 +864,7 @@ pub fn parse_npc_menus(text: &str) -> Result<Vec<NpcMenuRecord>, LayoutError> {
             record,
             npc: c[1].parse().map_err(|_| e("npc"))?,
             count: c[2].parse().map_err(|_| e("count"))?,
-            options,
+            options: options.into(),
             flag: c[4].parse().map_err(|_| e("flag"))?,
         });
     }

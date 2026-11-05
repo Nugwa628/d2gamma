@@ -39,6 +39,14 @@ pub mod monster_mode {
     pub const DT: u32 = 0;
     pub const NU: u32 = 1;
     pub const GH: u32 = 3;
+    /// Attack 1 and 2.
+    pub const A1: u32 = 4;
+    pub const A2: u32 = 5;
+    /// Special attack (skill) 1 to 4.
+    pub const S1: u32 = 8;
+    pub const S2: u32 = 9;
+    pub const S3: u32 = 10;
+    pub const S4: u32 = 11;
     pub const DD: u32 = 12;
     pub const SEQUENCE: u32 = 14;
     pub const COUNT: u32 = 16;
@@ -206,7 +214,13 @@ pub fn animate<H: UnitHooks>(
         .units
         .get_mut(unit)
         .ok_or(UnitError::UnknownUnit(unit))?;
-    anim::run(sim.game, unit, &mut rec.anim, Form::Main { bonus })?;
+    anim::run_with_feel(
+        sim.game,
+        unit,
+        &mut rec.anim,
+        Form::Main { bonus },
+        hooks.classic_animation(),
+    )?;
     Ok(())
 }
 
@@ -642,7 +656,13 @@ pub fn monster_set_mode_started<H: UnitHooks>(
                 .units
                 .get_mut(unit)
                 .ok_or(UnitError::UnknownUnit(unit))?;
-            anim::run(sim.game, unit, &mut rec.anim, Form::Main { bonus })?;
+            anim::run_with_feel(
+                sim.game,
+                unit,
+                &mut rec.anim,
+                Form::Main { bonus },
+                hooks.classic_animation(),
+            )?;
         }
     }
     Ok(started)

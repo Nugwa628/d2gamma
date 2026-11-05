@@ -1,0 +1,39 @@
+version = 1
+
+# monstats aip1..aip6 of the slinger rows 373 to 376 (Normal): 70, 70, 12, 10, 15, 20 (aip2 is 70, 75, 80, 85 in the four rows).
+# The body works on its secondary target (the nearest enemy); the graph uses the main target.
+[[ai]]
+index = 95
+name = "PantherJavelin (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "throw"
+
+# Nearer than 8: aip4 = 10% run 16 steps away.
+[[ai.state.action]]
+kind = "move_away"
+run = true
+steps = 16
+when = [{ kind = "distance_below", value = 8 }, { kind = "random", percent = 10 }]
+
+# Farther than aip6 - 6 = 14: aip1 = 70% wander to a spot within 4 of the target, which is a walk toward it.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "distance_above", value = 14 }, { kind = "random", percent = 70 }]
+
+# Within aip6 = 20: aip2 = 70% throw (attack 1), else stand aip5 = 15 frames.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "distance_below", value = 20 }, { kind = "random", percent = 70 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6
+when = [{ kind = "distance_below", value = 20 }]
+
+# Nothing in range: the body walks to a pack mate that is farther than aip3 = 12; a graph cannot find one, so it stands.
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6

@@ -1,0 +1,7 @@
+id = "ai-lift-wraith"
+name = "AI 9 Wraith, as data"
+version = "0.1.0"
+author = "Nugwa"
+description = "Wraith as a graph: AI 9 (Wraith)."
+api = 1
+kind = "full"

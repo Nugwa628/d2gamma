@@ -167,6 +167,19 @@ pub struct UseView<'a, X> {
 }
 
 impl<X: Pending + UseRest> UseView<'_, X> {
+    /// A mod game's [`crate::rules::EventHooks::pet_summoned`] for each pet
+    /// the skill function just made.
+    fn pets_created(&mut self, skill: i32, lvl: i32) {
+        if self.cv.v.h.mod_pets.is_empty() {
+            return;
+        }
+        for (owner, pet) in std::mem::take(&mut self.cv.v.h.mod_pets) {
+            crate::wiring::action::mod_events::fire(&mut self.cv, |e, h| {
+                e.pet_summoned(h, owner, pet, skill, lvl);
+            });
+        }
+    }
+
     /// Refresh all for the skill stat callbacks (stats 83, 126, 127, 188)
     /// the stat write that just returned raised: run now, not at the
     /// unit's next update.
@@ -231,6 +244,17 @@ impl<X: Pending + UseRest> UseView<'_, X> {
         let stats = &self.cv.v.stats;
         stats.unit_total(u, 8, 0) >= start << 8 || stats.has_state(u, STATE_INFERNO)
     }
+    /// The form test (use state test 7), the shared
+    /// [`crate::skills::use_::form::form_ok_with`] over the unit's states:
+    /// in a form = a state with the `restrict` flag.
+    fn form_ok(&self, u: UnitId, skill: i32) -> bool {
+        use crate::skills::use_::form::{form_ok_with, FormSkill};
+        let Some(r) = self.cv.v.h.tables.skills.skill(skill) else {
+            return true;
+        };
+        let k = FormSkill::of(skill, r);
+        form_ok_with(&self.cv.v.h.rules, &k, &UseForm { v: self, u })
+    }
     /// The item type test of `use_state` test 5, the shared
     /// [`crate::skills::use_::item_type::item_type_test`] over this view:
     /// the hands, the inventory presence, the weapon in use, and the
@@ -244,6 +268,22 @@ impl<X: Pending + UseRest> UseView<'_, X> {
         };
         let k = crate::skills::use_::item_type::ItemTypeSkill::of(skill, r);
         crate::skills::use_::item_type::item_type_test(&UseHands { v: self, u }, &k)
+    }
+}
+
+/// The skill use view's answers to the form test.
+struct UseForm<'v, 'a, X> {
+    v: &'v UseView<'a, X>,
+    u: UnitId,
+}
+
+impl<X: Pending + UseRest> crate::skills::use_::form::UnitForm for UseForm<'_, '_, X> {
+    fn in_form(&self) -> bool {
+        let stats = &self.v.cv.v.stats;
+        stats.has_group(self.u, crate::stats::states::group::RESTRICT)
+    }
+    fn has_state(&self, state: u16) -> bool {
+        self.v.cv.v.stats.has_state(self.u, u32::from(state))
     }
 }
 
@@ -342,6 +382,18 @@ impl<X: Pending + UseRest> UseView<'_, X> {
     pub(super) fn x(&self) -> &X {
         &self.cv.v.h.x
     }
+    /// The pet type whose list of player `u` holds `pet`; the outer `None`
+    /// when `u` has no pet lists.
+    fn pet_type(&self, u: UnitId, pet: UnitId) -> Option<Option<usize>> {
+        let lists = self.cv.v.h.pet_lists.get(&u)?;
+        let guid = self.cv.v.units.get(pet).map(|r| r.guid as i32);
+        Some(guid.and_then(|g| {
+            lists
+                .entries
+                .iter()
+                .position(|e| e.nodes.iter().any(|n| n.guid == g))
+        }))
+    }
     pub(super) fn xm(&mut self) -> &mut X {
         &mut self.cv.v.h.x
     }
@@ -355,7 +407,13 @@ impl<X: Pending + UseRest> UseView<'_, X> {
         let Some(rec) = self.cv.v.units.get_mut(u) else {
             return;
         };
-        if let Err(e) = anim::run(self.cv.game, u, &mut rec.anim, form) {
+        if let Err(e) = anim::run_with_feel(
+            self.cv.game,
+            u,
+            &mut rec.anim,
+            form,
+            self.cv.v.h.rules.global_rules().animation.classic_25hz,
+        ) {
             self.error(WiringError::Unit(e.into()));
         }
     }
@@ -545,10 +603,13 @@ impl<X: Pending + UseRest> SkillFunctions for UseView<'_, X> {
             }
         }
         let t = self.cv.v.h.tables.clone();
-        match bodies::run_do(self, &t.skills, &t.combat, index, u, skill, lvl) {
+        self.cv.v.h.mod_pets.clear();
+        let v = match bodies::run_do(self, &t.skills, &t.combat, index, u, skill, lvl) {
             Some(v) => v,
             None => self.xm().srvdo(index, u, skill, lvl, charge, item, aim),
-        }
+        };
+        self.pets_created(skill, lvl);
+        v
     }
 }
 
@@ -574,8 +635,23 @@ impl<X: Pending + UseRest> UseMissiles for UseView<'_, X> {
 }
 
 impl<X: Pending + UseRest> UseWorld for UseView<'_, X> {
+    fn cast_started(&mut self, u: UnitId, skill: i32) {
+        self.script_event(crate::rules::scripts::EventKind::CastStart, u, None, skill);
+    }
     fn record_cast(&mut self, skill: i32) {
         self.cv.game.coverage.hit("skills_cast", || skill as u32);
+    }
+    /// A skill the unit used, not one a mod's trigger cast.
+    fn skill_done(&mut self, u: UnitId, skill: i32, _l: i32) {
+        if self.outside_triggers() {
+            self.script_event(
+                crate::rules::scripts::EventKind::CastComplete,
+                u,
+                None,
+                skill,
+            );
+            self.fire_unit_event(crate::rules::UnitEvent::SkillUsed(skill), u, None);
+        }
     }
     fn frame(&self) -> i32 {
         self.cv.game.frame
@@ -705,11 +781,12 @@ impl<X: Pending + UseRest> UseWorld for UseView<'_, X> {
         self.xm().set_attack_param4(u, v);
     }
     /// `use_state`: tests 1–4 from the host, test 5's item type test,
-    /// test 6 (`can_afford`) and test 8 (the start stat) here: checks
-    /// `w2-04-skill-cast-nomana` / `-xy` (Fire Bolt with the server's mana
-    /// poked to 1: no mode, and a point cast answers S→C 0x5A 0x0E).
-    // PROVISIONAL: tests 7 (shape), 9 (charges) and 10 (cooldown) are
-    // not run on the server yet.
+    /// test 6 (`can_afford`), test 7 (the form, [`Self::form_ok`]) and
+    /// test 8 (the start stat) here: checks `w2-04-skill-cast-nomana` /
+    /// `-xy` (Fire Bolt with the server's mana poked to 1: no mode, and a
+    /// point cast answers S→C 0x5A 0x0E).
+    // PROVISIONAL: tests 9 (charges) and 10 (cooldown) are not run on
+    // the server yet.
     fn use_state(&mut self, u: UnitId, e: &SkillEntry) -> UseState {
         let st = self.xm().use_state(u, e);
         if st != UseState::Usable {
@@ -718,7 +795,13 @@ impl<X: Pending + UseRest> UseWorld for UseView<'_, X> {
         if !self.weapon_type_ok(u, e.skill) {
             return UseState::NoQuantity;
         }
-        if !self.can_afford(u, e) || !self.start_stat_ok(u, e) {
+        if !self.can_afford(u, e) {
+            return UseState::NoMana;
+        }
+        if !self.form_ok(u, e.skill) {
+            return UseState::Shape;
+        }
+        if !self.start_stat_ok(u, e) {
             return UseState::NoMana;
         }
         st
@@ -755,6 +838,9 @@ impl<X: Pending + UseRest> UseWorld for UseView<'_, X> {
     }
     fn cursor_item(&self, u: UnitId) -> bool {
         self.x().cursor_item(u)
+    }
+    fn cast_committed(&self, u: UnitId) -> bool {
+        crate::wiring::action::reaction::cast_committed(&self.cv, u)
     }
     /// The smallest positive expire frame of the unit's type-1 timers, 0
     /// if none.
@@ -842,11 +928,25 @@ impl<X: Pending + UseRest> UseWorld for UseView<'_, X> {
     fn is_hostile(&self, a: UnitId, b: UnitId) -> bool {
         CombatWorld::hostile(&self.cv, a, b)
     }
+    /// `b` is in one of player `a`'s pet lists; without pet lists, the
+    /// host's answer.
     fn is_pet(&self, a: UnitId, b: UnitId) -> bool {
-        self.x().is_pet(a, b)
+        match self.pet_type(a, b) {
+            Some(t) => t.is_some(),
+            None => self.x().is_pet(a, b),
+        }
     }
+    /// The skill start's ally (`targetally`, `targetableonly`): each
+    /// monster stands for its minion owner, and two different players
+    /// that the host's party test ([`Pending::allied`]) pairs are allies.
+    /// A unit's own minions are not its allies (they are its pets: a
+    /// `TargetPet` skill such as Unsummon starts on them), nor are
+    /// monsters each other's.
     fn is_ally(&self, a: UnitId, b: UnitId) -> bool {
-        self.x().is_ally(a, b)
+        let owner = |u: UnitId| BodyWorld::minion_owner(self, u).unwrap_or(u);
+        let player = |u: UnitId| SkillUnits::unit_type(self, u) == UnitType::Player;
+        let (ra, rb) = (owner(a), owner(b));
+        ra != rb && player(ra) && player(rb) && self.x().allied(ra, rb)
     }
     /// Combat's room kind.
     fn room(&self, u: UnitId) -> RoomKind {
@@ -1060,6 +1160,21 @@ impl<'a, X: Pending + UseRest> BodyWorld for UseView<'a, X> {
         v.h.stays_on_death(v.stats, u, s as u32)
     }
 
+    fn state_started(&mut self, u: UnitId, s: i32) {
+        if let Ok(s) = u16::try_from(s) {
+            self.fire_unit_event(crate::rules::UnitEvent::StateStart(s), u, None);
+        }
+    }
+    fn state_def(&self, s: i32) -> Option<crate::rules::StateDef> {
+        self.cv.v.h.rules.state_rules()?.get(s).cloned()
+    }
+    fn list_stacks(&self, l: ListId) -> u16 {
+        self.cv.v.stats.stacks(l)
+    }
+    fn set_list_stacks(&mut self, l: ListId, stacks: u16) {
+        self.cv.v.stats.set_stacks(l, stacks);
+    }
+
     fn state_list(&self, u: UnitId, s: i32) -> Option<ListId> {
         self.cv.v.state_list(u, u16::try_from(s).ok()?)
     }
@@ -1223,8 +1338,11 @@ impl<'a, X: Pending + UseRest> BodyWorld for UseView<'a, X> {
         let o = m.owner?;
         self.cv.game.lists.find_unit(o.ty, o.guid)
     }
+    /// The AI control's owner when the game has the AI store (the
+    /// player whose GUID it holds), else the host's
+    /// (`ActionHooks::minion_owner_of`).
     fn minion_owner(&self, u: UnitId) -> Option<UnitId> {
-        self.x().minion_owner(u)
+        self.cv.v.h.minion_owner_of(self.cv.game, u)
     }
     /// The owner link of the monster's AI control: the unit, if it still
     /// exists.
@@ -1232,8 +1350,15 @@ impl<'a, X: Pending + UseRest> BodyWorld for UseView<'a, X> {
         let r = self.cv.v.h.ai.as_ref()?.control(u)?.minion_owner?;
         self.cv.game.lists.find_unit(r.ty, r.guid)
     }
+    /// `pet` is in a pet list of player `u` whose `pettype` row has
+    /// `unsummon`. Without the body tables or the player's pet lists, the
+    /// host's answer.
     fn pet_unsummonable(&self, u: UnitId, pet: UnitId) -> bool {
-        self.x().pet_unsummonable(u, pet)
+        let (Some(b), Some(t)) = (self.cv.v.h.bodies.as_deref(), self.pet_type(u, pet)) else {
+            return self.x().pet_unsummonable(u, pet);
+        };
+        t.and_then(|t| b.pettype_flags.get(t))
+            .is_some_and(|&f| f & bodies::PETTYPE_UNSUMMON != 0)
     }
 
     fn frame_bonus(&self, u: UnitId) -> i32 {
@@ -1381,6 +1506,12 @@ impl<'a, X: Pending + UseRest> BodyWorld for UseView<'a, X> {
     }
     /// The passive state's stat list ([`bodies::passive`]), then the
     /// host's own hook.
+    fn refresh_data_passive(&mut self, u: UnitId, skill: i32) -> bool {
+        let rules = self.cv.v.h.rules.clone();
+        rules
+            .skills()
+            .is_some_and(|p| p.refresh_passive(self, u, skill))
+    }
     fn passive_state_apply(&mut self, u: UnitId, e: &SkillEntry) {
         let t = self.cv.v.h.tables.clone();
         bodies::passive::refresh(self, &t.skills, u, e.skill);
@@ -2702,6 +2833,20 @@ impl<X: Pending + UseRest> EventWorld for UseView<'_, X> {
         }
         let rules = self.cv.v.h.rules.clone();
         rules.items()?.event_fn(self, func, &c, r)
+    }
+
+    /// Unit events 1 and 2 (damaged), 5 and 6 (damage dealt), 7 (melee
+    /// swing) and 9 (kill) for the game's triggers.
+    fn mod_unit_event(&mut self, event: u8, u: UnitId, other: Option<UnitId>) {
+        use crate::rules::UnitEvent;
+        let ev = match event {
+            1 | 2 => UnitEvent::BeingHit,
+            5 | 6 => UnitEvent::Hit,
+            7 => UnitEvent::Attack,
+            9 => UnitEvent::Kill,
+            _ => return,
+        };
+        self.fire_unit_event(ev, u, other);
     }
 }
 

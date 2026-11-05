@@ -322,6 +322,7 @@ fn debug_hides_tickets() {
 
 fn join_node() -> JoinNode {
     JoinNode {
+        mod_identity: None,
         game_id: 7,
         node: "eu-1".into(),
         addr: "203.0.113.5:6113".into(),
@@ -337,6 +338,7 @@ fn join_node() -> JoinNode {
 #[test]
 fn join_node_layout_and_round_trip() {
     let j = JoinNode {
+        mod_identity: None,
         game_id: 1,
         node: "n".into(),
         addr: "a:1".into(),
@@ -400,4 +402,45 @@ fn debug_hides_join_node_tickets() {
     assert!(!text.contains("ab, "), "{text}");
     assert!(text.contains("<redacted>"), "{text}");
     assert!(text.contains("eu-1"), "{text}");
+}
+
+#[test]
+fn mod_identity_list_and_join_tails_round_trip_without_changing_plain_bytes() {
+    let plain_game = LobbyEvent::GameEntry(GameInfo::default());
+    assert_eq!(plain_game.body(), [vec![0x42], vec![0; 29]].concat());
+    let plain_join = join_node();
+    let mut legacy = Writer::new(kind::JOIN_NODE);
+    legacy
+        .u32(plain_join.game_id)
+        .str8(&plain_join.node)
+        .str8(&plain_join.addr)
+        .array(&plain_join.node_cert_sha256)
+        .bool(plain_join.player_hosted)
+        .u8(plain_join.reach)
+        .bytes8(&plain_join.ticket)
+        .u8(plain_join.difficulty);
+    assert_eq!(
+        LobbyEvent::JoinNode(plain_join.clone()).body(),
+        legacy.finish()
+    );
+    let identity = crate::mod_identity::ModIdentity {
+        id: "ghost".into(),
+        version: "1.2.3".into(),
+    };
+    for event in [
+        LobbyEvent::GameEntry(GameInfo {
+            mod_identity: Some(identity.clone()),
+            ..game()
+        }),
+        LobbyEvent::JoinNode(JoinNode {
+            mod_identity: Some(identity),
+            ..plain_join
+        }),
+    ] {
+        let bytes = event.body();
+        assert_eq!(LobbyEvent::parse(&bytes).unwrap(), event);
+        let mut bad = bytes.clone();
+        bad.pop();
+        assert!(LobbyEvent::parse(&bad).is_err());
+    }
 }

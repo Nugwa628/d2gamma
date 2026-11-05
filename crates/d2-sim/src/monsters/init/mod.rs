@@ -58,35 +58,35 @@ pub use umods::{
 
 /// Stat ids (`itemstatcost.txt` rows) init reads or writes.
 pub mod stat {
+    pub use crate::stats::ids::ARMORCLASS;
+    pub use crate::stats::ids::ARMOR_PERCENT as ITEM_ARMOR_PERCENT;
+    pub use crate::stats::ids::ATTACKRATE;
+    pub use crate::stats::ids::COLDLENGTH;
+    pub use crate::stats::ids::COLDMAXDAM;
+    pub use crate::stats::ids::COLDMINDAM;
+    pub use crate::stats::ids::COLDRESIST;
+    pub use crate::stats::ids::DAMAGEPERCENT;
+    pub use crate::stats::ids::DAMAGERESIST;
+    pub use crate::stats::ids::EXPERIENCE;
+    pub use crate::stats::ids::FIREMAXDAM;
+    pub use crate::stats::ids::FIREMINDAM;
+    pub use crate::stats::ids::FIRERESIST;
+    pub use crate::stats::ids::ITEM_TOHIT_PERCENT;
+    pub use crate::stats::ids::LIGHTMAXDAM;
+    pub use crate::stats::ids::LIGHTMINDAM;
+    pub use crate::stats::ids::LIGHTRESIST;
+    pub use crate::stats::ids::MAGICRESIST;
+    pub use crate::stats::ids::MANADRAINMAXDAM;
+    pub use crate::stats::ids::MANADRAINMINDAM;
+    pub use crate::stats::ids::MONSTER_PLAYERCOUNT;
+    pub use crate::stats::ids::OTHER_ANIMRATE;
+    pub use crate::stats::ids::POISONLENGTH;
+    pub use crate::stats::ids::POISONMAXDAM;
+    pub use crate::stats::ids::POISONMINDAM;
+    pub use crate::stats::ids::POISONRESIST;
+    pub use crate::stats::ids::TOBLOCK;
+    pub use crate::stats::ids::VELOCITYPERCENT;
     pub use crate::stats::stat::{HITPOINTS, HPREGEN, LAST_SENT_HP_PCT, LEVEL, MAXHP};
-    pub const EXPERIENCE: u16 = 13;
-    pub const ITEM_ARMOR_PERCENT: u16 = 16;
-    pub const TOBLOCK: u16 = 20;
-    pub const DAMAGEPERCENT: u16 = 25;
-    pub const ARMORCLASS: u16 = 31;
-    pub const DAMAGERESIST: u16 = 36;
-    pub const MAGICRESIST: u16 = 37;
-    pub const FIRERESIST: u16 = 39;
-    pub const LIGHTRESIST: u16 = 41;
-    pub const COLDRESIST: u16 = 43;
-    pub const POISONRESIST: u16 = 45;
-    pub const FIREMINDAM: u16 = 48;
-    pub const FIREMAXDAM: u16 = 49;
-    pub const LIGHTMINDAM: u16 = 50;
-    pub const LIGHTMAXDAM: u16 = 51;
-    pub const COLDMINDAM: u16 = 54;
-    pub const COLDMAXDAM: u16 = 55;
-    pub const COLDLENGTH: u16 = 56;
-    pub const POISONMINDAM: u16 = 57;
-    pub const POISONMAXDAM: u16 = 58;
-    pub const POISONLENGTH: u16 = 59;
-    pub const MANADRAINMINDAM: u16 = 62;
-    pub const MANADRAINMAXDAM: u16 = 63;
-    pub const VELOCITYPERCENT: u16 = 67;
-    pub const ATTACKRATE: u16 = 68;
-    pub const OTHER_ANIMRATE: u16 = 69;
-    pub const MONSTER_PLAYERCOUNT: u16 = 100;
-    pub const ITEM_TOHIT_PERCENT: u16 = 119;
 }
 
 /// Monster type flags.

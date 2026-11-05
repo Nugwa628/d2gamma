@@ -278,6 +278,7 @@ fn install_mirrors_the_flags_and_keeps_the_border_open() {
             // Step 2: the equipment warning icons, before every panel.
             hud::WARN_PANEL,
             BORDER_PANEL,
+            crate::ui::original::merc_portrait::MERC_PORTRAIT_PANEL,
             hud::HUD_PANEL,
             crate::ui::hire_list::HIRE_PANEL,
             crate::ui::original::gold_dialog::GOLD_PANEL,
@@ -324,6 +325,7 @@ fn hotkeys_toggle_their_state_with_the_specs_jump() {
             hud::WARN_PANEL,
             PanelId(1),
             BORDER_PANEL,
+            crate::ui::original::merc_portrait::MERC_PORTRAIT_PANEL,
             hud::HUD_PANEL,
             crate::ui::hire_list::HIRE_PANEL,
             crate::ui::original::gold_dialog::GOLD_PANEL,
@@ -352,6 +354,7 @@ fn hotkeys_toggle_their_state_with_the_specs_jump() {
         vec![
             hud::WARN_PANEL,
             BORDER_PANEL,
+            crate::ui::original::merc_portrait::MERC_PORTRAIT_PANEL,
             hud::HUD_PANEL,
             crate::ui::hire_list::HIRE_PANEL,
             crate::ui::original::gold_dialog::GOLD_PANEL,
@@ -2223,6 +2226,7 @@ mod skill_tree_play {
             miss_code: Vec::new(),
             level_cap: 99,
             stat_count: 359,
+            data_rules: d2_data::bin::DataRules::Original,
         }));
         u.ui.set_char_tables(chars);
         let mut f = FontMeasure::default();

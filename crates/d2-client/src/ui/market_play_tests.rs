@@ -212,3 +212,148 @@ fn market_button_sells_from_the_shared_stash() {
     let all = elements(&u, &w);
     assert!(!all.iter().any(|e| e.id.starts_with("market.sell")));
 }
+
+#[test]
+fn the_window_works_beside_a_mods_market_link() {
+    use crate::market::source::MarketEvent;
+    use crate::ui::market::Availability;
+    let mut u = ui(Some(areas()), true);
+    let link = crate::mods::ModMarket::new();
+    let mut market: Option<Box<dyn MarketSource>> =
+        Some(Box::new(FakeSource::new(&|_| None, false, 0, true)));
+    for _ in 0..2 {
+        link.frame(true, &mut market, |src| u.ui.pump_market(true, src));
+    }
+    assert_eq!(u.ui.market().availability(), Availability::Open);
+    assert_eq!(link.availability(), Availability::Open);
+    assert!(press(&mut u, true, KeyCode::KeyI).is_empty());
+    assert!(u.ui.market().shown());
+    link.frame(true, &mut market, |src| u.ui.pump_market(true, src));
+    assert!(u.ui.market().results.is_some());
+    // The window's answers stayed with the window.
+    assert!(!link
+        .take_events()
+        .iter()
+        .any(|e| matches!(e, MarketEvent::Results { .. })));
+}
+
+/// A mod game that draws its own market window: the market key and the
+/// stash's Market buttons ask the mod's window to open through its market
+/// link, and D2Gamma's window stays shut.
+mod mod_window {
+    use super::*;
+    use crate::mods::stash::{
+        StashCtx, StashInput, StashOut, StashPanelFactory, StashPanelMod, StashSpot,
+    };
+    use crate::mods::{ClientMods, ModMarket, OpenAsk};
+    use crate::ui::draw::UiDrawSink;
+    use crate::ui::panels::UiFiles;
+
+    /// A mod stash panel whose one spot (20-pixel square at (100, 100)) is
+    /// its Market button.
+    struct MarketButton;
+
+    impl StashPanelMod for MarketButton {
+        fn cover(&self, _ctx: &StashCtx) -> Option<Rect> {
+            None
+        }
+        fn draw(&self, _ctx: &StashCtx, _out: &mut dyn UiDrawSink) {}
+        fn spot(&self, _ctx: &StashCtx, at: Point) -> Option<StashSpot> {
+            Rect::new(100, 100, 20, 20)
+                .contains(at)
+                .then_some(StashSpot::Other(1))
+        }
+        fn input(&mut self, _ctx: &StashCtx, input: StashInput) -> Vec<StashOut> {
+            match input {
+                StashInput::Other { id: 1, .. } => vec![StashOut::OpenMarket],
+                _ => Vec::new(),
+            }
+        }
+    }
+
+    struct ButtonFactory;
+
+    impl StashPanelFactory for ButtonFactory {
+        fn make(&self, _files: &UiFiles) -> Box<dyn StashPanelMod> {
+            Box::new(MarketButton)
+        }
+    }
+
+    /// The play UI online over the fake market with `mods` set.
+    fn with_mods(mods: ClientMods) -> (Ui, Box<dyn MarketSource>) {
+        let mut ui = OriginalUi::new(
+            UiConfig {
+                screen: Screen::R800,
+                expansion_installed: true,
+            },
+            Some(areas()),
+        )
+        .unwrap();
+        ui.set_mods(mods);
+        let mut root = UiRoot::new(Box::new(NoPanelRules));
+        ui.install(&mut root).unwrap();
+        let mut u = Ui { ui, root };
+        let mut src: Box<dyn MarketSource> = Box::new(FakeSource::new(&|_| None, false, 0, true));
+        u.ui.pump_market(true, Some(&mut *src));
+        u.ui.pump_market(true, Some(&mut *src));
+        (u, src)
+    }
+
+    #[test]
+    fn ctrl_i_asks_the_mod_s_window() {
+        let link = ModMarket::new().draws_window();
+        let (mut u, _src) = with_mods(ClientMods::new().with_market_link(link.clone()));
+        // Taken (not the inventory), and D2Gamma's window stays shut.
+        assert!(press(&mut u, true, KeyCode::KeyI).is_empty());
+        assert!(!u.ui.market().shown());
+        assert_eq!(link.take_open_asks(), [OpenAsk::Key]);
+        // I alone is still the inventory's.
+        assert_eq!(press(&mut u, false, KeyCode::KeyI), [inventory()]);
+        assert!(link.take_open_asks().is_empty());
+    }
+
+    #[test]
+    fn a_link_that_draws_no_window_leaves_ctrl_i_to_d2gamma() {
+        let link = ModMarket::new();
+        let (mut u, _src) = with_mods(ClientMods::new().with_market_link(link.clone()));
+        assert!(press(&mut u, true, KeyCode::KeyI).is_empty());
+        assert!(u.ui.market().shown());
+        assert!(link.take_open_asks().is_empty());
+    }
+
+    #[test]
+    fn the_stash_market_button_asks_the_mod_s_window() {
+        let link = ModMarket::new().draws_window();
+        let (mut u, _src) = with_mods(ClientMods::new().with_market_link(link.clone()));
+        let w = ClientWorld::default();
+        u.ui.set_ui(u32::from(id::STASH), 0, false).unwrap();
+        u.ui.sync_root(&mut u.root);
+        let all = elements(&u, &w);
+        let at = element(&all, "stash.market").at;
+        u.click(&w, at);
+        assert!(!u.ui.market().shown());
+        assert_eq!(link.take_open_asks(), [OpenAsk::Stash]);
+    }
+
+    #[test]
+    fn a_mod_stash_panel_s_market_button_opens_the_market() {
+        // The mod draws the window: its stash panel's button asks it.
+        let link = ModMarket::new().draws_window();
+        let mods = ClientMods::new()
+            .with_market_link(link.clone())
+            .with_stash_panel(ButtonFactory);
+        let (mut u, _src) = with_mods(mods);
+        let w = ClientWorld::default();
+        u.ui.set_ui(u32::from(id::STASH), 0, false).unwrap();
+        u.ui.sync_root(&mut u.root);
+        u.click(&w, Point::new(110, 110));
+        assert_eq!(link.take_open_asks(), [OpenAsk::Stash]);
+        assert!(!u.ui.market().shown());
+        // Without a mod window the button opens D2Gamma's.
+        let (mut u, _src) = with_mods(ClientMods::new().with_stash_panel(ButtonFactory));
+        u.ui.set_ui(u32::from(id::STASH), 0, false).unwrap();
+        u.ui.sync_root(&mut u.root);
+        u.click(&w, Point::new(110, 110));
+        assert!(u.ui.market().shown());
+    }
+}

@@ -1,0 +1,36 @@
+version = 1
+
+# monstats aip1..aip5 of the minion rows (Normal): 70, 15, 50, 15, 50.
+# The body also obeys the orders its leader gives; a graph cannot read them.
+[[ai]]
+index = 116
+name = "Minion (lifted, without orders)"
+target = "enemy"
+
+[[ai.state]]
+name = "serve"
+
+# In reach: aip1 = 70% act (else stand aip2 = 15 frames); of those, aip2 = 15% swing 2, else swing 1.
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6
+when = [{ kind = "in_melee" }, { kind = "random", percent = 30 }]
+
+[[ai.state.action]]
+kind = "attack"
+attack = 2
+when = [{ kind = "in_melee" }, { kind = "random", percent = 15 }]
+
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "in_melee" }]
+
+# Out of reach: aip3 = 50% walk toward the target, else stand aip4 = 15 frames.
+[[ai.state.action]]
+kind = "move_to"
+when = [{ kind = "random", percent = 50 }]
+
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.6

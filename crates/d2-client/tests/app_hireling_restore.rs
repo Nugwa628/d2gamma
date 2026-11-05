@@ -113,14 +113,14 @@ fn a_saved_hireling_is_the_first_monster_and_follows_from_frame_3() {
     let merc = unit(&text, 2, 1, 1).expect("monster GUID 1 at frame 2");
     // The reference run (-seed 1234): class 271 at the player's sub-tile,
     // level 7 from 39,482 experience, life 81 · 256, seed stepped 9 times
-    // from the allocation's {108806926, 666}.
+    // from the allocation's {108806926, 666}, owned by the player (GUID 1).
     for want in [
         r#""cl":271,"m":1,"x":4873,"y":4228,"#,
         r#""s":[3077027668,710430533],"#,
         r#""hp":20736,"hpx":20736,"#,
         r#""str":40,"#,
         r#""dex":53,"#,
-        r#""lvl":7}"#,
+        r#""lvl":7,"own":1,"#,
     ] {
         assert!(merc.contains(want), "{want} not in {merc}");
     }

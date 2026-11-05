@@ -276,6 +276,11 @@ impl AiUnits for Fake {
     fn set_unit_flag(&mut self, _: UnitId, mask: u32) {
         self.log.push(format!("flag {mask:#x}"));
     }
+    fn timed_state(&mut self, _: &mut Game, unit: UnitId, state: u16, ticks: i32) -> bool {
+        self.log.push(format!("timed {state} {ticks}"));
+        self.states.insert((unit, state));
+        true
+    }
     fn set_state(&mut self, _: &mut Game, unit: UnitId, state: u16, on: bool) {
         if on {
             self.states.insert((unit, state));
@@ -1872,10 +1877,12 @@ mod act6_cov;
 mod act7;
 mod act7_cov;
 mod bodies;
+mod data_graph;
 mod forced;
 mod install_cov;
 mod mod_ai;
 mod npc;
+mod presets;
 mod rules;
 mod scans;
 mod skill_check;

@@ -53,7 +53,12 @@ pub(super) fn destination<X: Pending>(
             level,
         })
     })??;
-    let tile = c.v.room_tile(c.game, found.room, found.class)?;
+    let tile = if let Some(tile) = c.v.room_tile(c.game, found.room, found.class) {
+        tile
+    } else {
+        c.v.spawn_warp_tiles(c.game, found.room);
+        c.v.room_tile(c.game, found.room, found.class)?
+    };
     let room = c.game.lists.unit(tile).and_then(|e| e.room())?;
     let (x, y) = c.v.h.path_position(tile);
     Some(WarpDestination {

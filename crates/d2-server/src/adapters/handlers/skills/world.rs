@@ -187,6 +187,9 @@ impl<X: SkillRest> SkillUnits for World<'_, '_, X> {
     fn missile_level(&self, u: UnitId) -> i32 {
         self.u.missile_level(u)
     }
+    fn rules(&self) -> &d2_sim::rules::Ruleset {
+        SkillUnits::rules(&*self.u)
+    }
 }
 
 impl<X: SkillRest> ManaUnits for World<'_, '_, X> {

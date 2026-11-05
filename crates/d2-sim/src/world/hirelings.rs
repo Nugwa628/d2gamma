@@ -67,27 +67,27 @@ pub mod flags {
 
 /// Stat ids.
 pub mod stat {
-    pub const STRENGTH: u16 = 0;
-    pub const DEXTERITY: u16 = 2;
-    pub const HITPOINTS: u16 = 6;
-    pub const MAXHP: u16 = 7;
-    pub const LEVEL: u16 = 12;
-    pub const EXPERIENCE: u16 = 13;
-    pub const GOLD: u16 = 14;
-    pub const TOHIT: u16 = 19;
-    pub const MINDAMAGE: u16 = 21;
-    pub const MAXDAMAGE: u16 = 22;
-    pub const SECONDARY_MINDAMAGE: u16 = 23;
-    pub const SECONDARY_MAXDAMAGE: u16 = 24;
-    pub const NEXTEXP: u16 = 30;
-    pub const ARMORCLASS: u16 = 31;
-    pub const FIRERESIST: u16 = 39;
-    pub const LIGHTRESIST: u16 = 41;
-    pub const COLDRESIST: u16 = 43;
-    pub const POISONRESIST: u16 = 45;
-    pub const HPREGEN: u16 = 74;
-    pub const ADDEXPERIENCE: u16 = 85;
-    pub const ALIGNMENT: u16 = 172;
+    pub use crate::stats::ids::ADDEXPERIENCE;
+    pub use crate::stats::ids::ALIGNMENT;
+    pub use crate::stats::ids::ARMORCLASS;
+    pub use crate::stats::ids::COLDRESIST;
+    pub use crate::stats::ids::DEXTERITY;
+    pub use crate::stats::ids::EXPERIENCE;
+    pub use crate::stats::ids::FIRERESIST;
+    pub use crate::stats::ids::GOLD;
+    pub use crate::stats::ids::HITPOINTS;
+    pub use crate::stats::ids::HPREGEN;
+    pub use crate::stats::ids::LEVEL;
+    pub use crate::stats::ids::LIGHTRESIST;
+    pub use crate::stats::ids::MAXDAMAGE;
+    pub use crate::stats::ids::MAXHP;
+    pub use crate::stats::ids::MINDAMAGE;
+    pub use crate::stats::ids::NEXTEXP;
+    pub use crate::stats::ids::POISONRESIST;
+    pub use crate::stats::ids::SECONDARY_MAXDAMAGE;
+    pub use crate::stats::ids::SECONDARY_MINDAMAGE;
+    pub use crate::stats::ids::STRENGTH;
+    pub use crate::stats::ids::TOHIT;
 }
 
 /// State ids.
@@ -285,6 +285,9 @@ impl HirelingTables {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HirelingState {
     pub lists: BTreeMap<UnitId, PetList>,
+    /// The life percent last sent to each living hireling's owner
+    /// (S→C 0x7F), by hireling GUID ([`life::send_life_updates`]).
+    pub life_sent: BTreeMap<u32, u16>,
 }
 
 impl HirelingState {
@@ -312,6 +315,11 @@ pub trait HirelingWorld {
     /// Game +0x6D: difficulty (0-based).
     fn difficulty(&self) -> u8;
     fn expansion(&self) -> bool;
+    /// The rules the game runs under (a mod game's hire offer, hireling
+    /// experience and growth). Default: D2RUST's own.
+    fn rules(&self) -> &crate::rules::Ruleset {
+        &crate::rules::ORIGINAL
+    }
     /// The players in broadcast order (players without state 7).
     fn players(&self) -> Vec<UnitId>;
     /// A message to the player's client.

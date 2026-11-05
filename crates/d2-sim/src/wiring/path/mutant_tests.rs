@@ -421,6 +421,81 @@ fn a_warp_tile_without_a_destination_does_nothing() {
 }
 
 #[test]
+fn first_warp_creates_an_unpopulated_arrival_tile_without_taking_the_preset_pass() {
+    use crate::drlg::{room::WarpLink, seams::PresetUnit, WarpDef};
+    // Exercise ordinary and mod-sized classes, including differing return slots.
+    for (outbound, inbound) in [(17, 18), (255, 254)] {
+        let mut fx = Fx::with_presets(
+            &[
+                (LEVEL, TileRect::new(0, 0, 8, 8)),
+                (TOWN, TileRect::new(100, 0, 8, 8)),
+            ],
+            [(
+                (100, 0),
+                vec![PresetUnit {
+                    unit_type: 5,
+                    class: inbound,
+                    x: 10,
+                    y: 10,
+                }],
+            )]
+            .into(),
+        );
+        fx.sim.hooks().enable_paths().unwrap();
+        let (a, b) = (fx.a, fx.b);
+        let data = Arc::make_mut(&mut fx.sim.hooks().drlg.data);
+        data.warps = vec![
+            WarpDef {
+                id: outbound as i32,
+                ..Default::default()
+            },
+            WarpDef {
+                id: inbound as i32,
+                ..Default::default()
+            },
+        ];
+        fx.sim
+            .hooks()
+            .drlg
+            .with_act(0, &mut fx.game.lists, |d, _| {
+                let s = d.drlg_room_of(a).unwrap();
+                let t = d.drlg_room_of(b).unwrap();
+                d.room_mut(s).warp_links.push(WarpLink {
+                    target: t,
+                    enabled: true,
+                    lvlwarp_row: 0,
+                });
+                d.room_mut(t).warp_links.push(WarpLink {
+                    target: s,
+                    enabled: true,
+                    lvlwarp_row: 1,
+                });
+            })
+            .unwrap();
+        let p = player(&mut fx, 26, 10);
+        assert!(fx.game.lists.room_units(b).is_empty());
+        let outcome = fx.sim.with(&mut fx.game, |g, v| {
+            warp_player(PathCtx::of(v, g), p, a, outbound)
+        });
+        assert_eq!(outcome, Some(WarpOutcome::Arrived));
+        assert_eq!(pos(&mut fx, p), (510, 10, Some(b)));
+        fx.sim.with(&mut fx.game, |g, v| {
+            assert!(
+                v.take_presets(g, b),
+                "arrival creation leaves normal population pending"
+            );
+            assert_eq!(
+                v.spawn_preset_units(g, b),
+                0,
+                "normal population reuses the arrival tile"
+            );
+            assert!(v.room_tile(g, b, inbound).is_some());
+        });
+        fx.assert_clean();
+    }
+}
+
+#[test]
 fn the_warp_walk_out_requests_walk_mode_to_the_target() {
     // The walk-out is the point-form mode request 2:
     // the player starts walking to the target.

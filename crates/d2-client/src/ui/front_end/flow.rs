@@ -33,6 +33,11 @@ pub enum Trigger {
     /// An online screen lost its connection: back to the login screen,
     /// which shows why.
     OnlineLost,
+    /// Main menu: D2Gamma Mods, the list of installed mods.
+    Mods,
+    /// A mod (or plain D2Gamma) was picked: the front end ends and the game
+    /// starts again as the pick says ([`crate::mod_menu`]).
+    SwitchMod,
 }
 
 /// How the game is started when a flow ends in a game load.
@@ -100,6 +105,11 @@ pub fn next(from: ScreenId, t: Trigger, ctx: FlowCtx) -> Next {
             }
         }
         (f, Exit) if f == MAIN_MENU => Next::Exit,
+        // D2Gamma Mods: the list opens from the main menu and leaves to it;
+        // a pick ends the front end (the game starts again as picked).
+        (f, Mods) if f == MAIN_MENU => Next::Screen(MODS),
+        (f, Exit) if f == MODS => Next::Screen(MAIN_MENU),
+        (f, SwitchMod) if f == MAIN_MENU || f == MODS => Next::Exit,
         (f, Credits) if f == MAIN_MENU => Next::Screen(CREDITS),
         // The credits leave to the main menu.
         (f, Exit) if f == CREDITS => Next::Screen(MAIN_MENU),

@@ -1,0 +1,7 @@
+id = "visual-echo"
+name = "Visual Echo"
+version = "0.1.0"
+author = "Nugwa"
+description = "Graph-only kill reaction with a seeded chance and a timed UI pulse"
+api = 1
+kind = "full"

@@ -4,7 +4,8 @@
 //! [`game_dir`] picks the install folder: `--game-dir`, then
 //! `$D2_GAME_DIR`, then the folder of `D2Gamma-Game.exe` or the current
 //! folder when it holds `d2data.mpq`, so the exe copied into the Diablo II
-//! folder starts on a double-click.
+//! folder starts on a double-click. A `--game-dir` that is not an install
+//! is an error naming it ([`checked_game_dir`]), never a fallback.
 //!
 //! Logs go in `$D2RUST_LOG_DIR` when set, otherwise in the player's
 //! D2Gamma folder, `Documents\D2Gamma\logs`:
@@ -106,6 +107,42 @@ pub fn game_dir(
         return Some(e);
     }
     candidates.iter().find(|c| holds_marker(c)).cloned()
+}
+
+/// A `--game-dir` folder that is not a Diablo II install (exit code
+/// [`exit::NO_GAME_FILES`]).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("no game files: --game-dir {}: {why}", dir.display())]
+pub struct NotAnInstall {
+    pub dir: PathBuf,
+    pub why: &'static str,
+}
+
+/// [`game_dir`], except that a folder named on the command line (`arg`)
+/// must be an install: a missing folder, or one without [`MARKER`], is an
+/// error naming it. A mistyped path never falls back to another install
+/// (or to a native folder converted from one).
+pub fn checked_game_dir(
+    arg: Option<&Path>,
+    env: Option<PathBuf>,
+    candidates: &[PathBuf],
+) -> Result<Option<PathBuf>, NotAnInstall> {
+    if let Some(a) = arg {
+        let why = if !a.is_dir() {
+            Some("no such folder")
+        } else if !holds_marker(a) {
+            Some("not a Diablo II install (no d2data.mpq)")
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            return Err(NotAnInstall {
+                dir: a.to_path_buf(),
+                why,
+            });
+        }
+    }
+    Ok(game_dir(arg, env, candidates))
 }
 
 /// The folders searched when nothing names the install: the exe's
@@ -498,6 +535,27 @@ mod tests {
         // An empty variable is unset; the marker is matched in any case.
         assert_eq!(game_dir(None, Some("".into()), &c), Some(install.clone()));
         assert_eq!(game_dir(None, None, &c[..1]), None);
+        // A named folder must be an install; the others are unchecked.
+        assert_eq!(
+            checked_game_dir(Some(&install), None, &c),
+            Ok(Some(install.clone()))
+        );
+        assert_eq!(
+            checked_game_dir(None, Some("env".into()), &c),
+            Ok(Some("env".into()))
+        );
+        assert_eq!(checked_game_dir(None, None, &c), Ok(Some(install.clone())));
+        let typo = install.with_file_name("instal");
+        let e = checked_game_dir(Some(&typo), None, &c).unwrap_err();
+        assert_eq!((e.dir.as_path(), e.why), (typo.as_path(), "no such folder"));
+        assert!(e.to_string().contains(&*typo.to_string_lossy()), "{e}");
+        let e = checked_game_dir(Some(&empty), Some("env".into()), &c).unwrap_err();
+        assert_eq!(e.dir, empty);
+        assert!(e.why.contains("d2data.mpq"));
+        assert_eq!(
+            exit_code(&anyhow::Error::from(e).context("starting")),
+            exit::NO_GAME_FILES
+        );
         let _ = std::fs::remove_dir_all(empty);
         let _ = std::fs::remove_dir_all(install);
     }

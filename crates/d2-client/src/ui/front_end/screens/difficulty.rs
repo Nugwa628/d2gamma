@@ -138,5 +138,96 @@ impl Screen for DifficultyScreen {
 }
 
 pub fn register(reg: &mut Registry) {
-    reg.register(DIFFICULTY, Box::new(DifficultyScreen));
+    if let Some(data) = crate::kit_mod::ruleset().difficulties() {
+        reg.register(
+            DIFFICULTY,
+            Box::new(ModDifficultyScreen::new(data.names().to_vec())),
+        );
+    } else {
+        reg.register(DIFFICULTY, Box::new(DifficultyScreen));
+    }
+}
+
+/// A paged pick list for any configured mod difficulty count.
+#[derive(Debug)]
+pub struct ModDifficultyScreen {
+    names: Vec<String>,
+    page: usize,
+}
+impl ModDifficultyScreen {
+    const ROWS: usize = 6;
+    pub fn new(names: Vec<String>) -> Self {
+        Self { names, page: 0 }
+    }
+    fn page(&mut self, next: bool) {
+        let last = self.names.len().saturating_sub(1) / Self::ROWS;
+        self.page = if next {
+            (self.page + 1).min(last)
+        } else {
+            self.page.saturating_sub(1)
+        };
+    }
+}
+impl Screen for ModDifficultyScreen {
+    fn build(&mut self, _ctx: &mut FrontCtx) -> Vec<Control> {
+        let mut controls = vec![Control::new(ControlKind::Text, 240, 170, 320, 35)
+            .with_string(10019)
+            .with_font(7, 2)
+            .with_color(7)];
+        for slot in 0..Self::ROWS {
+            controls.push(
+                Control::new(ControlKind::Button, 240, 215 + slot as i32 * 40, 320, 35)
+                    .with_art(r"FrontEnd\WideButtonBlank"),
+            );
+        }
+        if self.names.len() > Self::ROWS {
+            controls.push(
+                Control::new(ControlKind::Button, 240, 475, 150, 35)
+                    .with_text("Previous", 0)
+                    .with_hotkey(33)
+                    .with_action(Action::Custom(1)),
+            );
+            controls.push(
+                Control::new(ControlKind::Button, 410, 475, 150, 35)
+                    .with_text("Next", 0)
+                    .with_hotkey(34)
+                    .with_action(Action::Custom(2)),
+            );
+        }
+        controls.push(
+            Control::new(ControlKind::Button, 264, 525, 272, 35)
+                .with_text("Back", 0)
+                .with_hotkey(vk::ESC)
+                .with_action(Action::Trigger(Trigger::Exit)),
+        );
+        self.sync(&mut controls);
+        controls
+    }
+    fn action(&mut self, _ctx: &mut FrontCtx, id: u32) -> Option<Trigger> {
+        match id {
+            1 => self.page(false),
+            2 => self.page(true),
+            _ => {}
+        }
+        None
+    }
+    fn sync(&mut self, controls: &mut [Control]) {
+        for (slot, c) in controls.iter_mut().skip(1).take(Self::ROWS).enumerate() {
+            let id = self.page * Self::ROWS + slot;
+            c.text = self.names.get(id).cloned();
+            c.visible = c.text.is_some();
+            c.enabled = c.visible;
+            c.action = if c.visible {
+                Action::Trigger(Trigger::Difficulty(id as u8))
+            } else {
+                Action::None
+            };
+        }
+    }
+    fn wheel(&mut self, _ctx: &mut FrontCtx, delta: i32) -> Option<Trigger> {
+        if delta != 0 {
+            self.page(delta < 0);
+        }
+        None
+    }
 }

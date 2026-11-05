@@ -1,0 +1,35 @@
+version = 1
+
+# monstats aip1..aip8 of every skmage row (Normal): 35, 9, 30, 5, 0, 18, 20, 5.
+[[ai]]
+index = 64
+name = "SkeletonMage (lifted)"
+target = "enemy"
+
+[[ai.state]]
+name = "cast"
+
+# aip2 = 9, aip3 = 30: farther than 9, a 30% chance to step toward it, stopping about 9 away (steps)
+# at the slow speed (10 percent) the body asks for.
+[[ai.state.action]]
+kind = "move_to"
+steps = 9
+speed = 10
+when = [{ kind = "distance_above", value = 9 }, { kind = "random", percent = 30 }]
+
+# aip6 = 18, aip1 = 35: nearer than 18, a 35% chance to cast.
+[[ai.state.action]]
+kind = "attack"
+attack = 1
+when = [{ kind = "distance_below", value = 18 }, { kind = "random", percent = 35 }]
+
+# aip7 = 20: otherwise a 20% chance to circle,
+[[ai.state.action]]
+kind = "move_around"
+steps = 4
+when = [{ kind = "random", percent = 20 }]
+
+# and else stand for aip8 = 5 frames.
+[[ai.state.action]]
+kind = "idle"
+seconds = 0.2

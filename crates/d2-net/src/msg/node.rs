@@ -128,10 +128,14 @@ pub fn valid_node_id(id: &str) -> bool {
 }
 
 /// Whether `id` is a valid mod-realm id (`game` in the main server's
-/// config and a game server's bundle): the same form as a game-server id.
+/// config and a game server's bundle): up to 40 slug characters.
 /// It names the realm's folder under `data/realms/`.
 pub fn valid_game_id(id: &str) -> bool {
-    valid_node_id(id)
+    !id.is_empty()
+        && id.len() <= MAX_GAME_ID
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 /// What kind of game server a link is.

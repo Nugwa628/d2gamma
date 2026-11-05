@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::persist::{open_files, MaFile};
+use super::persist::{open_files, table_entries, MaFile};
 use super::place::{AutomapUnit, UnitCels};
 use super::view::FrameFacts;
 use super::{Automap, AutomapError, AutomapLevels, AutomapTables, CelPicker, RevealRooms};
@@ -34,14 +34,15 @@ pub struct SaveFiles {
 pub fn open_files_in(
     files: &SaveFiles,
     key: u32,
+    entries: usize,
 ) -> Result<(MaFile, PathBuf, usize), AutomapError> {
     if let Some(sub) = files.sub.as_deref().filter(|s| !s.is_empty()) {
         let d = files.dir.join(sub);
         if d.is_dir() {
-            return open_files(&d, &files.name, key);
+            return open_files(&d, &files.name, key, entries);
         }
     }
-    open_files(&files.dir, &files.name, key)
+    open_files(&files.dir, &files.name, key, entries)
 }
 
 /// The tables the session hands to every automap call.
@@ -103,8 +104,9 @@ impl AutomapSession {
         // Files that cannot be opened or written (a save directory that is
         // missing, a read-only one) leave this act's automap in memory
         // only: an empty automap, never a stopped game.
+        let entries = table_entries(self.source.levels.max_layer());
         let file = match &self.files {
-            Some(files) => match open_files_in(files, init_seed) {
+            Some(files) => match open_files_in(files, init_seed, entries) {
                 Ok((file, path, _)) => {
                     self.data_path = Some(path);
                     file
@@ -112,11 +114,11 @@ impl AutomapSession {
                 Err(e @ AutomapError::File(_)) => {
                     bevy::log::warn!("automap: kept in memory only: {e}");
                     self.data_path = None;
-                    MaFile::default()
+                    MaFile::with_entries(entries)
                 }
                 Err(e) => return Err(e),
             },
-            None => MaFile::default(),
+            None => MaFile::with_entries(entries),
         };
         self.map.attach_file(file, f8);
         Ok(())
