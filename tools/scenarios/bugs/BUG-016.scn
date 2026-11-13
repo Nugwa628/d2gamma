@@ -1,0 +1,59 @@
+scenario 2
+tick_rate 25
+# BUG-016: a hireling who died where the player left her must still be
+# resurrectable in town, and the NPC menu must close with Esc after it.
+name bug-016-merc-resurrect-after-leaving
+seed 1234
+end 1300
+# A level 2 Amazon in Lut Gholein (level 40) with gold for a hire and a resurrect.
+char class 0
+char level 2
+char area 1 40
+char stat 14 200000
+at 0 dev god on
+# Greiz (monstats 198), the act 2 hireling NPC, next to her.
+at 0 spawn 198 @x+3 @y normal
+at 2 poke goto unit 1:198
+at 4 msg InteractWithEntity type=1 id=@1:198
+# Space through his greeting until the menu shows.
+at 12 key-if 32 client.dialog_lines != null
+at 16 key-if 32 client.dialog_lines != null
+at 20 key-if 32 client.dialog_lines != null
+at 24 key-if 32 client.dialog_lines != null
+at 28 key-if 32 client.dialog_lines != null
+at 32 key-if 32 client.dialog_lines != null
+at 36 key-if 32 client.dialog_lines != null
+at 40 key-if 32 client.dialog_lines != null
+at 84 check ui.open(npc_menu) == true
+# Hire: the first offer (an act 2 hireling, monstats 338).
+at 92 input click ui:npc.menu(1)
+at 100 input click ui:hire.offer(0)
+by 108 check count(monster, 338) >= 1
+at 114 input key ESC
+# In the Rocky Waste (41): twenty Fallen (19) and her life poked
+# down to 1 until she dies.
+at 130 poke warp 41
+at 160 dev spawn 19 20
+at 161 poke stat @1:338 6 0 256
+at 200 poke stat @1:338 6 0 256
+at 240 poke stat @1:338 6 0 256
+at 280 poke stat @1:338 6 0 256
+# Back in town; the Rocky Waste room she lies in goes inactive while the
+# player waits. Then to Greiz; his menu row 1 is now Resurrect.
+at 400 poke warp 40
+at 920 poke goto unit 1:198
+at 960 msg InteractWithEntity type=1 id=@1:198
+at 970 key-if 32 client.dialog_lines != null
+at 974 key-if 32 client.dialog_lines != null
+at 978 key-if 32 client.dialog_lines != null
+at 982 key-if 32 client.dialog_lines != null
+# She is still a unit, lying dead; the resurrect takes its fee, she
+# stands and follows; Esc closes the menu and a ground click walks.
+at 1015 check count(monster, 338) == 1
+at 1015 check unit(monster, 338).mode == "dead"
+at 1020 input click ui:npc.menu(1)
+by 1036 check unit(monster, 338).mode != "dead"
+by 1036 check hud.gold == 199620
+at 1040 input key ESC
+by 1052 check ui.open(npc_menu) == false
+at 1060 input click 200 400

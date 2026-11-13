@@ -515,13 +515,20 @@ fn other_string_id_rows() {
                 r[id_at..id_at + 2].copy_from_slice(&0x7777u16.to_le_bytes());
             }
         }
-        let set = bin_set(vec![bin_table(name, size, rows)], s.clone());
+        let raw = bin_table(name, size, rows);
+        let set = bin_set(vec![raw.clone()], s.clone());
         let f = fixup::apply(&set, &no_anim()).unwrap();
         let t = f.table(name).unwrap();
         for (k, &(_, id_at)) in pairs.iter().enumerate() {
             assert_eq!(get_u16(t.record(0), id_at), keys[k].1, "{name} hit");
             assert_eq!(get_u16(t.record(1), id_at), 0, "{name} miss");
             assert_eq!(get_u16(t.record(2), id_at), 0, "{name} empty");
+        }
+        if name == "hireling" {
+            // A reader of the raw set resolves the names the same way.
+            let mut own = raw;
+            fixup::hireling_names(&mut own, &s);
+            assert_eq!(&own, t, "hireling names on the raw table");
         }
     }
     // Unlike these, unique and set item names miss to 5,383.

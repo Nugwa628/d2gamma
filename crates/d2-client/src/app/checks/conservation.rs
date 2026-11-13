@@ -275,9 +275,9 @@ fn event_id(events: &mut Events, id: u8) {
             events.destroys = true;
             events.gold_source = true;
         }
-        // Identify and hire charge a fee; a hire also creates the mercenary
-        // and its equipment.
-        0x34 => events.gold_sink = true,
+        // Identify, hire and resurrect charge a fee; a hire also creates
+        // the mercenary and its equipment.
+        0x34 | 0x62 => events.gold_sink = true,
         0x36 => {
             events.creates = true;
             events.gold_sink = true;
@@ -786,7 +786,7 @@ at 39 checkpoint
     }
     #[test]
     fn service_requests_charge_their_fees() {
-        for (id, creates) in [(0x34, false), (0x35, false), (0x36, true)] {
+        for (id, creates) in [(0x34, false), (0x35, false), (0x36, true), (0x62, false)] {
             let mut event = Events::default();
             event_id(&mut event, id);
             assert!(event.gold_sink, "0x{id:02X} charges a fee");

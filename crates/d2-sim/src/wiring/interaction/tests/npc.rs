@@ -216,6 +216,8 @@ fn resurrect_revives_a_real_mercenary() {
     w.set(player, &[(st::GOLD, PLAYER_GOLD)]);
     w.set(merc, &[(st::LEVEL, 10), (st::MAXHP, 5120), (st::LIFE, 0)]);
     w.units.get_mut(merc).unwrap().flags |= 0x10000;
+    // She lies in her dead mode.
+    w.units.get_mut(merc).unwrap().mode = 12;
     // A dead hireling node.
     let node = PetNode {
         dead: true,
@@ -235,6 +237,9 @@ fn resurrect_revives_a_real_mercenary() {
     assert_eq!(w.units.get(merc).unwrap().flags & 0x10000, 0);
     assert_eq!(w.stat(merc, st::LIFE), w.stats.max_life(merc));
     assert!(w.rest.log.contains(&format!("mode {} 1", merc.0)));
+    // The unit itself stands again: not left in her dead mode on the
+    // floor at her owner's feet.
+    assert_eq!(w.units.get(merc).unwrap().mode, 1);
     // The node living again (0x81), the hireling warped to the player.
     assert!(!w.state.hirelings.list(player).unwrap().nodes[0].dead);
     assert!(w.rest.sent.iter().any(|(_, m)| m[0] == 0x81));

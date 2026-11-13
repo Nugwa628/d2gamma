@@ -1,0 +1,58 @@
+scenario 2
+tick_rate 25
+# BUG-015: a resurrected hireling must stand up and follow, not lie dead
+# at the player's feet.
+name bug-015-merc-revived-dead
+seed 1234
+end 900
+# A level 2 Amazon in Lut Gholein (level 40) with gold for a hire and a resurrect.
+char class 0
+char level 2
+char area 1 40
+char stat 14 200000
+at 0 dev god on
+# Greiz (monstats 198), the act 2 hireling NPC, next to her.
+at 0 spawn 198 @x+3 @y normal
+at 2 poke goto unit 1:198
+at 4 msg InteractWithEntity type=1 id=@1:198
+# Space through his greeting until the menu shows.
+at 12 key-if 32 client.dialog_lines != null
+at 16 key-if 32 client.dialog_lines != null
+at 20 key-if 32 client.dialog_lines != null
+at 24 key-if 32 client.dialog_lines != null
+at 28 key-if 32 client.dialog_lines != null
+at 32 key-if 32 client.dialog_lines != null
+at 36 key-if 32 client.dialog_lines != null
+at 40 key-if 32 client.dialog_lines != null
+at 84 check ui.open(npc_menu) == true
+# Hire: the first offer (an act 2 hireling, monstats 338).
+at 92 input click ui:npc.menu(1)
+at 100 input click ui:hire.offer(0)
+by 108 check count(monster, 338) >= 1
+at 114 input key ESC
+# In the Rocky Waste (41): twenty Fallen (19) and her life poked
+# down to 1 until she dies.
+at 130 poke warp 41
+at 160 dev spawn 19 20
+at 161 poke stat @1:338 6 0 256
+at 200 poke stat @1:338 6 0 256
+at 240 poke stat @1:338 6 0 256
+at 280 poke stat @1:338 6 0 256
+# Back in town to Greiz; his menu row 1 is now Resurrect.
+at 400 poke warp 40
+at 420 poke goto unit 1:198
+at 460 msg InteractWithEntity type=1 id=@1:198
+at 470 key-if 32 client.dialog_lines != null
+at 474 key-if 32 client.dialog_lines != null
+at 478 key-if 32 client.dialog_lines != null
+at 482 key-if 32 client.dialog_lines != null
+# She is still a unit, lying dead; the resurrect takes its fee, she
+# stands and follows; Esc closes the menu and a ground click walks.
+at 515 check count(monster, 338) == 1
+at 515 check unit(monster, 338).mode == "dead"
+at 520 input click ui:npc.menu(1)
+by 536 check unit(monster, 338).mode != "dead"
+by 536 check hud.gold == 199620
+at 540 input key ESC
+by 552 check ui.open(npc_menu) == false
+at 560 input click 200 400

@@ -284,3 +284,28 @@ fn monster_region_accounting_survives_unloading_and_restoring() {
         );
     }
 }
+
+/// A player's hireling (unit flag bit 31, an AI owned by a player) lying
+/// dead when her room goes inactive is kept: detached from the room and
+/// its path, not freed, so her owner can still resurrect her in town.
+#[test]
+fn a_dead_hireling_is_kept_when_her_room_goes_inactive() {
+    let mut fx = Fx::new();
+    fx.sim.hooks().enable_inactive_store();
+    let a = fx.a;
+    let merc = fx.spawn(UnitType::Monster, 0, a, 6, 6);
+    {
+        let r = fx.sim.sys.units.get_mut(merc).unwrap();
+        r.flags |= 0x8000_0000;
+        r.mode = 12;
+    }
+    fx.sim.sys.hooks.hireling_units.insert(merc);
+    let mut g = std::mem::take(&mut fx.game);
+    fx.sim.compress_unit(&mut g, merc);
+    fx.game = g;
+    let e = fx.game.lists.unit(merc).expect("the hireling is kept");
+    assert_eq!(e.room(), None);
+    let path = fx.sim.sys.hooks.paths.as_ref().and_then(|p| p.record(merc));
+    assert_eq!(path.and_then(|p| p.room()), None);
+    assert!(node(&fx).is_empty());
+}

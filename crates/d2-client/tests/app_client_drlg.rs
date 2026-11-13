@@ -307,6 +307,31 @@ fn the_summit_background_draws_from_the_users_archives() {
     assert_eq!(opaque, 12, "the mountains opaque, the clouds blended");
 }
 
+/// The client's `hireling` rows carry the resolved name ranges, so a
+/// hireling's act comes from her name id: every expansion row's
+/// `NameFirst` and `NameLast` find that row's act, and an act 3 name
+/// gives the act 3 rows (skills with mode 7), not the act 1 rows.
+#[test]
+#[ignore = "real data: needs D2_GAME_DIR (tools/realdata-gate.sh)"]
+fn hireling_rows_find_the_act_of_a_name() {
+    let d = app_support::live();
+    let rows = single_player::client_unit_rows(d.archives.as_ref()).unwrap();
+    let h = &rows.hirelings;
+    let exp: Vec<_> = h.rows.iter().filter(|r| r.version == 100).collect();
+    assert!(!exp.is_empty());
+    for r in &exp {
+        assert!(r.name_first != 0 && r.name_first <= r.name_last, "{r:?}");
+        assert_eq!(h.act_of_name(true, r.name_first), r.act - 1, "{r:?}");
+        assert_eq!(h.act_of_name(true, r.name_last), r.act - 1, "{r:?}");
+    }
+    let act3 = exp.iter().find(|r| r.act == 3).unwrap();
+    let act0 = h.act_of_name(true, act3.name_first);
+    assert_eq!(act0, 2);
+    let row = &h.rows[h.candidates(true, act0, 0)[0]];
+    assert_eq!(row.class, act3.class);
+    assert_eq!(row.skills[0].mode, 7);
+}
+
 /// The `states` rows the model's state messages and colour call read, on
 /// the user's install (the live rows): seven states have
 /// a `colorpri`, all with a `colorshift`; 90 `blue` 100 / 108 / 150, 215,

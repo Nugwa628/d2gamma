@@ -1088,9 +1088,9 @@ impl OriginalUi {
 
     /// S→C 0x2A at the UI: in
     /// the waiting state the note closes and, on result 3 or 6, Cain's
-    /// counts reset and the menu is rebuilt; result 5 (a hire) rebuilds
-    /// the menu; any other result sets state 12 (its note caption is open).
-    /// Outside it, result 1 plays UI sound 221.
+    /// counts reset and the menu is rebuilt; result 5 (a hire or a
+    /// resurrect) rebuilds the menu; any other result sets state 12 and
+    /// rebuilds the menu too. Outside it, result 1 plays UI sound 221.
     pub(super) fn npc_transaction(&mut self, bytes: &[u8; 15]) {
         let result = bytes[2];
         // A hire's C→S 0x36 leaves in the frame of its click and the
@@ -1133,7 +1133,16 @@ impl OriginalUi {
                     it.build = true;
                 }
             }
-            _ => st.menu_state = MENU_FAILED,
+            // A refusal (no gold, no hireling to resurrect, ...): the
+            // send closed the box, so the menu is built again. Without it
+            // ui 8 stayed open with nothing drawn and Esc found no box to
+            // end the interaction with.
+            _ => {
+                st.menu_state = MENU_FAILED;
+                if let Some(it) = st.up.as_mut() {
+                    it.build = true;
+                }
+            }
         }
     }
 

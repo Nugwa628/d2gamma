@@ -148,7 +148,10 @@ impl<'a, H: LifecycleHooks, R: NpcRest + QuestRest + PlayerQuestsRef> NpcWorld
     fn mode(&self, unit: UnitId) -> u8 {
         self.econ.units.get(unit).map_or(0, |r| r.mode as u8)
     }
+    /// A monster's mode change on the unit rules
+    /// ([`Desk::monster_mode`]), then the rest's part.
     fn set_mode(&mut self, unit: UnitId, mode: u8) {
+        self.monster_mode(unit, mode);
         super::HirelingRest::set_mode(&mut *self.rest, unit, mode);
     }
     /// Clears `flag` in the unit record's flags.

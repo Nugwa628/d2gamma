@@ -157,6 +157,14 @@ fn name_id(t: &mut BinTable, strings: &StringTables, from: usize, to: usize, mis
     }
 }
 
+/// The `hireling` name fix-up: the `NameFirst` / `NameLast` string keys
+/// become string ids at +0x114 / +0x116 (0 when the key is not found).
+/// A reader of the raw table set runs it before decoding hireling rows.
+pub fn hireling_names(t: &mut BinTable, strings: &StringTables) {
+    name_id(t, strings, 0xD3, 0x114, 0);
+    name_id(t, strings, 0xF3, 0x116, 0);
+}
+
 /// Reads and parses `AnimData.d2` from the archive set.
 pub fn read_animdata(set: &ArchiveSet) -> Result<AnimData, FixupError> {
     let bytes = set
@@ -302,8 +310,7 @@ pub fn apply(data: &BinSet, anim: &AnimData) -> Result<FixedSet, FixupError> {
             }
             "monpreset" => out.monpreset = maps::monpreset(t)?,
             "hireling" => {
-                name_id(t, strings, 0xD3, 0x114, 0);
-                name_id(t, strings, 0xF3, 0x116, 0);
+                hireling_names(t, strings);
                 out.hireling_first = maps::hireling_first(t)?;
             }
             "monequip" => {

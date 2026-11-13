@@ -100,7 +100,7 @@ Online play needs a main server (`d2rust-realm`) and at least one game server (`
    game = "d2rust"
    address = "realm.example:6112"
    cert_sha256 = "<64 hex digits>"
-   version = "0.1.1.3162"
+   version = "0.1.1.3177"
    ```
 
 More detail: [tools/server/README.md](tools/server/README.md).

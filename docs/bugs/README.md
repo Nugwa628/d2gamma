@@ -20,6 +20,9 @@ ticket's status becomes `fixed in <version>`; tickets stay here as the record.
 | [BUG-012](BUG-012-screen-edges-blur-when-moving.md) | Trailing screen edges blur while moving (looked like HUD glitches) | fixed on main (#189) |
 | [BUG-013](BUG-013-gold-label-no-amount.md) | Gold on the ground shows "Gold" without the amount | fixed on main (#141) |
 | [BUG-014](BUG-014-monster-animation-stutter.md) | Monster animations stutter (stepped frames) | open |
+| [BUG-015](BUG-015-merc-resurrected-dead.md) | A resurrected hireling lies dead at the player's feet | fix in PR #1320 |
+| [BUG-016](BUG-016-merc-resurrect-after-leaving.md) | A hireling left dead in the wild can't be resurrected; the NPC menu hangs | fix in PR #1320 |
+| [BUG-017](BUG-017-merc-invisible-attacking.md) | A hireling turns invisible while she attacks | fix in PR #1320 |
 
 ## A new ticket
 

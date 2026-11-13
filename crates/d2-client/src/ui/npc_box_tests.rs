@@ -319,6 +319,64 @@ fn identify_waits_for_0x2a_and_the_result_rebuilds_the_menu() {
     assert!(ui.is_open(8));
 }
 
+// A refused Resurrect (S->C 0x2A result 9: no hireling unit to revive, or
+// 12: not enough gold) builds the menu again: the box is back, ui 8 stays
+// open, and Esc ends the interaction (C->S 0x30) instead of finding no box.
+#[test]
+fn a_refused_resurrect_builds_the_menu_again_and_esc_ends_it() {
+    for result in [9u8, 12] {
+        let (mut ui, mut root) = setup();
+        let mut w = world(KASHYA, 10);
+        w.expansion = 1;
+        {
+            let mut st = ui.npcm.borrow_mut();
+            st.resurrect = Some(500);
+            st.merc_name = 0x421;
+        }
+        open(&mut ui, &mut root, &w, KASHYA, 10);
+        root.take_intents();
+        let k = ui
+            .npc_menu()
+            .unwrap()
+            .rows
+            .iter()
+            .position(|r| r.kind == Some(OptionKind::Resurrect))
+            .unwrap();
+        let p = ui.npc_menu_row_point(k).unwrap();
+        click(&mut ui, &mut root, &w, p);
+        let mut want = vec![0x62];
+        want.extend_from_slice(&NPC.to_le_bytes());
+        assert_eq!(
+            root.take_intents().iter().map(bytes).collect::<Vec<_>>(),
+            vec![want]
+        );
+        assert_eq!(ui.npc_menu_state(), MENU_WAITING);
+        let mut b = [0u8; 15];
+        b[0] = 0x2A;
+        b[2] = result;
+        ui.apply_output(&Output::NpcTransaction { bytes: b, gold: 0 }, &w)
+            .unwrap();
+        ui.npc_menu_poll(&w, &mut root, &Strs::new());
+        root.take_intents();
+        assert_eq!(ui.npc_menu_state(), MENU_FAILED, "result {result}");
+        assert!(
+            ui.npc_menu_box().is_some(),
+            "result {result}: the box is back"
+        );
+        assert!(ui.is_open(8));
+        let esc = UiEvent::Action(ActionId(Action::GameMenu.index() as u16));
+        send(&mut ui, &mut root, &w, esc);
+        let mut want = vec![0x30, 1, 0, 0, 0];
+        want.extend_from_slice(&NPC.to_le_bytes());
+        assert_eq!(
+            root.take_intents().iter().map(bytes).collect::<Vec<_>>(),
+            vec![want],
+            "result {result}: Esc ends the interaction"
+        );
+        assert!(!ui.is_open(8));
+    }
+}
+
 // Talk closes the box; the talk's end with flag 1 builds the menu
 // again.
 #[test]

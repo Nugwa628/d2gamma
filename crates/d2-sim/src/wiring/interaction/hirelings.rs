@@ -156,7 +156,10 @@ impl<H: LifecycleHooks, R: NpcRest + QuestRest + PlayerQuestsRef> HirelingWorld
     fn mode(&self, unit: UnitId) -> u32 {
         self.desk.econ.units.get(unit).map_or(0, |r| r.mode)
     }
+    /// A monster's mode change on the unit rules
+    /// ([`Desk::monster_mode`]), then the rest's part.
     fn set_mode(&mut self, unit: UnitId, mode: u8) {
+        self.desk.monster_mode(unit, mode);
         HirelingRest::set_mode(&mut *self.desk.rest, unit, mode);
     }
     fn flags(&self, unit: UnitId) -> u32 {
@@ -398,6 +401,30 @@ impl<'a, H: LifecycleHooks, R: NpcRest + QuestRest + PlayerQuestsRef> Desk<'_, '
             Some(Ok(Some(_))) => self.econ.hooks.hireling_ready(player, merc),
             Some(Err(e)) => self.state.errors.push(InteractionError::Hireling(e)),
             _ => {}
+        }
+    }
+
+    /// A monster's mode change through the unit rules
+    /// ([`crate::units::modes::monster_set_mode`]): the mode's start runs,
+    /// so a revived hireling leaves her death mode for neutral with her AI
+    /// think scheduled again, and her clients get the new mode. A unit
+    /// that is not a monster is left alone; a refused change is reported
+    /// in [`super::InteractionState::errors`].
+    pub(super) fn monster_mode(&mut self, unit: UnitId, mode: u8) {
+        let e = &mut *self.econ;
+        if e.units.get(unit).is_none_or(|r| r.ty != UnitType::Monster) {
+            return;
+        }
+        let mut sim = crate::units::hooks::Sim {
+            game: &mut *e.game,
+            units: &mut *e.units,
+            stats: &mut *e.stats,
+            data: e.data,
+        };
+        if let Err(err) =
+            crate::units::modes::monster_set_mode(&mut sim, &mut *e.hooks, unit, u32::from(mode))
+        {
+            self.state.errors.push(InteractionError::Unit(err));
         }
     }
 

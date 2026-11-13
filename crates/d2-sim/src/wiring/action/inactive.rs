@@ -274,7 +274,10 @@ impl<X: Pending> View<'_, X> {
                     .filter(|&&m| self.h.monster_flag(u, m))
                     .fold(0, |a, m| a | m),
                 unit_flags: flags,
-                player_pet: self.h.x.player_pet(u),
+                // A hireling is a player's pet: kept (detached, not freed)
+                // when her room goes inactive, so her owner can still
+                // resurrect her after leaving her corpse behind.
+                player_pet: self.h.x.player_pet(u) || self.h.hireling_units.contains(&u),
                 restore: self.monster_restore(u),
             };
             ia::compress_monster(&f, || self.h.x.room_seed_step(game, room))
@@ -330,6 +333,14 @@ impl<X: Pending> View<'_, X> {
             let r = game.lists.room_remove(u);
             if let Err(e) = r {
                 self.unit_error(crate::game::GameError::from(e).into());
+            }
+            // The kept unit stands in no room: its path's room goes with
+            // the room list's, until a warp (a resurrect) places it again.
+            if let Some(p) = self.h.paths.as_mut().and_then(|p| p.records.get_mut(&u)) {
+                match p {
+                    crate::path::UnitPath::Static(s) => s.room = None,
+                    crate::path::UnitPath::Dynamic(d) => d.room = None,
+                }
             }
         } else if c.free {
             self.remove(game, u);

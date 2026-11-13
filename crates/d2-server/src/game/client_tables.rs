@@ -564,10 +564,13 @@ pub fn client_unit_rows(archives: &dyn TableFiles) -> Result<UnitRows, BuildErro
         monstats_table,
         &monseq,
     ));
-    // The client hireling set-up reads the
-    // `hireling` rows.
+    // The client hireling set-up reads the `hireling` rows with their
+    // name ranges resolved: a hireling's act is found from her name id,
+    // and her row's skills and modes from that act.
+    let mut hireling = table("hireling")?.clone();
+    d2_data::fixup::hireling_names(&mut hireling, &set.strings);
     let hirelings = Arc::new(
-        d2_sim::world::hirelings::HirelingRows::from_table(table("hireling")?)
+        d2_sim::world::hirelings::HirelingRows::from_table(&hireling)
             .map_err(|e| BuildError::Tables(format!("hireling: {e}")))?,
     );
     Ok(UnitRows {

@@ -112,6 +112,8 @@ pub enum InteractionError {
     NoHirelingTables,
     /// An error from the hireling rules.
     Hireling(HirelingError),
+    /// A monster mode change the unit rules refused (a hireling's revive).
+    Unit(crate::units::modes::UnitError),
 }
 
 /// The interaction state of a game beside the NPC control block: the
