@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.1.3177
+
+A hireling fix release.
+
+### Hirelings
+
+- Hirelings no longer turn invisible while attacking. Act 3 and act 5 hirelings (and an act 2 hireling's auras)
+  vanished for every skill use, because the game took every hireling for an act 1 rogue.
+- A revived hireling no longer stays lying dead at your feet: she gets up, follows you and fights again.
+- Walking and the mouse no longer freeze after hiring or reviving a hireling. A hireling left dead out in the
+  wild can still be revived later, and when the NPC refuses a service, the menu comes back and Esc ends the talk.
+
 ## 0.1.1.3162
 
 The mod kit and Mod Studio arrive, online play gets ready for mod games, and a round of hireling and gameplay
